@@ -1565,6 +1565,22 @@
       "affected": [
         "engine/lib/apl.sh"
       ]
+    },
+    {
+      "id": "bug-090",
+      "title": "排查全部档位覆盖；修无限制/默认档上探失效与电压除零",
+      "reported": "2026-11-09",
+      "type": "bug",
+      "version_seen": "3.1.26 (336)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "fixed_in": "3.1.27（337，未发布）",
+      "evidence": "用户要求排查所有温控档位是否都加了温度保护（排除无限制与系统默认）。检查发现：apl_level_temp_c 覆盖 level_1..5（30/35/40/45/50℃），thermal/1..5/thermal-scene.conf 五个档位配置齐全；但上一版上探条件写成 [ tb -le _apl_lt ]，无限制/默认时 _apl_lt 为空会报 Illegal number，导致这两个档永远不能上探、功率可能卡在低值；另电压读不到时 _apl_mv=0 会让 5W 折算除零",
+      "root_cause": "温度线为空时直接参与整数比较；电压未兜底",
+      "resolution": "上探门限改为 _apl_up_ok：有档位线时 tb ≤ 上限，无档位线时沿用 DTBO ffc_temp_high−8；_apl_mv 低于 1 时按 4V 估算；删除已无用途的 _apl_tdn。沙箱验证 unlimited/default/bypass 上探放行、level_1/2 在上限以上禁止上探、level_3/4/5 正常",
+      "affected": [
+        "engine/lib/apl.sh"
+      ]
     }
   ],
   "cancelled": []

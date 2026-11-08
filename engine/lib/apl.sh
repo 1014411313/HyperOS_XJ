@@ -194,6 +194,8 @@ apl_tick() {
 
   _apl_soc=$(apl_num "${BAT_CAP:-0}")
   _apl_mv=$(( $(apl_num "${BAT_VOLT:-0}") / 1000 ))
+  # 电压读不到时用 4V 估算，避免后续「功率/电压」除零
+  [ "$_apl_mv" -lt 1 ] && _apl_mv=4
   _apl_ma=$(( $(apl_num "${BAT_CUR:-0}") / 1000 ))
   [ "$_apl_ma" -lt 0 ] && _apl_ma=$(( -_apl_ma ))
   _apl_pw=$(( _apl_mv * _apl_ma / 1000 ))
@@ -205,13 +207,11 @@ apl_tick() {
   # 无档位线（unlimited/default/bypass）→ 退回 DTBO ffc_temp_high（上探 -8，降档 -3）。
   _apl_lt=$(apl_mode_temp_c)
   if [ -n "$_apl_lt" ]; then
-    _apl_tdn="$_apl_lt"
     # 回落到上限-2℃ 以下才回升（死区由 APL_TEMP_HYST 定义）
     _apl_tup=$(( _apl_lt - APL_TEMP_HYST ))
   else
     _apl_fh=$(ffc_temp_high_c)
     _apl_tup=$(( _apl_fh - 8 )); [ "$_apl_tup" -lt 40 ] && _apl_tup=40
-    _apl_tdn=$(( _apl_fh - 3 )); [ "$_apl_tdn" -lt 45 ] && _apl_tdn=45
   fi
   _apl_gap=$(apl_num "$(cfg_get cg_min_write_gap 60)")
   [ "$_apl_gap" -lt 15 ] && _apl_gap=15
@@ -337,6 +337,14 @@ apl_tick() {
   _apl_locked=0
   [ "$_apl_now" -lt "$apl_lock_until" ] && _apl_locked=1
 
+  # 上探温度门限：有档位线时到上限为止；无档位线（无限制/系统默认）退回 DTBO 阈值
+  _apl_up_ok=0
+  if [ -n "$_apl_lt" ]; then
+    [ "$_apl_tb" -le "$_apl_lt" ] && _apl_up_ok=1
+  else
+    [ "$_apl_tb" -lt "$_apl_tup" ] && _apl_up_ok=1
+  fi
+
   # ---- 稳定计数：实际功率达到目标的 88% ----
   if [ "$_apl_want" -gt 0 ] && [ "$_apl_pw" -ge $(( _apl_want * 88 / 100 )) ]; then
     apl_stable_cnt=$(( apl_stable_cnt + 1 ))
@@ -345,7 +353,7 @@ apl_tick() {
   fi
 
   # ---- 上探：热身 +8%，稳定 ≥6 拍 +6%，否则 ≥9 拍 +3% ----
-  if [ "$_apl_locked" = "0" ] && [ "$apl_thermal_prev" -eq 0 ] && [ "$_apl_tb" -le "$_apl_lt" ] && [ "$_apl_tgt" -lt "$_apl_cap" ]; then    _apl_step=0; _apl_need=99
+  if [ "$_apl_locked" = "0" ] && [ "$apl_thermal_prev" -eq 0 ] && [ "$_apl_up_ok" = "1" ] && [ "$_apl_tgt" -lt "$_apl_cap" ]; then    _apl_step=0; _apl_need=99
     if [ "$apl_warm_start" -gt 0 ] && [ $(( _apl_now - apl_warm_start )) -lt "$APL_WARMUP" ]; then
       _apl_step=$(( _apl_tgt * 8 / 100 )); _apl_need=3
     elif [ "$apl_stable_cnt" -ge 6 ]; then
