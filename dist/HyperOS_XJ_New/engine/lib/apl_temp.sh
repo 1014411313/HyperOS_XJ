@@ -21,3 +21,20 @@ apl_level_temp_c() {
 apl_mode_temp_c() {
   apl_level_temp_c "$(cat "$CONFDIR/current_mode" 2>/dev/null)"
 }
+
+# 档位名 → 温度超限后的充电功率上限（W）；无档位线输出空。
+# 温度超过该档上限时，APL 目标电流会被压到「该瓦数 / 当前电压」，而不是只降 20%。
+apl_level_power_w() {
+  case "$1" in
+    level_1) printf '15' ;;
+    level_2) printf '25' ;;
+    level_3) printf '35' ;;
+    level_4) printf '45' ;;
+    level_5) printf '55' ;;
+    *) printf '' ;;
+  esac
+}
+
+apl_mode_power_w() {
+  apl_level_power_w "$(cat "$CONFDIR/current_mode" 2>/dev/null)"
+}

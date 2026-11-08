@@ -206,6 +206,7 @@ apl_tick() {
     _apl_tup=$(( _apl_fh - 8 )); [ "$_apl_tup" -lt 40 ] && _apl_tup=40
     _apl_tdn=$(( _apl_fh - 3 )); [ "$_apl_tdn" -lt 45 ] && _apl_tdn=45
   fi
+  _apl_lpw=$(apl_mode_power_w)
   _apl_gap=$(apl_num "$(cfg_get cg_min_write_gap 60)")
   [ "$_apl_gap" -lt 15 ] && _apl_gap=15
 
@@ -297,11 +298,22 @@ apl_tick() {
   # ---- 温度保护 ----
   if [ "$_apl_tb" -ge "$_apl_tdn" ]; then
     _apl_new=$(( _apl_tgt * 80 / 100 ))
-    _apl_fl=$(( _apl_cap * 50 / 100 ))
+    if [ -n "$_apl_lpw" ]; then
+      # 有档位功率上限：温度超上限时目标电流不得高于「上限瓦数 / 电压」，
+      # 超过上限 3℃ 以上直接压到档位功率，不再逐拍 20% 磨。
+      _apl_pcap=$(( _apl_lpw * 1000 / _apl_mv ))
+      [ "$_apl_pcap" -lt 2000 ] && _apl_pcap=2000
+      [ "$_apl_new" -gt "$_apl_pcap" ] && _apl_new="$_apl_pcap"
+      [ "$_apl_tb" -ge $(( _apl_lt + 3 )) ] && _apl_new="$_apl_pcap"
+      _apl_fl=$(( _apl_cap * 10 / 100 ))
+      [ "$_apl_fl" -lt 2000 ] && _apl_fl=2000
+    else
+      _apl_fl=$(( _apl_cap * 50 / 100 ))
+    fi
     [ "$_apl_new" -lt "$_apl_fl" ] && _apl_new="$_apl_fl"
     if [ "$_apl_new" -lt "$_apl_tgt" ]; then
       _apl_tgt="$_apl_new"
-      blog "APL 电池 ${_apl_tb}℃ ≥ 降档线 ${_apl_tdn}℃，降 20% → ${_apl_tgt}mA"
+      blog "APL 电池 ${_apl_tb}℃ ≥ 降档线 ${_apl_tdn}℃（档位 ${_apl_lpw:-无}W）：降 → ${_apl_tgt}mA"
       apl_lock_until=$(( _apl_now + 60 ))
       apl_stable_cnt=0
     fi
@@ -361,7 +373,12 @@ apl_tick() {
   fi
 
   # ---- 落盘 ----
+  # 有档位功率上限时，50% 硬底不再适用（否则二档 25W 会被抬回 10000mA/40W）
   _apl_fl=$(( _apl_cap * 50 / 100 ))
+  if [ -n "$_apl_lpw" ]; then
+    _apl_pcap=$(( _apl_lpw * 1000 / _apl_mv ))
+    [ "$_apl_pcap" -lt "$_apl_fl" ] && _apl_fl="$_apl_pcap"
+  fi
   [ "$_apl_tgt" -lt "$_apl_fl" ] && _apl_tgt="$_apl_fl"
   [ "$_apl_tgt" -gt "$_apl_cap" ] && _apl_tgt="$_apl_cap"
   [ "$_apl_tgt" -lt 2000 ] && _apl_tgt=2000

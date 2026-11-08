@@ -310,7 +310,11 @@ guard_apply() {
   [ "$ENABLE_GUARD" = "1" ] || { echo "$_mode"; return 0; }
   if [ "${BAT_TEMP:-0}" -ge "$TEMP_GUARD" ]; then
     # 「无限制」档按用户设置执行，不受高温守卫降档（用户明确要求）
-    case "$_mode" in level_1|level_2|default) printf '1' > "$CONFDIR/.guard"; echo "level_3"; return 0 ;; esac
+    # 用户明确选的一/二档也不覆盖：守卫原本会把严格档改成三档（放宽限制），与用户意图相反。
+    case "$_mode" in
+      default) printf '1' > "$CONFDIR/.guard"; echo "level_3"; return 0 ;;
+      level_1|level_2) printf '1' > "$CONFDIR/.guard"; echo "$_mode"; return 0 ;;
+    esac
   fi
   printf '0' > "$CONFDIR/.guard"
   echo "$_mode"
