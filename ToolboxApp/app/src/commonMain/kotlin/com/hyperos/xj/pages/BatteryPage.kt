@@ -39,6 +39,7 @@ import com.hyperos.xj.ui.LocalAccentColor
 import com.hyperos.xj.ui.SectionLabel
 import com.hyperos.xj.ui.ToggleLine
 import com.hyperos.xj.ui.LocalPageInsets
+import com.hyperos.xj.ui.PageHeader
 import com.hyperos.xj.ui.ValueRow
 import com.hyperos.xj.ui.XJ
 import com.hyperos.xj.ui.showToast
@@ -143,6 +144,7 @@ fun BatteryPage(
             ),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        PageHeader(status)
         if (!loaded || !statusReady) {
             GlassCard(backdrop, Modifier.fillMaxWidth()) {
                 BasicText(

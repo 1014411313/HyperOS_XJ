@@ -36,6 +36,7 @@ import com.hyperos.xj.ui.CollapsibleCard
 import com.hyperos.xj.ui.GlassCard
 import com.hyperos.xj.ui.LocalAccentColor
 import com.hyperos.xj.ui.LocalPageInsets
+import com.hyperos.xj.ui.PageHeader
 import com.hyperos.xj.ui.SectionLabel
 import com.hyperos.xj.ui.XJ
 import com.hyperos.xj.ui.showToast
@@ -132,6 +133,7 @@ private fun AboutMainPage(
             ),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        PageHeader(status)
         GlassCard(backdrop, Modifier.fillMaxWidth()) {
             SectionLabel("作者与声明")
             AboutRow("小米热炸了", "整合维护者", "酷安主页", onClick = { openUrl(coolapkUrlTemplate.format("517965")) })

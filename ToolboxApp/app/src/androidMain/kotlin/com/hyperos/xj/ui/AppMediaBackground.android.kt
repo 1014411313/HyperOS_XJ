@@ -56,6 +56,12 @@ actual fun AppMediaBackground(kind: String, path: String, blurDp: Float, modifie
     var player by remember(path) { mutableStateOf<MediaPlayer?>(null) }
     val textureView = remember(path) {
         TextureView(context).apply {
+            // 视频尺寸回调可能早于布局完成，view 宽高为 0 时算出的矩阵会把画面放大到看不见，
+            // 布局变化后再按当前尺寸重算一次。
+            addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
+                val mediaPlayer = player ?: return@addOnLayoutChangeListener
+                applyVideoCenterCrop(v as TextureView, mediaPlayer.videoWidth, mediaPlayer.videoHeight)
+            }
             surfaceTextureListener = object : TextureView.SurfaceTextureListener {
                 override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
                     val mediaPlayer = MediaPlayer()
@@ -107,7 +113,7 @@ actual fun AppMediaBackground(kind: String, path: String, blurDp: Float, modifie
     }
 }
 
-/** TextureView center-crop：按视频/视口较大缩放比铺满后居中裁切，避免拉伸变形。 */
+/** 按视频原始比例缩放铺满视图（裁切多余部分），不按屏幕分辨率拉伸。 */
 private fun applyVideoCenterCrop(view: TextureView, videoWidth: Int, videoHeight: Int) {
     if (videoWidth <= 0 || videoHeight <= 0) return
     val viewWidth = view.width.toFloat()

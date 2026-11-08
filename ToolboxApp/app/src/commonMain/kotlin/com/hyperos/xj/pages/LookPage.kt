@@ -62,6 +62,7 @@ import com.hyperos.xj.ui.SliderField
 import com.hyperos.xj.ui.SwatchPalette
 import com.hyperos.xj.ui.ToggleLine
 import com.hyperos.xj.ui.LocalPageInsets
+import com.hyperos.xj.ui.PageHeader
 import com.hyperos.xj.ui.XJ
 import com.hyperos.xj.ui.accentColor
 import com.hyperos.xj.ui.showToast
@@ -143,6 +144,7 @@ fun LookPage(
             ),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        PageHeader(status)
         GlassCard(backdrop, Modifier.fillMaxWidth()) {
             SectionLabel("主题预设")
             ThemeSwatchRow(appearance.themeIndex) {

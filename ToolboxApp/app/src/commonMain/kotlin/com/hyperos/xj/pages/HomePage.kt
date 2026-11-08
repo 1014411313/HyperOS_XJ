@@ -36,6 +36,7 @@ import com.hyperos.xj.ui.MetricGrid
 import com.hyperos.xj.ui.Pill
 import com.hyperos.xj.ui.SectionLabel
 import com.hyperos.xj.ui.LocalPageInsets
+import com.hyperos.xj.ui.PageHeader
 import com.hyperos.xj.ui.SliderField
 import com.hyperos.xj.ui.XJ
 import com.hyperos.xj.ui.showToast
@@ -85,6 +86,7 @@ fun HomePage(
             ),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        PageHeader(status)
         if (!statusReady) {
             GlassCard(backdrop, Modifier.fillMaxWidth()) {
                 BasicText(

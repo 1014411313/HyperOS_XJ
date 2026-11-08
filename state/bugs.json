@@ -1414,6 +1414,41 @@
       ],
       "fixed_in": "3.1.19（329，未发布）",
       "resolution": "AppearanceSettings 新增 bgKind（wallpaper/image/gif/video）/bgPath 并持久化，读回时白名单校验回落 wallpaper；BackgroundPicker 新增 pickBackgroundGif/pickBackgroundVideo（OpenDocument，流式复制到 App 外部私有目录 app_bg.gif / app_bg_video.mp4，200MB 上限，重选覆盖）；新增 AppMediaBackground expect/actual：GIF 用 withFrameNanos 逐帧 + neverEqualPolicy，视频用 TextureView+MediaPlayer 静音循环并按较大缩放比 center-crop；LookPage 背景卡片新增「选择 GIF 动图」「选择背景视频」「清除动态背景」；App.kt 媒体层铺在内置壁纸兜底之上，文件缺失时透出壁纸不黑屏"
+    },
+    {
+      "id": "bug-080",
+      "title": "沉浸布局做错：头部应跟随滚动、底栏不要分割带",
+      "reported": "2026-11-09",
+      "type": "bug",
+      "version_seen": "3.1.19 (329)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户反馈：沉浸效果理解错误，先恢复成之前的布局；要的是卡片上下拉时头部也上去（一起滚走）、不要分割，包括底栏也不要分割。截图显示标题区固定在顶部且与内容之间有模糊渐变分界，底部有一条独立深色带",
+      "root_cause": "把标题区做成固定悬浮层 + 底部独立模糊带，与用户想要的「整体滚动、无分界」相反",
+      "fix_plan": "恢复原布局（页面各自滚动、底栏悬浮胶囊）；标题区从固定层移入页面滚动内容顶部，随内容一起滚出屏幕；页面滚动区仍全屏（首次进入时标题位于状态栏下方），底部预留底栏+导航栏高度；去掉我加的顶部/底部模糊带",
+      "affected": [
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/App.kt",
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/ui/PageHeader.kt"
+      ],
+      "fixed_in": "3.1.20（330，未发布）",
+      "resolution": "恢复原布局：去掉固定悬浮标题区与顶部/底部模糊渐变带；标题区抽成 ui/PageHeader.kt 放进各页滚动内容顶部，随卡片一起滚出屏幕；页面滚动区保持全屏（PageInsets.top = 状态栏高度），底部预留底栏+导航栏高度；底栏恢复原悬浮胶囊样式，不再加独立分割带"
+    },
+    {
+      "id": "bug-081",
+      "title": "视频背景比例不对、被放大裁切显示不全",
+      "reported": "2026-11-09",
+      "type": "bug",
+      "version_seen": "3.1.19 (329)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户反馈：选择视频当背景比例不对，视频被放大了显示不全",
+      "root_cause": "AppMediaBackground 视频层用 center-crop（按较大缩放比铺满后裁切），竖屏/宽银幕视频会被大幅放大裁掉边缘",
+      "fix_plan": "视频改为 fitCenter（按较小缩放比完整显示不裁切），四周由底层壁纸兜底；GIF 背景保持 Crop 不变",
+      "affected": [
+        "ToolboxApp/app/src/androidMain/kotlin/com/hyperos/xj/ui/AppMediaBackground.android.kt"
+      ],
+      "fixed_in": "3.1.20（330，未发布）",
+      "resolution": "视频背景保持视频原始宽高比缩放铺满视图（center-crop，裁掉多余部分），不按屏幕分辨率拉伸；新增 addOnLayoutChangeListener 在布局变化后按当前 view 尺寸重算矩阵，原来尺寸为 0 时算出的矩阵会把画面放大到显示不全；图片与 GIF 保持 ContentScale.Crop，背屏图片/GIF 保持 cover 铺法不变"
     }
   ],
   "cancelled": []
