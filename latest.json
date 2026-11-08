@@ -1,7 +1,7 @@
 {
-  "version": "3.1.3",
-  "versionCode": 313,
-  "date": "2026-11-08",
+  "version": "3.1.19",
+  "versionCode": 329,
+  "date": "2026-11-09",
   "url": "",
-  "notes": "充电 inf 档闸门修复；面板直读 sysfs；背屏与 App 一批 UI 修复"
+  "notes": "沉浸滚动与系统栏模糊；App 背景支持 GIF/视频；检查更新多源回落（jsDelivr/Gitee/GitHub）；背屏默认图分文件、扭曲降至 24、serif 字体、四叶草动图重制"
 }

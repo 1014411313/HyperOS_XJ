@@ -49,6 +49,7 @@ import com.hyperos.xj.ui.GlassInput
 import com.hyperos.xj.ui.LocalAccentColor
 import com.hyperos.xj.ui.SectionLabel
 import com.hyperos.xj.ui.SliderField
+import com.hyperos.xj.ui.LocalPageInsets
 import com.hyperos.xj.ui.ToggleLine
 import com.hyperos.xj.ui.XJ
 import com.hyperos.xj.ui.showToast
@@ -172,7 +173,10 @@ fun ThermalPage(
             Modifier
                 .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
-                .padding(bottom = 108.dp),
+                .padding(
+                    top = LocalPageInsets.current.top,
+                    bottom = LocalPageInsets.current.bottom
+                ),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             if (!loaded) {

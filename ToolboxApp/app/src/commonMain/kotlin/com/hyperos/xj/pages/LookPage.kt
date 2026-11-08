@@ -41,7 +41,9 @@ import com.hyperos.xj.runtime.Engine
 import com.hyperos.xj.runtime.ToolboxRuntimeBridge
 import com.hyperos.xj.runtime.decodeBackgroundImage
 import com.hyperos.xj.runtime.isGifBytes
+import com.hyperos.xj.runtime.pickBackgroundGif
 import com.hyperos.xj.runtime.pickBackgroundImageBytes
+import com.hyperos.xj.runtime.pickBackgroundVideo
 import com.hyperos.xj.runtime.readRearCardBgImageBytes
 import com.hyperos.xj.runtime.rearBgGifPreviewPath
 import com.hyperos.xj.runtime.rearDefaultBgGifPreviewPath
@@ -59,6 +61,7 @@ import com.hyperos.xj.ui.SectionLabel
 import com.hyperos.xj.ui.SliderField
 import com.hyperos.xj.ui.SwatchPalette
 import com.hyperos.xj.ui.ToggleLine
+import com.hyperos.xj.ui.LocalPageInsets
 import com.hyperos.xj.ui.XJ
 import com.hyperos.xj.ui.accentColor
 import com.hyperos.xj.ui.showToast
@@ -134,7 +137,10 @@ fun LookPage(
         Modifier
             .fillMaxWidth()
             .verticalScroll(rememberScrollState())
-            .padding(bottom = 108.dp),
+            .padding(
+                top = LocalPageInsets.current.top,
+                bottom = LocalPageInsets.current.bottom
+            ),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         GlassCard(backdrop, Modifier.fillMaxWidth()) {
@@ -367,6 +373,48 @@ fun LookPage(
                         secondary = true
                     )
                 }
+            }
+            Spacer(Modifier.height(12.dp))
+            ActionButton(
+                backdrop = backdrop,
+                text = if (appearance.bgKind == "gif") "更换 GIF 动图" else "选择 GIF 动图",
+                onClick = {
+                    scope.launch {
+                        pickBackgroundGif()?.let { path ->
+                            onAppearanceChange(currentAppearance.copy(bgKind = "gif", bgPath = path, customBg = false))
+                            showToast("GIF 背景已设置")
+                        } ?: showToast("失败：未选择 GIF")
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(8.dp))
+            ActionButton(
+                backdrop = backdrop,
+                text = if (appearance.bgKind == "video") "更换背景视频" else "选择背景视频",
+                onClick = {
+                    scope.launch {
+                        pickBackgroundVideo()?.let { path ->
+                            onAppearanceChange(currentAppearance.copy(bgKind = "video", bgPath = path, customBg = false))
+                            showToast("视频背景已设置")
+                        } ?: showToast("失败：未选择视频")
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                secondary = true
+            )
+            if (appearance.bgKind == "gif" || appearance.bgKind == "video") {
+                Spacer(Modifier.height(8.dp))
+                ActionButton(
+                    backdrop = backdrop,
+                    text = "清除动态背景",
+                    onClick = {
+                        onAppearanceChange(currentAppearance.copy(bgKind = "wallpaper", bgPath = ""))
+                        showToast("已回到内置壁纸")
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    secondary = true
+                )
             }
             Spacer(Modifier.height(12.dp))
             SliderField(backdrop, "背景模糊度", "${appearance.bgBlur.toInt()}", 0f..20f, { appearance.bgBlur }, { onAppearanceChange(appearance.copy(bgBlur = it)) })

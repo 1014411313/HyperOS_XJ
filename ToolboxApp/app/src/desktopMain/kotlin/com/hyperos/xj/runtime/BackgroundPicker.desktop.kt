@@ -24,3 +24,7 @@ actual suspend fun rearBgGifPreviewPath(restoreFromEngine: Boolean): String? = n
 actual suspend fun rearDefaultBgGifPreviewPath(restoreFromEngine: Boolean): String? = null
 
 actual fun gifFrameAt(path: String, timeMs: Long): ImageBitmap? = null
+
+actual suspend fun pickBackgroundGif(): String? = null
+
+actual suspend fun pickBackgroundVideo(): String? = null

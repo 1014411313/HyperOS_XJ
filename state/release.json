@@ -3,6 +3,27 @@
   "note": "版本历史。fixed_in 落在哪个版本，就登记在该版本下；未发布的版本统一标「未发布」。",
   "history": [
     {
+      "version": "3.1.19（329，未发布）",
+      "date": "2026-11-09",
+      "changes": [
+        {
+          "id": "bug-077",
+          "title": "检查更新多源回落（jsDelivr→Gitee→GitHub）+ latest.json 更新",
+          "status": "已修待复测"
+        },
+        {
+          "id": "bug-078",
+          "title": "页面沉浸滚动，状态栏与底栏模糊收边",
+          "status": "已修待复测"
+        },
+        {
+          "id": "bug-079",
+          "title": "App 背景支持 GIF 动图与视频",
+          "status": "已修待复测"
+        }
+      ]
+    },
+    {
       "version": "3.1.18（328，未发布）",
       "date": "2026-11-09",
       "changes": [

@@ -35,6 +35,7 @@ import com.hyperos.xj.ui.ActionButton
 import com.hyperos.xj.ui.CollapsibleCard
 import com.hyperos.xj.ui.GlassCard
 import com.hyperos.xj.ui.LocalAccentColor
+import com.hyperos.xj.ui.LocalPageInsets
 import com.hyperos.xj.ui.SectionLabel
 import com.hyperos.xj.ui.XJ
 import com.hyperos.xj.ui.showToast
@@ -125,7 +126,10 @@ private fun AboutMainPage(
         Modifier
             .fillMaxWidth()
             .verticalScroll(rememberScrollState())
-            .padding(bottom = 108.dp),
+            .padding(
+                top = LocalPageInsets.current.top,
+                bottom = LocalPageInsets.current.bottom
+            ),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         GlassCard(backdrop, Modifier.fillMaxWidth()) {
@@ -179,7 +183,7 @@ private fun AboutMainPage(
                 }
             )
             BasicText(
-                text = "更新来源：GitHub / 作者酷安 / Telegram（GitHub 与 Telegram 暂未收录，酷安主页见上方作者卡片）",
+                text = "更新源依次尝试 jsDelivr / Gitee / GitHub，国内网络下自动选可用源；也可在 settings.conf 配 update_base 指向自建镜像",
                 style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp)
             )
         }
@@ -237,7 +241,10 @@ private fun ToolOutputPage(
         Modifier
             .fillMaxWidth()
             .verticalScroll(rememberScrollState())
-            .padding(bottom = 108.dp),
+            .padding(
+                top = LocalPageInsets.current.top,
+                bottom = LocalPageInsets.current.bottom
+            ),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         BasicText(
@@ -291,7 +298,10 @@ private fun UninstallConfirmPage(
         Modifier
             .fillMaxWidth()
             .verticalScroll(rememberScrollState())
-            .padding(bottom = 108.dp),
+            .padding(
+                top = LocalPageInsets.current.top,
+                bottom = LocalPageInsets.current.bottom
+            ),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         BasicText(
@@ -334,7 +344,10 @@ private fun UninstallTipPage(backdrop: Backdrop, onBack: () -> Unit) {
         Modifier
             .fillMaxWidth()
             .verticalScroll(rememberScrollState())
-            .padding(bottom = 108.dp),
+            .padding(
+                top = LocalPageInsets.current.top,
+                bottom = LocalPageInsets.current.bottom
+            ),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         BasicText(
@@ -370,7 +383,10 @@ private fun AboutSubPage(
         Modifier
             .fillMaxWidth()
             .verticalScroll(rememberScrollState())
-            .padding(bottom = 108.dp),
+            .padding(
+                top = LocalPageInsets.current.top,
+                bottom = LocalPageInsets.current.bottom
+            ),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         BasicText(

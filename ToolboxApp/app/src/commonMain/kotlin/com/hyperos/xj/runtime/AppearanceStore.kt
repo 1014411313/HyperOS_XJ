@@ -29,8 +29,13 @@ internal fun AppearanceSettings.toPersistentMap(): Map<String, String> = mapOf(
     "wallpaperIndex" to wallpaperIndex.toString(),
     "bgBlur" to bgBlur.toString(),
     "customBg" to customBg.toString(),
+    "bgKind" to bgKind,
+    "bgPath" to bgPath,
     // bgImage（ImageBitmap）不持久化：位图不可序列化，重启后需重新选择
 )
+
+/** bgKind 合法取值：持久化里出现其他值时回落 wallpaper。 */
+private val backgroundKinds = setOf("wallpaper", "image", "gif", "video")
 
 internal fun appearanceFromMap(map: Map<String, String>): AppearanceSettings =
     AppearanceSettings(
@@ -57,4 +62,6 @@ internal fun appearanceFromMap(map: Map<String, String>): AppearanceSettings =
         bgBlur = map["bgBlur"]?.toFloatOrNull() ?: 2f,
         customBg = map["customBg"]?.toBooleanStrictOrNull() ?: false,
         bgImage = null,
+        bgKind = map["bgKind"]?.takeIf { it in backgroundKinds } ?: "wallpaper",
+        bgPath = map["bgPath"] ?: "",
     )

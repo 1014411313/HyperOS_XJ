@@ -10,10 +10,14 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsBottomHeight
+import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
@@ -32,6 +36,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -46,14 +51,20 @@ import com.hyperos.xj.pages.ThermalPage
 import com.hyperos.xj.runtime.AppearanceStore
 import com.hyperos.xj.runtime.DeviceStatus
 import com.hyperos.xj.runtime.createToolboxBridge
+import com.hyperos.xj.ui.AppMediaBackground
 import com.hyperos.xj.ui.BottomBar
 import com.hyperos.xj.ui.LocalAccentColor
 import com.hyperos.xj.ui.LocalAppearance
 import com.hyperos.xj.ui.LocalGlassMode
+import com.hyperos.xj.ui.LocalPageInsets
+import com.hyperos.xj.ui.PageInsets
 import com.hyperos.xj.ui.XJ
 import com.hyperos.xj.ui.accentColor
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
+import com.kyant.backdrop.drawBackdrop
+import com.kyant.backdrop.effects.blur
+import com.kyant.shapes.RoundedRectangle
 import kotlinx.coroutines.delay
 
 private val tabLabels = listOf("主页", "温控", "电池", "外观", "关于")
@@ -89,24 +100,23 @@ fun App() {
         LocalAccentColor provides appearance.accentColor(),
         LocalGlassMode provides appearance.glassMode
     ) {
+        val density = LocalDensity.current
+        // 标题区与底栏悬浮，页面滚动区铺满全屏：内容可滑到状态栏与导航栏后面，靠模糊层保证系统图标可读。
+        var headerHostPx by remember { mutableIntStateOf(0) }
+        var bottomHostPx by remember { mutableIntStateOf(0) }
+        val headerInset = if (headerHostPx > 0) with(density) { headerHostPx.toDp() } else 96.dp
+        val bottomInset = if (bottomHostPx > 0) with(density) { bottomHostPx.toDp() } else 96.dp
+
         Box(Modifier.fillMaxSize()) {
             AppBackground(Modifier.fillMaxSize().layerBackdrop(backdrop))
 
-            Column(
-                Modifier
-                    .fillMaxSize()
-                    .systemBarsPadding()
-                    .padding(horizontal = 18.dp)
+            CompositionLocalProvider(
+                LocalPageInsets provides PageInsets(
+                    top = headerInset + 6.dp,
+                    bottom = bottomInset + 6.dp
+                )
             ) {
-                Spacer(Modifier.height(12.dp))
-                Header(selectedTab, status)
-                Spacer(Modifier.height(14.dp))
-
-                Box(
-                    Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                ) {
+                Box(Modifier.fillMaxSize()) {
                     when (selectedTab) {
                         0 -> HomePage(backdrop, bridge, status)
                         1 -> ThermalPage(backdrop, bridge, status)
@@ -123,15 +133,65 @@ fun App() {
                 }
             }
 
-            BottomBar(
-                selectedIndex = selectedTab,
-                labels = tabLabels,
-                onSelect = { selectedTab = it },
-                backdrop = backdrop,
-                modifier = Modifier
+            Column(
+                Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .onSizeChanged { headerHostPx = it.height }
+                    .drawBackdrop(
+                        backdrop = backdrop,
+                        shape = { RoundedRectangle(0.dp) },
+                        effects = { blur(26.dp.toPx()) },
+                        onDrawSurface = {
+                            drawRect(
+                                Brush.verticalGradient(
+                                    listOf(
+                                        Color.Black.copy(alpha = 0.38f),
+                                        Color.Black.copy(alpha = 0.14f),
+                                        Color.Transparent
+                                    )
+                                )
+                            )
+                        }
+                    )
+            ) {
+                Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
+                Box(Modifier.padding(horizontal = 18.dp, vertical = 10.dp)) {
+                    Header(selectedTab, status)
+                }
+            }
+
+            Column(
+                Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(horizontal = 18.dp, vertical = 12.dp)
-            )
+                    .fillMaxWidth()
+                    .onSizeChanged { bottomHostPx = it.height }
+                    .drawBackdrop(
+                        backdrop = backdrop,
+                        shape = { RoundedRectangle(0.dp) },
+                        effects = { blur(26.dp.toPx()) },
+                        onDrawSurface = {
+                            drawRect(
+                                Brush.verticalGradient(
+                                    listOf(
+                                        Color.Transparent,
+                                        Color.Black.copy(alpha = 0.20f),
+                                        Color.Black.copy(alpha = 0.42f)
+                                    )
+                                )
+                            )
+                        }
+                    )
+            ) {
+                BottomBar(
+                    selectedIndex = selectedTab,
+                    labels = tabLabels,
+                    onSelect = { selectedTab = it },
+                    backdrop = backdrop,
+                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp)
+                )
+                Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars))
+            }
         }
     }
 }
@@ -197,6 +257,20 @@ private fun AppBackground(modifier: Modifier = Modifier) {
     val appearance = LocalAppearance.current
     val accent = LocalAccentColor.current
     val bgImage = appearance.bgImage
+
+    // GIF / 视频背景：壁纸作为底层兜底，媒体文件缺失或解码失败时自然透出，不会黑屏
+    if (appearance.bgKind == "gif" || appearance.bgKind == "video") {
+        val base = wallpaperPalette[appearance.wallpaperIndex.coerceIn(0, wallpaperPalette.size - 1)]
+        Box(modifier.background(Brush.verticalGradient(base))) {
+            AppMediaBackground(
+                kind = appearance.bgKind,
+                path = appearance.bgPath,
+                blurDp = appearance.bgBlur,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+        return
+    }
 
     if (appearance.customBg && bgImage != null) {
         Box(modifier.blur(appearance.bgBlur.coerceIn(0f, 20f).dp)) {

@@ -4,6 +4,12 @@ import androidx.compose.ui.graphics.ImageBitmap
 
 expect suspend fun pickBackgroundImageBytes(): ByteArray?
 
+/** 选择 GIF 并落盘到 App 外部私有目录，返回落地绝对路径；取消、失败或超体积上限返回 null。 */
+expect suspend fun pickBackgroundGif(): String?
+
+/** 选择视频并落盘到 App 外部私有目录，返回落地绝对路径；取消、失败或超体积上限返回 null。 */
+expect suspend fun pickBackgroundVideo(): String?
+
 expect fun decodeBackgroundImage(bytes: ByteArray): ImageBitmap?
 
 /**

@@ -22,6 +22,8 @@ import kotlin.coroutines.resume
 object AndroidBackgroundPicker {
     private var launcher: ActivityResultLauncher<PickVisualMediaRequest>? = null
     private var pending: (ByteArray?) -> Unit = {}
+    private var docLauncher: ActivityResultLauncher<Array<String>>? = null
+    private var docPending: (android.net.Uri?) -> Unit = {}
     private var appContext: Context? = null
 
     fun register(activity: ComponentActivity) {
@@ -33,6 +35,13 @@ object AndroidBackgroundPicker {
             pending = {}
             callback(uri?.let { readBytes(activity, it) })
         }
+        docLauncher = activity.registerForActivityResult(
+            ActivityResultContracts.OpenDocument()
+        ) { uri ->
+            val callback = docPending
+            docPending = {}
+            callback(uri)
+        }
     }
 
     fun launch(onResult: (ByteArray?) -> Unit): Boolean {
@@ -41,6 +50,13 @@ object AndroidBackgroundPicker {
         launcher.launch(
             PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
         )
+        return true
+    }
+
+    fun launchDoc(mimeTypes: Array<String>, onResult: (android.net.Uri?) -> Unit): Boolean {
+        val launcher = docLauncher ?: return false
+        docPending = onResult
+        launcher.launch(mimeTypes)
         return true
     }
 
@@ -75,6 +91,33 @@ object AndroidBackgroundPicker {
         return true
     }
 
+    /** 所选文档流式复制到外部私有目录固定文件名（覆盖旧文件）；超体积上限或复制失败删除半成品并返回 null。 */
+    fun copyDocToAppFile(uri: android.net.Uri, name: String): String? {
+        val context = appContext ?: return null
+        val target = context.getExternalFilesDir(null)?.let { File(it, name) } ?: return null
+        val copied = runCatching {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                target.outputStream().use { output ->
+                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                    var total = 0L
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        total += read
+                        if (total > APP_BG_MAX_BYTES) return@runCatching false
+                        output.write(buffer, 0, read)
+                    }
+                    true
+                }
+            } ?: false
+        }.getOrDefault(false)
+        if (!copied) {
+            runCatching { target.delete() }
+            return null
+        }
+        return target.absolutePath
+    }
+
     private fun readBytes(context: Context, uri: android.net.Uri): ByteArray? =
         context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
 }
@@ -97,6 +140,25 @@ actual suspend fun pickBackgroundImageBytes(): ByteArray? =
         }
         if (!launched && continuation.isActive) continuation.resume(null)
     }
+
+/** OpenDocument 选取转挂起返回：复用同一 launcher，按 mime 区分 GIF 与视频。 */
+private suspend fun pickAppDocument(mimeTypes: Array<String>): android.net.Uri? =
+    suspendCancellableCoroutine { continuation ->
+        val launched = AndroidBackgroundPicker.launchDoc(mimeTypes) { uri ->
+            if (continuation.isActive) continuation.resume(uri)
+        }
+        if (!launched && continuation.isActive) continuation.resume(null)
+    }
+
+actual suspend fun pickBackgroundGif(): String? = withContext(Dispatchers.IO) {
+    val uri = pickAppDocument(arrayOf("image/gif")) ?: return@withContext null
+    AndroidBackgroundPicker.copyDocToAppFile(uri, "app_bg.gif")?.also { GifFrameCache.evict(it) }
+}
+
+actual suspend fun pickBackgroundVideo(): String? = withContext(Dispatchers.IO) {
+    val uri = pickAppDocument(arrayOf("video/*")) ?: return@withContext null
+    AndroidBackgroundPicker.copyDocToAppFile(uri, "app_bg_video.mp4")
+}
 
 actual fun decodeBackgroundImage(bytes: ByteArray): ImageBitmap? =
     BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
@@ -165,6 +227,9 @@ actual suspend fun rearBgGifPreviewPath(restoreFromEngine: Boolean): String? = w
 
 /** 预览取帧上限：超出时等比缩小缓冲，避免超大 GIF 占满内存。 */
 private const val GIF_PREVIEW_MAX_SIDE = 1600f
+
+/** App 背景 GIF/视频副本体积上限：超限直接拒绝，避免占满外部私有目录。 */
+private const val APP_BG_MAX_BYTES = 200L * 1024 * 1024
 
 /** Movie 与帧缓冲按路径缓存：预览按时间取帧时避免重复解码与反复分配位图。 */
 private object GifFrameCache {

@@ -1,22 +1,41 @@
 #!/system/bin/sh
 # engine/lib/update.sh — 检查更新。被 xjctl.sh 在 `update` 分支内 source。
-# 拉取 <update_base>/latest.json（形如 {"version":"3.1.2","versionCode":312,"url":"..."}）
-# 与本地 module.prop 的 versionCode 比较。下载源 = battery/config/settings.conf 的 update_base。
+# 依次尝试多个更新源（国内网络下 GitHub raw 常不可达）：jsDelivr → Gitee 镜像 → GitHub raw。
+# 每个源拉取 <base>/latest.json（{"version":"3.1.19","versionCode":329,...}），首个成功的即用。
+# settings.conf 里配了 update_base 时只用该源（自建镜像）。
+
+update_default_sources() {
+  printf '%s\n' \
+    "https://cdn.jsdelivr.net/gh/1014411313/HyperOS_XJ@master" \
+    "https://gitee.com/xiaomirezhale/HyperOS_XJ/raw/master" \
+    "https://raw.githubusercontent.com/1014411313/HyperOS_XJ/master"
+}
+
+update_fetch() {
+  if [ -n "$2" ]; then
+    curl -fsSL -H "Authorization: token $2" --connect-timeout 5 --max-time 12 "$1" 2>/dev/null
+  else
+    curl -fsSL --connect-timeout 5 --max-time 12 "$1" 2>/dev/null
+  fi
+}
 
 update_check() {
-  # 键缺失时用内置默认（老用户配置里可能没有 update_base）
-  _base=$(cfg_get update_base "https://raw.githubusercontent.com/1014411313/HyperOS_XJ/master")
-  [ -n "$_base" ] || { echo "未配置更新源（settings.conf 的 update_base）"; return 1; }
   command -v curl >/dev/null 2>&1 || { echo "本机无 curl，无法检查更新"; return 1; }
-  _url="${_base%/}/latest.json"
-  # 私有仓库：可配 github_token（存设备本地配置，不随模块分发）
   _tok=$(cfg_get github_token "")
-  if [ -n "$_tok" ]; then
-    _json=$(curl -fsSL -H "Authorization: token $_tok" --connect-timeout 15 --max-time 60 "$_url" 2>/dev/null)
+  _custom=$(cfg_get update_base "")
+  _json=""
+  if [ -n "$_custom" ]; then
+    _json=$(update_fetch "${_custom%/}/latest.json" "$_tok")
   else
-    _json=$(curl -fsSL --connect-timeout 15 --max-time 60 "$_url" 2>/dev/null)
+    for _base in $(update_default_sources); do
+      _json=$(update_fetch "${_base%/}/latest.json" "$_tok")
+      [ -n "$_json" ] && break
+    done
   fi
-  [ -n "$_json" ] || { echo "检查失败：无法获取更新信息（$_url）"; return 1; }
+  if [ -z "$_json" ]; then
+    echo "检查失败：更新源均不可达（jsDelivr / Gitee / GitHub）。请检查网络后重试，或到发布页手动下载最新模块"
+    return 1
+  fi
   _new=$(printf '%s' "$_json" | tr ',' '\n' \
     | sed -n 's/.*"versionCode"[[:space:]]*:[[:space:]]*\([0-9]\{1,\}\).*/\1/p' | head -n1)
   _name=$(printf '%s' "$_json" | tr ',' '\n' \

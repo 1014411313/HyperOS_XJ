@@ -46,6 +46,8 @@ data class AppearanceSettings(
     val bgBlur: Float = 2f,
     val customBg: Boolean = false,
     val bgImage: ImageBitmap? = null,
+    val bgKind: String = "wallpaper",   // wallpaper / image / gif / video
+    val bgPath: String = "",            // gif/video 的 App 外部私有目录绝对路径
 )
 
 val LocalAppearance = staticCompositionLocalOf { AppearanceSettings() }

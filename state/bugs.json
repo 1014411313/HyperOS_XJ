@@ -18,19 +18,6 @@
       "affected": [
         "ToolboxApp/androidApp/src/main/java/com/hyperos/xj/rear/RearHook.java:41"
       ]
-    },
-    {
-      "id": "bug-077",
-      "title": "检查更新在国内网络下大概率失败",
-      "reported": "2026-11-09",
-      "type": "bug",
-      "version_seen": "3.1.18 (328)",
-      "device": "haotian",
-      "status": "待修",
-      "evidence": "用户反馈：检查更新，大部分都在国内可能链接不上，就无法检查更新。用户明确说下次改。",
-      "root_cause": "待查：更新检查走境外地址（GitHub raw/release 或 latest.json 托管在境外），国内直连超时",
-      "fix_plan": "下次处理：核对 App 更新检查的 URL 与超时策略；改为可切换的国内镜像/加速地址（如 Gitee 或自建），或同时请求多个源取先返回者；超时给明确提示而不是静默失败",
-      "affected": []
     }
   ],
   "fixed": [
@@ -1368,6 +1355,65 @@
       ],
       "fixed_in": "3.1.18（328，未发布）",
       "resolution": "仅改 App 启动器显示名：AndroidManifest android:label=WJ工具箱；模块名、模块 id、App 内标题、安装提示均保持原样（用户后续澄清）"
+    },
+    {
+      "id": "bug-077",
+      "title": "检查更新在国内网络下大概率失败",
+      "reported": "2026-11-09",
+      "type": "bug",
+      "version_seen": "3.1.18 (328)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户反馈：检查更新，大部分都在国内可能链接不上，就无法检查更新。用户明确说下次改。",
+      "root_cause": "待查：更新检查走境外地址（GitHub raw/release 或 latest.json 托管在境外），国内直连超时",
+      "fix_plan": "下次处理：核对 App 更新检查的 URL 与超时策略；改为可切换的国内镜像/加速地址（如 Gitee 或自建），或同时请求多个源取先返回者；超时给明确提示而不是静默失败",
+      "affected": [
+        "engine/lib/update.sh:8",
+        "latest.json",
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/pages/AboutPage.kt"
+      ],
+      "fixed_in": "3.1.19（329，未发布）",
+      "resolution": "update.sh 改为多源依次尝试：jsDelivr → Gitee 镜像 → GitHub raw，单源 connect-timeout 5s / max-time 12s，全部失败时给「更新源均不可达，请检查网络或到发布页手动下载」；settings.conf 配了 update_base 时仍只走自建源；latest.json 更新到 3.1.19/329；AboutPage 来源说明同步。实测容器内 jsDelivr 可达且解析 version=3.1.3/code=313，GitHub raw 不可达、Gitee 镜像仓库暂不存在（保留为备选）"
+    },
+    {
+      "id": "bug-078",
+      "title": "页面上下滑动完全沉浸：内容可延伸到任务栏、状态栏/底部做模糊、底部不割裂",
+      "reported": "2026-11-09",
+      "type": "feature",
+      "version_seen": "3.1.18 (328)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户要求：上下滑动要完全沉浸、可滑动至任务栏，为避免影响任务栏字体做模糊效果，下滑到最下方不要割裂",
+      "root_cause": "待查：App 主框架滚动容器的边距/裁剪方式；是否启用 edge-to-edge 与状态栏/导航栏透明；顶部 Header 与底部导航栏是否遮挡内容",
+      "fix_plan": "待方案：滚动内容延伸到状态栏与导航栏区域（去边距），状态栏/导航栏区域叠 backdrop 模糊层保证图标可读，底部用同色/模糊渐变收边避免割裂",
+      "affected": [
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/App.kt",
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/ui/PageInsets.kt",
+        "ToolboxApp/androidApp/src/main/java/com/hyperos/xj/MainActivity.kt"
+      ],
+      "fixed_in": "3.1.19（329，未发布）",
+      "resolution": "App.kt 去掉 systemBarsPadding，页面滚动区铺满全屏；标题区与底栏改为悬浮层，各自叠 backdrop 模糊（26dp）与垂直渐变遮罩（顶部 0.38→透明、底部 透明→0.42），内容可滑到状态栏与导航栏后面且不割裂；MainActivity 启用 enableEdgeToEdge（SystemBarStyle.dark，浅色系统图标）；5 个页面滚动容器由写死 bottom=108dp 改为 LocalPageInsets 上下预留"
+    },
+    {
+      "id": "bug-079",
+      "title": "App 背景支持 GIF 动图与视频",
+      "reported": "2026-11-09",
+      "type": "feature",
+      "version_seen": "3.1.18 (328)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户要求：app 背景可设置为 gif 或视频",
+      "root_cause": "待查：App 自身背景当前支持的图片来源（相册静态图片）与渲染方式",
+      "fix_plan": "待方案：背景选择支持 GIF（复用 Movie/帧解码）与视频（MediaPlayer+TextureView 或 ExoPlayer），需确认体积与播放策略（静音/循环/暂停）",
+      "affected": [
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/ui/Appearance.kt",
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/runtime/AppearanceStore.kt",
+        "ToolboxApp/app/src/androidMain/kotlin/com/hyperos/xj/runtime/BackgroundPicker.android.kt",
+        "ToolboxApp/app/src/androidMain/kotlin/com/hyperos/xj/ui/AppMediaBackground.android.kt",
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/pages/LookPage.kt"
+      ],
+      "fixed_in": "3.1.19（329，未发布）",
+      "resolution": "AppearanceSettings 新增 bgKind（wallpaper/image/gif/video）/bgPath 并持久化，读回时白名单校验回落 wallpaper；BackgroundPicker 新增 pickBackgroundGif/pickBackgroundVideo（OpenDocument，流式复制到 App 外部私有目录 app_bg.gif / app_bg_video.mp4，200MB 上限，重选覆盖）；新增 AppMediaBackground expect/actual：GIF 用 withFrameNanos 逐帧 + neverEqualPolicy，视频用 TextureView+MediaPlayer 静音循环并按较大缩放比 center-crop；LookPage 背景卡片新增「选择 GIF 动图」「选择背景视频」「清除动态背景」；App.kt 媒体层铺在内置壁纸兜底之上，文件缺失时透出壁纸不黑屏"
     }
   ],
   "cancelled": []
