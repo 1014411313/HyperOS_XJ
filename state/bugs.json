@@ -1627,6 +1627,54 @@
       "affected": [
         "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/App.kt"
       ]
+    },
+    {
+      "id": "bug-094",
+      "title": "内置默认背景改为插画图，默认外观参数按用户截图",
+      "reported": "2026-11-09",
+      "type": "feature",
+      "version_seen": "3.1.30 (340)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "fixed_in": "3.1.31（341，未发布）",
+      "resolution": "新增 dist/backdrop/app_bg_default.jpg（用户提供插画），service.sh 按版本戳铺到 App 私有目录；AppearanceSettings 默认改为 bgKind=image + bgPath 指向该文件，cardAlpha=0、cardBlur=2、cardDistortion=121（其余按截图：液态玻璃、字体1.0、圆角25、底栏84%/60/0.25/蓝色/模糊3、背景模糊2）；新增 loadAppBackgroundImage expect/actual 让 AppBackground 按路径读图；外观页选图/清除时同步 bgKind 与 bgPath",
+      "affected": [
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/ui/Appearance.kt",
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/runtime/AppearanceStore.kt",
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/App.kt",
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/pages/LookPage.kt",
+        "dist/HyperOS_XJ_New/service.sh",
+        "dist/HyperOS_XJ_New/backdrop/app_bg_default.jpg"
+      ]
+    },
+    {
+      "id": "bug-095",
+      "title": "渐变模糊仍有一圈线框",
+      "reported": "2026-11-09",
+      "type": "bug",
+      "version_seen": "3.1.30 (340)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "fixed_in": "3.1.31（341，未发布）",
+      "root_cause": "模糊层矩形边界落在屏幕内，blur 核在边界 clamp 出一圈色带；DstIn 只处理底部 alpha，左右/顶部边界仍可见",
+      "resolution": "模糊层 graphicsLayer 加 scaleX/scaleY=1.04、transformOrigin 顶部居中，让左右与顶部边界移到屏幕外，只留底部由 alpha 渐变收尾；渐变节点改为 0→1.0 / 0.40→0.50 / 0.70→0.12 / 1→0",
+      "affected": [
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/App.kt"
+      ]
+    },
+    {
+      "id": "bug-096",
+      "title": "标题位置太靠下",
+      "reported": "2026-11-09",
+      "type": "bug",
+      "version_seen": "3.1.30 (340)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "fixed_in": "3.1.31（341，未发布）",
+      "resolution": "PageInsets.top 由 状态栏+44dp 改为 状态栏+16dp，标题上移；模糊渐变同步加快淡出，标题位置不会被糊住",
+      "affected": [
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/App.kt"
+      ]
     }
   ],
   "cancelled": []

@@ -45,3 +45,6 @@ fun isGifBytes(bytes: ByteArray): Boolean {
     return (bytes[4] == '7'.code.toByte() || bytes[4] == '9'.code.toByte()) &&
         bytes[5] == 'a'.code.toByte()
 }
+
+/** 读取 App 背景图片文件（内置默认背景或用户图片副本）；失败返回 null。 */
+expect suspend fun loadAppBackgroundImage(path: String): ImageBitmap?

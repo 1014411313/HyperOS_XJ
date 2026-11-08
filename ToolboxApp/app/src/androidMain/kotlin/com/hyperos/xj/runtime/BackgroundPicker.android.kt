@@ -303,3 +303,9 @@ private fun isGifFile(file: File): Boolean = runCatching {
     }
     read == head.size && isGifBytes(head)
 }.getOrDefault(false)
+
+actual suspend fun loadAppBackgroundImage(path: String): ImageBitmap? = withContext(Dispatchers.IO) {
+    runCatching {
+        if (path.isEmpty()) null else BitmapFactory.decodeFile(path)?.asImageBitmap()
+    }.getOrNull()
+}

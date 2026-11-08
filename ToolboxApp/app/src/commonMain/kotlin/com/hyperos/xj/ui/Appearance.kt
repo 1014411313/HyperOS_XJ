@@ -30,9 +30,9 @@ data class AppearanceSettings(
     val fontScale: Float = 1f,
     val cardScale: Float = 1f,
     val cardCorner: Float = 25f,
-    val cardAlpha: Float = 0.06f,
-    val cardBlur: Float = 0f,
-    val cardDistortion: Float = 36f,
+    val cardAlpha: Float = 0f,
+    val cardBlur: Float = 2f,
+    val cardDistortion: Float = 121f,
     val cardTexture: Boolean = true,
     val smoothMode: Boolean = false,
     val hideBarText: Boolean = false,
@@ -46,8 +46,8 @@ data class AppearanceSettings(
     val bgBlur: Float = 2f,
     val customBg: Boolean = false,
     val bgImage: ImageBitmap? = null,
-    val bgKind: String = "wallpaper",   // wallpaper / image / gif / video
-    val bgPath: String = "",            // gif/video 的 App 外部私有目录绝对路径
+    val bgKind: String = "image",   // wallpaper / image / gif / video
+    val bgPath: String = "/storage/emulated/0/Android/data/com.hyperos.xj/files/app_bg_default.jpg",
 )
 
 val LocalAppearance = staticCompositionLocalOf { AppearanceSettings() }

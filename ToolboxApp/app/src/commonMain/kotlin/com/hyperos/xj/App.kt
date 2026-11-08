@@ -30,7 +30,9 @@ import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
@@ -44,6 +46,7 @@ import com.hyperos.xj.pages.ThermalPage
 import com.hyperos.xj.runtime.AppearanceStore
 import com.hyperos.xj.runtime.DeviceStatus
 import com.hyperos.xj.runtime.createToolboxBridge
+import com.hyperos.xj.runtime.loadAppBackgroundImage
 import com.hyperos.xj.ui.AppMediaBackground
 import com.hyperos.xj.ui.BottomBar
 import com.hyperos.xj.ui.LocalAccentColor
@@ -107,8 +110,8 @@ fun App() {
 
             CompositionLocalProvider(
                 LocalPageInsets provides PageInsets(
-                    // 顶部预留 = 状态栏 + 渐变模糊覆盖高度：标题初始位置落在模糊层下沿，不被打糊；滑动时仍会自然穿入
-                    top = statusTop + 44.dp,
+                    // 顶部预留：标题略高于模糊层底部但不被糊住（滑动时仍自然穿入）
+                    top = statusTop + 16.dp,
                     bottom = bottomInset + navBottom + 6.dp
                 )
             ) {
@@ -136,7 +139,14 @@ fun App() {
                     .align(Alignment.TopCenter)
                     .fillMaxWidth()
                     .height(statusTop + 48.dp)
-                    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                    .graphicsLayer {
+                        compositingStrategy = CompositingStrategy.Offscreen
+                        // 底/左右边界往外撇一点：模糊核在矩形边界会 clamp 出一圈色带（就是那圈线框），
+                        // 让边界落到屏幕外，只靠底部 alpha 渐变收尾
+                        scaleX = 1.04f
+                        scaleY = 1.04f
+                        transformOrigin = TransformOrigin(0.5f, 0f)
+                    }
                     .drawBackdrop(
                         backdrop = backdrop,
                         shape = { RoundedRectangle(0.dp) },
@@ -147,8 +157,8 @@ fun App() {
                         drawRect(
                             brush = Brush.verticalGradient(
                                 0f to Color.White,
-                                0.45f to Color.White.copy(alpha = 0.55f),
-                                0.78f to Color.White.copy(alpha = 0.18f),
+                                0.40f to Color.White.copy(alpha = 0.50f),
+                                0.70f to Color.White.copy(alpha = 0.12f),
                                 1f to Color.White.copy(alpha = 0f)
                             ),
                             blendMode = BlendMode.DstIn
@@ -209,6 +219,31 @@ private fun AppBackground(modifier: Modifier = Modifier) {
             )
         }
         return
+    }
+
+    // 内置/文件图片背景：默认背景与用户选图落盘后的路径都从这里读（bgImage 内存位图只在本次选择后可用）
+    if (appearance.bgKind == "image" && appearance.bgPath.isNotEmpty()) {
+        var fileBitmap by remember(appearance.bgPath) { mutableStateOf<ImageBitmap?>(null) }
+        LaunchedEffect(appearance.bgPath) {
+            fileBitmap = loadAppBackgroundImage(appearance.bgPath)
+        }
+        val bitmap = fileBitmap
+        if (bitmap != null) {
+            Box(modifier.blur(appearance.bgBlur.coerceIn(0f, 20f).dp)) {
+                Image(
+                    bitmap = bitmap,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.22f))
+                )
+            }
+            return
+        }
     }
 
     if (appearance.customBg && bgImage != null) {

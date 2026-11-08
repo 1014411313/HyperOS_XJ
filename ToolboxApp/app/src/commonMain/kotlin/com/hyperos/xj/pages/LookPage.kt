@@ -360,7 +360,7 @@ fun LookPage(
                         scope.launch {
                             pickBackgroundImageBytes()?.let { bytes ->
                                 decodeBackgroundImage(bytes)?.let { bitmap ->
-                                    onAppearanceChange(currentAppearance.copy(bgImage = bitmap))
+                                    onAppearanceChange(currentAppearance.copy(bgImage = bitmap, bgKind = "image", bgPath = ""))
                                 }
                             }
                         }
@@ -372,7 +372,7 @@ fun LookPage(
                     ActionButton(
                         backdrop = backdrop,
                         text = "清除图片",
-                        onClick = { onAppearanceChange(currentAppearance.copy(bgImage = null)) },
+                        onClick = { onAppearanceChange(currentAppearance.copy(bgImage = null, bgKind = "wallpaper", bgPath = "")) },
                         modifier = Modifier.fillMaxWidth(),
                         secondary = true
                     )

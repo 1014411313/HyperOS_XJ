@@ -56,6 +56,15 @@ if [ -f "$BG_SRC" ] && [ "$(cat "$BG_VER_FILE" 2>/dev/null)" != "$_bg_ver" ]; th
             case "$_bg_uid" in ''|*[!0-9]*|0) ;; *) chown "$_bg_uid:$_bg_uid" "$BG_APP" 2>/dev/null ;; esac
         fi
     fi
+    # App 内置默认背景图（插画）：与背屏默认图同一次版本更新一并铺设
+    _appbg_src="$MODDIR/backdrop/app_bg_default.jpg"
+    if [ -f "$_appbg_src" ] && [ -d "$BG_APP_DIR" ]; then
+        if cp -f "$_appbg_src" "$BG_APP_DIR/app_bg_default.jpg" 2>/dev/null; then
+            chmod 0644 "$BG_APP_DIR/app_bg_default.jpg" 2>/dev/null
+            _appbg_uid=$(stat -c %u "$BG_APP_DIR" 2>/dev/null)
+            case "$_appbg_uid" in ''|*[!0-9]*|0) ;; *) chown "$_appbg_uid:$_appbg_uid" "$BG_APP_DIR/app_bg_default.jpg" 2>/dev/null ;; esac
+        fi
+    fi
 fi
 
 # BAA 挂载 / PSS 恢复（仅当配置开启时）
