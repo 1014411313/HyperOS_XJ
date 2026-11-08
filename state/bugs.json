@@ -1449,6 +1449,28 @@
       ],
       "fixed_in": "3.1.20（330，未发布）",
       "resolution": "视频背景保持视频原始宽高比缩放铺满视图（center-crop，裁掉多余部分），不按屏幕分辨率拉伸；新增 addOnLayoutChangeListener 在布局变化后按当前 view 尺寸重算矩阵，原来尺寸为 0 时算出的矩阵会把画面放大到显示不全；图片与 GIF 保持 ContentScale.Crop，背屏图片/GIF 保持 cover 铺法不变"
+    },
+    {
+      "id": "bug-082",
+      "title": "恢复卡片左右 18dp 间距",
+      "reported": "2026-11-09",
+      "type": "bug",
+      "version_seen": "3.1.20 (330)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "fixed_in": "3.1.21（331，未发布）",
+      "resolution": "页面滚动内容补回 start/end 18dp（改全屏滚动布局时漏掉外层 horizontal padding）；检查更新输出改为只显示版本名（已是最新（3.1.21）/ 发现新版本 3.1.22（当前 3.1.21）），版本号唯一来源仍是 dist/HyperOS_XJ_New/module.prop，App versionName 构建时跟随"
+    },
+    {
+      "id": "bug-083",
+      "title": "版本号显示统一",
+      "reported": "2026-11-09",
+      "type": "bug",
+      "version_seen": "3.1.20 (330)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "fixed_in": "3.1.21（331，未发布）",
+      "resolution": "页面滚动内容补回 start/end 18dp（改全屏滚动布局时漏掉外层 horizontal padding）；检查更新输出改为只显示版本名（已是最新（3.1.21）/ 发现新版本 3.1.22（当前 3.1.21）），版本号唯一来源仍是 dist/HyperOS_XJ_New/module.prop，App versionName 构建时跟随"
     }
   ],
   "cancelled": []

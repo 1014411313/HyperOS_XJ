@@ -128,6 +128,8 @@ private fun AboutMainPage(
             .fillMaxWidth()
             .verticalScroll(rememberScrollState())
             .padding(
+                start = 18.dp,
+                end = 18.dp,
                 top = LocalPageInsets.current.top,
                 bottom = LocalPageInsets.current.bottom
             ),
@@ -244,6 +246,8 @@ private fun ToolOutputPage(
             .fillMaxWidth()
             .verticalScroll(rememberScrollState())
             .padding(
+                start = 18.dp,
+                end = 18.dp,
                 top = LocalPageInsets.current.top,
                 bottom = LocalPageInsets.current.bottom
             ),
@@ -301,6 +305,8 @@ private fun UninstallConfirmPage(
             .fillMaxWidth()
             .verticalScroll(rememberScrollState())
             .padding(
+                start = 18.dp,
+                end = 18.dp,
                 top = LocalPageInsets.current.top,
                 bottom = LocalPageInsets.current.bottom
             ),
@@ -347,6 +353,8 @@ private fun UninstallTipPage(backdrop: Backdrop, onBack: () -> Unit) {
             .fillMaxWidth()
             .verticalScroll(rememberScrollState())
             .padding(
+                start = 18.dp,
+                end = 18.dp,
                 top = LocalPageInsets.current.top,
                 bottom = LocalPageInsets.current.bottom
             ),
@@ -386,6 +394,8 @@ private fun AboutSubPage(
             .fillMaxWidth()
             .verticalScroll(rememberScrollState())
             .padding(
+                start = 18.dp,
+                end = 18.dp,
                 top = LocalPageInsets.current.top,
                 bottom = LocalPageInsets.current.bottom
             ),

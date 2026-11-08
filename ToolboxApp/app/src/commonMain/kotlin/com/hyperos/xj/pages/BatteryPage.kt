@@ -139,6 +139,8 @@ fun BatteryPage(
             .fillMaxWidth()
             .verticalScroll(rememberScrollState())
             .padding(
+                start = 18.dp,
+                end = 18.dp,
                 top = LocalPageInsets.current.top,
                 bottom = LocalPageInsets.current.bottom
             ),

@@ -41,11 +41,12 @@ update_check() {
   _name=$(printf '%s' "$_json" | tr ',' '\n' \
     | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
   _cur=$(grep -m1 '^versionCode=' "$MODDIR/module.prop" 2>/dev/null | cut -d= -f2 | tr -d '\r')
+  _curname=$(grep -m1 '^version=' "$MODDIR/module.prop" 2>/dev/null | cut -d= -f2 | tr -d '\r')
   case "$_cur" in ''|*[!0-9]*) _cur=0 ;; esac
   case "$_new" in ''|*[!0-9]*) echo "更新信息格式异常"; return 1 ;; esac
   if [ "$_new" -gt "$_cur" ]; then
-    echo "发现新版本 ${_name:-代码$_new}（本地 $_cur），请到发布页下载"
+    echo "发现新版本 ${_name:-?}（当前 ${_curname:-?}），请到发布页下载"
   else
-    echo "已是最新（本地 $_cur，云端 $_new）"
+    echo "已是最新（${_curname:-$_cur}）"
   fi
 }
