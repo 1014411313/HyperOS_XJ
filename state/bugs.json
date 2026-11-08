@@ -1529,10 +1529,27 @@
       "device": "haotian",
       "status": "已修待复测",
       "fixed_in": "3.1.24（334，未发布）",
-      "resolution": "APL 新增锁温状态 apl_thermal_lock（持久化到 apl_state 第 9 字段）：电池温度 ≥ 档位上限+3℃ 时目标功率直接压到 APL_THERMAL_MIN_W=5W（按当前电压折算电流，约 1250mA），锁定期间禁止上探；回落到「上限−APL_TEMP_HYST(2℃)」才解除并恢复正常上探。未到 +3℃ 时仍按档位瓦数封顶。power.sh 的 apl_target_ma 下限从 2000mA 放宽到 300mA，否则 5W 目标会被当成无目标退回全速",
+      "resolution": "APL 新增锁温状态 apl_thermal_lock（持久化到 apl_state 第 9 字段）：温控档位只定义温度阈值，电池温度 ≥ 上限+3℃ 时目标功率直接压到 APL_THERMAL_MIN_W=5W（按当前电压折算，约 1250mA），锁定期间禁止上探；回落到「上限−APL_TEMP_HYST(2℃)」才解除。未到 +3℃ 时不额外限制功率。power.sh 的 apl_target_ma 下限从 2000mA 放宽到 300mA，否则 5W 目标会被当成无目标退回全速",
       "affected": [
         "engine/lib/apl.sh",
         "engine/lib/power.sh"
+      ]
+    },
+    {
+      "id": "bug-088",
+      "title": "档位语义纠正：温控档位只管温度阈值，不绑功率上限",
+      "reported": "2026-11-09",
+      "type": "bug",
+      "version_seen": "3.1.24 (334)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "fixed_in": "3.1.25（335，未发布）",
+      "evidence": "用户澄清：我说的档位是温控档位，你理解错了——之前给一~五档各绑了 15/25/35/45/55W 的功率上限，属于误加的一层限制",
+      "root_cause": "把温控档位当成「温度阈值+功率上限」双约束，而用户只要温度阈值（超 +3℃ 锁 5W、回落 -2℃ 解除）",
+      "resolution": "移除 APL 的档位瓦数映射（apl_level_power_w/apl_mode_power_w）与相关封顶/下限分支；温度保护只剩锁温逻辑：≥上限+3℃ → 5W，≤上限-2℃ → 解除；未到 +3℃ 不额外限制功率",
+      "affected": [
+        "engine/lib/apl.sh",
+        "engine/lib/apl_temp.sh"
       ]
     }
   ],

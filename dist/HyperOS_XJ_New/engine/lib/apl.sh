@@ -209,7 +209,6 @@ apl_tick() {
     _apl_tup=$(( _apl_fh - 8 )); [ "$_apl_tup" -lt 40 ] && _apl_tup=40
     _apl_tdn=$(( _apl_fh - 3 )); [ "$_apl_tdn" -lt 45 ] && _apl_tdn=45
   fi
-  _apl_lpw=$(apl_mode_power_w)
   _apl_gap=$(apl_num "$(cfg_get cg_min_write_gap 60)")
   [ "$_apl_gap" -lt 15 ] && _apl_gap=15
 
@@ -299,7 +298,8 @@ apl_tick() {
   fi
 
   # ---- 温度保护 ----
-  # 锁温：超过档位上限 3℃ 压到 5W，直到回落到「上限 − 滞回（默认2℃）」才解除（滞后由 apl_thermal_lock 记状态）。
+  # 温控档位只定义温度阈值：超过上限 3℃ 直接压到 5W，直到回落到「上限 − 滞回（默认2℃）」才解除。
+  # 未到 +3℃ 时不额外限制功率（塌陷/学习逻辑照原样跑）。
   if [ -n "$_apl_lt" ]; then
     if [ "$_apl_tb" -ge $(( _apl_lt + 3 )) ]; then
       apl_thermal_lock=1
@@ -307,29 +307,13 @@ apl_tick() {
       apl_thermal_lock=0
     fi
   fi
-  if [ "$_apl_tb" -ge "$_apl_tdn" ]; then
-    _apl_new=$(( _apl_tgt * 80 / 100 ))
-    if [ "$apl_thermal_lock" = "1" ]; then
-      _apl_new=$(( APL_THERMAL_MIN_W * 1000 / _apl_mv ))
-      _apl_fl=300
-    elif [ -n "$_apl_lpw" ]; then
-      # 有档位功率上限：目标电流不得高于「上限瓦数 / 电压」
-      _apl_pcap=$(( _apl_lpw * 1000 / _apl_mv ))
-      [ "$_apl_pcap" -lt 2000 ] && _apl_pcap=2000
-      [ "$_apl_new" -gt "$_apl_pcap" ] && _apl_new="$_apl_pcap"
-      _apl_fl=$(( _apl_cap * 10 / 100 ))
-      [ "$_apl_fl" -lt 2000 ] && _apl_fl=2000
-    else
-      _apl_fl=$(( _apl_cap * 50 / 100 ))
-    fi
+  if [ "$apl_thermal_lock" = "1" ]; then
+    _apl_new=$(( APL_THERMAL_MIN_W * 1000 / _apl_mv ))
+    _apl_fl=300
     [ "$_apl_new" -lt "$_apl_fl" ] && _apl_new="$_apl_fl"
     if [ "$_apl_new" -lt "$_apl_tgt" ]; then
       _apl_tgt="$_apl_new"
-      if [ "$apl_thermal_lock" = "1" ]; then
-        blog "APL 电池 ${_apl_tb}℃ 超上限 ${_apl_lt}℃ 已 3℃，锁 ${APL_THERMAL_MIN_W}W → ${_apl_tgt}mA（回落到 ${_apl_tup}℃ 解除）"
-      else
-        blog "APL 电池 ${_apl_tb}℃ ≥ 降档线 ${_apl_tdn}℃（档位 ${_apl_lpw:-无}W）：降 → ${_apl_tgt}mA"
-      fi
+      blog "APL 电池 ${_apl_tb}℃ 超上限 ${_apl_lt}℃ 已 3℃，锁 ${APL_THERMAL_MIN_W}W → ${_apl_tgt}mA（回落到 ${_apl_tup}℃ 解除）"
       apl_lock_until=$(( _apl_now + 60 ))
       apl_stable_cnt=0
     fi
@@ -389,13 +373,8 @@ apl_tick() {
   fi
 
   # ---- 落盘 ----
-  # 有档位功率上限时，50% 硬底不再适用（否则二档 25W 会被抬回 10000mA/40W）
   _apl_fl=$(( _apl_cap * 50 / 100 ))
-  if [ -n "$_apl_lpw" ]; then
-    _apl_pcap=$(( _apl_lpw * 1000 / _apl_mv ))
-    [ "$_apl_pcap" -lt "$_apl_fl" ] && _apl_fl="$_apl_pcap"
-  fi
-  # 锁温状态允许降到 5W 对应电流（~1250mA），不受 2000mA 下限约束
+  # 锁温状态允许降到 5W 对应电流（~1250mA），不受 50%/2000mA 下限约束
   [ "$apl_thermal_lock" = "1" ] && _apl_fl=300
   [ "$_apl_tgt" -lt "$_apl_fl" ] && _apl_tgt="$_apl_fl"
   [ "$_apl_tgt" -gt "$_apl_cap" ] && _apl_tgt="$_apl_cap"
