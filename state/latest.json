@@ -1,0 +1,7 @@
+{
+  "version": "3.1.3",
+  "versionCode": 313,
+  "date": "2026-11-08",
+  "url": "",
+  "notes": "充电 inf 档闸门修复；面板直读 sysfs；背屏与 App 一批 UI 修复"
+}

@@ -6,18 +6,24 @@ import android.os.Looper;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
+import java.util.Collections;
 import java.util.Map;
+import java.util.Set;
 import java.util.WeakHashMap;
 
 public final class Overlay {
     private static final Map<Activity, FrameLayout> OVERLAYS = new WeakHashMap<>();
     private static final Map<Activity, Runnable> TICKS = new WeakHashMap<>();
+    // 上滑退出后按 Activity 记忆，防止同一会话内重复叠加；Activity 销毁后弱引用自动释放。
+    private static final Set<Activity> DISMISSED =
+            Collections.newSetFromMap(new WeakHashMap<Activity, Boolean>());
     private static final Handler HANDLER = new Handler(Looper.getMainLooper());
 
     private Overlay() {
     }
 
     public static synchronized void attach(Activity activity) {
+        if (DISMISSED.contains(activity)) return;
         if (OVERLAYS.containsKey(activity)) return;
         try {
             View decor = activity.getWindow().getDecorView();
@@ -28,6 +34,12 @@ public final class Overlay {
             container.setClickable(false);
             container.setFocusable(false);
             PanelView panel = new PanelView(activity);
+            panel.setOnSwipeUpListener(new Runnable() {
+                @Override
+                public void run() {
+                    dismiss(activity);
+                }
+            });
             container.addView(panel, new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
             root.addView(container, new ViewGroup.LayoutParams(
@@ -54,6 +66,11 @@ public final class Overlay {
             HANDLER.post(tick);
         } catch (Throwable ignored) {
         }
+    }
+
+    public static synchronized void dismiss(Activity activity) {
+        DISMISSED.add(activity);
+        detach(activity);
     }
 
     public static synchronized void detach(Activity activity) {

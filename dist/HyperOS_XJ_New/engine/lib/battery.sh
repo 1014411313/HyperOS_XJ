@@ -2,9 +2,9 @@
 # engine/lib/battery.sh — 新模块的电池解容核心。
 # 只读取 battery/baa 与 battery/config 的数据，不调用旧模块脚本。
 
+# BAT_DIR 只用于定位模块内只读资源（baa/dtbo/配置模板）；用户状态在 BT_STATE（DATA，模块目录外）。
 BAT_DIR="$MODDIR/battery"
-BAT_CONF="$BAT_DIR/config/settings.conf"
-BAT_STATE="$BAT_DIR/state"
+BAT_STATE="$BT_STATE"
 BAA_LABEL="u:object_r:batteryantiaging_cfg_file:s0"
 PSS_COMPONENT=com.miui.securitycenter/com.miui.powercenter.provider.PowerSaveService
 

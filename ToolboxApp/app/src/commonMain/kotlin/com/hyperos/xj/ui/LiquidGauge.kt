@@ -124,9 +124,11 @@ fun LiquidGauge(
             if (sweep > 1f) {
                 drawArc(
                     brush = Brush.sweepGradient(
+                        // 首尾同色：sweepGradient 的 0 位在 3 点钟方向，正好落在弧的 25% 处，
+                        // 首尾不同色会在这里露出一条径向接缝（看起来像横线）。
                         0f to accent,
                         0.5f to Color.White.copy(alpha = 0.85f),
-                        1f to accent.copy(alpha = 0.6f),
+                        1f to accent,
                         center = Offset(cx, cy)
                     ),
                     startAngle = -90f,

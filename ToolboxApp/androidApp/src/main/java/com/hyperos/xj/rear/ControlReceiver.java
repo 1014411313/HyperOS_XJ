@@ -22,7 +22,22 @@ public class ControlReceiver extends BroadcastReceiver {
         String fields = intent.getStringExtra("fields");
         if (fields == null || fields.isEmpty()) fields = old.fields;
 
-        RearConfig cfg = new RearConfig(enabled, keepOn, accent, scale, fields);
+        // 引擎 send_control 总是附带 bg（空串=清除）；旧引擎不带 bg extra，此处重置为默认色。
+        RearConfig cfg;
+        if (intent.hasExtra("bg")) {
+            String bg = intent.getStringExtra("bg");
+            if (bg != null && bg.startsWith("image:")) {
+                cfg = new RearConfig(enabled, keepOn, accent, scale, fields,
+                        null, bg.substring("image:".length()));
+            } else if (bg != null && bg.startsWith("color:")) {
+                cfg = new RearConfig(enabled, keepOn, accent, scale, fields,
+                        bg.substring("color:".length()), null);
+            } else {
+                cfg = new RearConfig(enabled, keepOn, accent, scale, fields);
+            }
+        } else {
+            cfg = new RearConfig(enabled, keepOn, accent, scale, fields);
+        }
         Prefs.write(context, cfg);
         if (cfg.enabled) {
             RearService.start(context);

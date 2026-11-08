@@ -24,11 +24,13 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -38,11 +40,16 @@ import com.hyperos.xj.runtime.DeviceStatus
 import com.hyperos.xj.runtime.Engine
 import com.hyperos.xj.runtime.ToolboxRuntimeBridge
 import com.hyperos.xj.runtime.decodeBackgroundImage
+import com.hyperos.xj.runtime.isGifBytes
 import com.hyperos.xj.runtime.pickBackgroundImageBytes
+import com.hyperos.xj.runtime.readRearCardBgImageBytes
+import com.hyperos.xj.runtime.rearBgGifPreviewPath
+import com.hyperos.xj.runtime.writeRearBackgroundImage
 import com.hyperos.xj.ui.AccentPalette
 import com.hyperos.xj.ui.ActionButton
 import com.hyperos.xj.ui.AppearanceSettings
 import com.hyperos.xj.ui.ChipSelector
+import com.hyperos.xj.ui.CollapsibleCard
 import com.hyperos.xj.ui.GlassCard
 import com.hyperos.xj.ui.GlassChip
 import com.hyperos.xj.ui.GlassMode
@@ -53,6 +60,7 @@ import com.hyperos.xj.ui.SwatchPalette
 import com.hyperos.xj.ui.ToggleLine
 import com.hyperos.xj.ui.XJ
 import com.hyperos.xj.ui.accentColor
+import com.hyperos.xj.ui.showToast
 import com.kyant.backdrop.Backdrop
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -60,6 +68,18 @@ import kotlin.math.roundToInt
 private val themeOptions = listOf("极光浅色", "全息流体", "暗黑霓虹", "幻彩极光", "赛博霓虹", "熔岩鎏金", "冰川琉璃", "月海流银")
 private val rearFields = listOf("温度", "电量", "电压", "电流", "功率", "状态", "设计容量", "满充容量", "健康度", "循环", "伪装", "协议", "剩余容量", "电池寿命")
 private val rearFieldIds = listOf("temp", "soc", "volt", "cur", "power", "status", "design", "full", "health", "cycle", "fake", "proto", "rm", "soh")
+private val rearConfPaths = listOf(
+    "/storage/emulated/0/Android/data/com.hyperos.xj/files/rear.conf",
+    "/data/local/tmp/xj_rear.conf",
+)
+private const val rearBgDefaultEnginePath = "/data/local/tmp/xj_rear_bg.gif"
+private val rearCardBgPalette = listOf(
+    Color(0xFF101418),
+    Color(0xFF142031),
+    Color(0xFF13261E),
+    Color(0xFF2B1520),
+    Color(0xFF241B31),
+)
 
 @Composable
 fun LookPage(
@@ -73,16 +93,38 @@ fun LookPage(
     var rearTouched by remember { mutableStateOf(false) }
     var rearSelected by remember { mutableStateOf(setOf(0, 1, 2, 3)) }
     var rearFont by remember { mutableIntStateOf(1) }
+    var rearCardBg by remember { mutableStateOf<String?>(null) }
+    var rearCardBgImage by remember { mutableStateOf<ImageBitmap?>(null) }
+    var rearCardBgGifPath by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    // 图片选择异步返回后组合早已重组，必须读最新快照，否则会覆盖期间调过的 bgBlur 等字段
+    val currentAppearance by rememberUpdatedState(appearance)
 
     fun pushRearConfig(selected: Set<Int>, font: Int, accent: Color) {
         scope.launch {
-            bridge.exec(Engine.rearConfig(fieldsValue(selected), fontValue(font), accentHex(accent)))
+            val result = bridge.execResult(Engine.rearConfig(fieldsValue(selected), fontValue(font), accentHex(accent)))
+            showToast(if (result.success) "背屏参数已推送" else "失败：背屏参数推送")
         }
     }
 
     LaunchedEffect(status.rearScreen, rearTouched) {
         if (!rearTouched) rearEnabled = status.rearScreen
+    }
+
+    // 无背屏机型也要能在预览里看到背景（与 bug-044 一致），不按 rearScreenSupported 跳过
+    LaunchedEffect(bridge) {
+        rearCardBg = readRearCardBg(bridge)
+        if (rearCardBg?.startsWith("image:") == true) {
+            val gifPath = rearBgGifPreviewPath()
+            if (rearCardBg == "image:$rearBgDefaultEnginePath" || gifPath != null) {
+                // 默认背景与自选 GIF 共用引擎路径：预览只认 App 侧 GIF 副本，
+                // 副本缺失时不能回退 PNG 副本（那是旧静态图），直接不显背景。
+                rearCardBgGifPath = gifPath
+                rearCardBgImage = null
+            } else {
+                rearCardBgImage = readRearCardBgImageBytes()?.let { decodeBackgroundImage(it) }
+            }
+        }
     }
 
     Column(
@@ -111,70 +153,139 @@ fun LookPage(
             )
         }
 
-        if (!status.rearScreenSupported) {
-            GlassCard(backdrop, Modifier.fillMaxWidth()) {
-                SectionLabel("背屏")
-                Spacer(Modifier.height(6.dp))
-                BasicText("本机无背屏", style = TextStyle(color = XJ.TextSecondary, fontSize = 12.sp))
-            }
-        } else {
-            GlassCard(backdrop, Modifier.fillMaxWidth()) {
-                ToggleLine(
-                    backdrop,
-                    "背屏电池卡片",
-                    "支持背屏机型投放电池卡片",
-                    rearEnabled,
-                    onCheckedChange = {
-                        rearTouched = true
-                        rearEnabled = it
-                        scope.launch { bridge.exec(Engine.rear(it)) }
-                    }
-                )
-                Spacer(Modifier.height(10.dp))
-                if (rearEnabled) {
-                    RearScreenPreview(
-                        accent = appearance.accentColor(),
-                        status = status,
-                        fields = rearSelected.toList(),
-                        modifier = Modifier.fillMaxWidth(),
-                        fontScale = when (rearFont) { 0 -> 0.85f; 2 -> 1.2f; else -> 1f },
-                        animate = !appearance.smoothMode
-                    )
-                    Spacer(Modifier.height(10.dp))
-                }
-                BasicText("四角显示项，最多选 4 项", style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp))
-                Spacer(Modifier.height(6.dp))
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(7.dp)
-                ) {
-                    rearFields.forEachIndexed { index, label ->
-                        GlassChip(
-                            backdrop = backdrop,
-                            label = label,
-                            selected = index in rearSelected,
-                            onClick = {
-                                rearSelected =
-                                    if (index in rearSelected) rearSelected - index
-                                    else if (rearSelected.size < 4) rearSelected + index
-                                    else rearSelected
-                                pushRearConfig(rearSelected, rearFont, appearance.accentColor())
+        CollapsibleCard(
+            backdrop = backdrop,
+            title = "背屏",
+            subtitle = if (status.rearScreenSupported) "支持背屏机型投放电池卡片" else "本机无背屏：以下仅作预览，换机型后生效",
+            initiallyExpanded = false,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            ToggleLine(
+                backdrop,
+                "背屏电池卡片",
+                "支持背屏机型投放电池卡片",
+                rearEnabled,
+                onCheckedChange = {
+                    rearTouched = true
+                    rearEnabled = it
+                    scope.launch {
+                        val result = bridge.execResult(Engine.rear(it))
+                        showToast(
+                            when {
+                                !result.success -> "失败：背屏电池卡片"
+                                it -> "背屏电池卡片 已开启"
+                                else -> "背屏电池卡片 已关闭"
                             }
                         )
                     }
                 }
+            )
+            Spacer(Modifier.height(10.dp))
+            if (rearEnabled) {
+                RearScreenPreview(
+                    accent = appearance.accentColor(),
+                    status = status,
+                    fields = rearSelected.toList(),
+                    modifier = Modifier.fillMaxWidth(),
+                    fontScale = when (rearFont) { 0 -> 0.85f; 2 -> 1.2f; else -> 1f },
+                    bgColor = rearCardBg ?: "",
+                    bgImage = rearCardBgImage,
+                    bgGifPath = rearCardBgGifPath
+                )
                 Spacer(Modifier.height(10.dp))
-                ChipSelector(
-                    backdrop = backdrop,
-                    title = "背屏字号",
-                    options = listOf("小", "中", "大"),
-                    selectedIndex = rearFont,
-                    onSelect = {
-                        rearFont = it
-                        pushRearConfig(rearSelected, it, appearance.accentColor())
+            }
+            BasicText("四角显示项，最多选 4 项", style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp))
+            Spacer(Modifier.height(6.dp))
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(7.dp)
+            ) {
+                rearFields.forEachIndexed { index, label ->
+                    GlassChip(
+                        backdrop = backdrop,
+                        label = label,
+                        selected = index in rearSelected,
+                        onClick = {
+                            rearSelected =
+                                if (index in rearSelected) rearSelected - index
+                                else if (rearSelected.size < 4) rearSelected + index
+                                else rearSelected
+                            pushRearConfig(rearSelected, rearFont, appearance.accentColor())
+                        }
+                    )
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            ChipSelector(
+                backdrop = backdrop,
+                title = "背屏字号",
+                options = listOf("小", "中", "大"),
+                selectedIndex = rearFont,
+                onSelect = {
+                    rearFont = it
+                    pushRearConfig(rearSelected, it, appearance.accentColor())
+                }
+            )
+            Spacer(Modifier.height(14.dp))
+            BasicText("卡片背景，纯色或相册图片", style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp))
+            Spacer(Modifier.height(6.dp))
+            SwatchRow(
+                rearCardBgPalette,
+                rearCardBgPalette.indexOfFirst { "color:${accentHex(it)}" == rearCardBg }
+            ) { index ->
+                val value = "color:${accentHex(rearCardBgPalette[index])}"
+                rearCardBg = value
+                rearCardBgImage = null
+                rearCardBgGifPath = null
+                scope.launch {
+                    val result = bridge.execResult(Engine.rearSetBg(value))
+                    showToast(if (result.success) "卡片背景已设置" else "失败：设置卡片背景")
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            ActionButton(
+                backdrop = backdrop,
+                text = if (rearCardBg?.startsWith("image:") == true) "更换卡片图片" else "选择卡片图片",
+                onClick = {
+                    scope.launch {
+                        pickBackgroundImageBytes()?.let { bytes ->
+                            val enginePath = writeRearBackgroundImage(bytes)
+                            if (enginePath != null) {
+                                val value = "image:$enginePath"
+                                rearCardBg = value
+                                if (isGifBytes(bytes)) {
+                                    rearCardBgGifPath = rearBgGifPreviewPath()
+                                    rearCardBgImage = null
+                                } else {
+                                    rearCardBgGifPath = null
+                                    rearCardBgImage = decodeBackgroundImage(bytes)
+                                }
+                                val result = bridge.execResult(Engine.rearSetBg(value))
+                                showToast(if (result.success) "卡片背景已设置" else "失败：设置卡片背景")
+                            }
+                        }
                     }
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
+            if (rearCardBg != null) {
+                Spacer(Modifier.height(8.dp))
+                ActionButton(
+                    backdrop = backdrop,
+                    text = "清除卡片背景",
+                    onClick = {
+                        rearCardBg = null
+                        rearCardBgImage = null
+                        rearCardBgGifPath = null
+                        scope.launch {
+                            val result = bridge.execResult(Engine.rearSetBg(""))
+                            showToast(if (result.success) "卡片背景已清除" else "失败：清除卡片背景")
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    secondary = true
                 )
             }
         }
@@ -199,7 +310,7 @@ fun LookPage(
             Spacer(Modifier.height(12.dp))
             SliderField(backdrop, "卡片模糊度", "${appearance.cardBlur.toInt()}", 0f..44f, { appearance.cardBlur }, { onAppearanceChange(appearance.copy(cardBlur = it)) })
             Spacer(Modifier.height(12.dp))
-            SliderField(backdrop, "卡片扭曲度", "${appearance.cardDistortion.toInt()}", 0f..60f, { appearance.cardDistortion }, { onAppearanceChange(appearance.copy(cardDistortion = it)) })
+            SliderField(backdrop, "卡片扭曲度", "${appearance.cardDistortion.toInt()}", 0f..150f, { appearance.cardDistortion }, { onAppearanceChange(appearance.copy(cardDistortion = it)) })
             Spacer(Modifier.height(12.dp))
             ToggleLine(backdrop, "玻璃卡片质感", null, appearance.cardTexture, onCheckedChange = { onAppearanceChange(appearance.copy(cardTexture = it)) })
             SliderField(backdrop, "卡片透明度", fmt(appearance.cardAlpha), 0f..0.5f, { appearance.cardAlpha }, { onAppearanceChange(appearance.copy(cardAlpha = it)) })
@@ -248,7 +359,7 @@ fun LookPage(
                         scope.launch {
                             pickBackgroundImageBytes()?.let { bytes ->
                                 decodeBackgroundImage(bytes)?.let { bitmap ->
-                                    onAppearanceChange(appearance.copy(bgImage = bitmap))
+                                    onAppearanceChange(currentAppearance.copy(bgImage = bitmap))
                                 }
                             }
                         }
@@ -260,7 +371,7 @@ fun LookPage(
                     ActionButton(
                         backdrop = backdrop,
                         text = "清除图片",
-                        onClick = { onAppearanceChange(appearance.copy(bgImage = null)) },
+                        onClick = { onAppearanceChange(currentAppearance.copy(bgImage = null)) },
                         modifier = Modifier.fillMaxWidth(),
                         secondary = true
                     )
@@ -342,4 +453,19 @@ private fun fontValue(font: Int): String = when (font) { 0 -> "0.85"; 2 -> "1.2"
 private fun accentHex(color: Color): String {
     fun channel(value: Float): String = (value.coerceIn(0f, 1f) * 255f).roundToInt().toString(16).padStart(2, '0')
     return "#" + channel(color.red) + channel(color.green) + channel(color.blue)
+}
+
+private fun shellQuote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
+
+private suspend fun readRearCardBg(bridge: ToolboxRuntimeBridge): String? {
+    for (path in rearConfPaths) {
+        val text = runCatching { bridge.exec("cat ${shellQuote(path)} 2>/dev/null") }.getOrNull() ?: continue
+        val bg = text.lineSequence()
+            .map { it.trim() }
+            .firstOrNull { it.startsWith("bg=") }
+            ?.removePrefix("bg=")
+            ?.trim()
+        if (!bg.isNullOrEmpty()) return bg
+    }
+    return null
 }

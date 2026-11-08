@@ -67,6 +67,11 @@ public final class Prefs {
         writer.write("accent=" + cfg.accent + "\n");
         writer.write("font_scale=" + cfg.fontScale + "\n");
         writer.write("fields=" + cfg.fields + "\n");
+        if (!cfg.bgImagePath.isEmpty()) {
+            writer.write("bg=image:" + cfg.bgImagePath + "\n");
+        } else if (!"#000000".equals(cfg.bgColor)) {
+            writer.write("bg=color:" + cfg.bgColor + "\n");
+        }
         writer.close();
     }
 
@@ -85,12 +90,25 @@ public final class Prefs {
                 }
             }
             reader.close();
+            String bgColor = null;
+            String bgImage = null;
+            String bg = map.get("bg");
+            if (bg != null) {
+                String v = bg.trim();
+                if (v.startsWith("color:")) {
+                    bgColor = v.substring("color:".length()).trim();
+                } else if (v.startsWith("image:")) {
+                    bgImage = v.substring("image:".length()).trim();
+                }
+            }
             return new RearConfig(
                     !"0".equals(map.get("enabled")),
                     !"0".equals(map.get("keep_on")),
                     map.containsKey("accent") ? map.get("accent") : "#38BDF8",
                     parseFloat(map.get("font_scale"), 1f),
-                    map.get("fields")
+                    map.get("fields"),
+                    bgColor,
+                    bgImage
             );
         } catch (Throwable t) {
             return new RearConfig(true, true, "#38BDF8", 1f, RearConfig.DEFAULT_FIELDS);

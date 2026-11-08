@@ -102,7 +102,7 @@ fun GlassCard(
                             blur(appearance.cardBlur.coerceIn(0f, 44f).dp.toPx())
                             lens(
                                 20f.dp.toPx(),
-                                appearance.cardDistortion.coerceIn(0f, 60f).dp.toPx()
+                                appearance.cardDistortion.coerceIn(0f, 150f).dp.toPx()
                             )
                         }
                         GlassMode.Frosted -> glassEffects(mode, 38f.dp.toPx(), 10f.dp.toPx(), 20f.dp.toPx())

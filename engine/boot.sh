@@ -16,11 +16,38 @@ wait_boot() {
   done
 }
 
+# 存活判定只认真实进程，不认 pidfile：旧 pidfile 的 pid 重启后可能被系统进程复用
+# （bug-056：/proc/<旧pid> 指向 system_server，导致误判 daemon 存活而永不拉起）。
+daemon_pid() {
+  if command -v pgrep >/dev/null 2>&1; then
+    pgrep -f 'xjdaemon\.sh' 2>/dev/null | head -n 1
+    return
+  fi
+  # 兜底扫 /proc cmdline：无 pgrep 时不可依赖 ps（各实现输出列名不一，procps 只显示进程名）
+  for _d in /proc/[0-9]*; do
+    [ -r "$_d/cmdline" ] || continue
+    case "$(tr '\0' ' ' < "$_d/cmdline" 2>/dev/null)" in
+      *xjdaemon.sh*) echo "${_d#/proc/}" && return ;;
+    esac
+  done
+}
+
+daemon_alive() {
+  [ -n "$(daemon_pid)" ]
+}
+
 start_daemon() {
-  [ -f "$PIDFILE" ] && _p=$(cat "$PIDFILE" 2>/dev/null) && [ -d "/proc/$_p" ] && return 0
+  daemon_alive && return 0
   setsid sh "$DIR/xjdaemon.sh" >> "$LOGDIR/daemon.log" 2>&1 &
-  echo $! > "$PIDFILE"
-  log "xjdaemon started pid=$(cat "$PIDFILE" 2>/dev/null)"
+  sleep 1
+  _p=$(daemon_pid)
+  if [ -n "$_p" ]; then
+    echo "$_p" > "$PIDFILE"
+    log "xjdaemon started pid=$_p"
+  else
+    rm -f "$PIDFILE" 2>/dev/null
+    log "xjdaemon started, real pid unknown (pidfile cleared)"
+  fi
 }
 
 case "$1" in
@@ -48,7 +75,5 @@ start_daemon
 while true; do
   sleep 60
   [ -f "$MODDIR/disable" ] && continue
-  _p=$(cat "$PIDFILE" 2>/dev/null)
-  case "$_p" in ''|*[!0-9]*) start_daemon; continue ;; esac
-  [ -d "/proc/$_p" ] || { log "daemon lost, restarting"; start_daemon; }
+  daemon_alive || { log "daemon lost, restarting"; start_daemon; }
 done

@@ -14,3 +14,11 @@ actual suspend fun pickBackgroundImageBytes(): ByteArray? {
 
 actual fun decodeBackgroundImage(bytes: ByteArray): ImageBitmap? =
     Image.makeFromEncoded(bytes).toComposeImageBitmap()
+
+actual suspend fun writeRearBackgroundImage(bytes: ByteArray): String? = null
+
+actual suspend fun readRearCardBgImageBytes(): ByteArray? = null
+
+actual fun rearBgGifPreviewPath(): String? = null
+
+actual fun gifFrameAt(path: String, timeMs: Long): ImageBitmap? = null

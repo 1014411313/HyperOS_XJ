@@ -190,15 +190,21 @@ restart_daemon() {
   daemon_running || { command -v restart >/dev/null 2>&1 && restart "$THERMAL_DAEMON" 2>/dev/null; }
 }
 
-backup_ready() { [ -f "$MODDIR/backup/thermal-config/.done" ] || [ -f "/data/adb/HyperOS_XJ_backup/thermal-config/.done" ]; }
-backup_source() { [ -f "$MODDIR/backup/thermal-config/.done" ] && echo "$MODDIR/backup/thermal-config" || echo "/data/adb/HyperOS_XJ_backup/thermal-config"; }
+# 原厂温控备份存 DATA（模块目录会被升级删除）；旧位置仅作读取兼容，不再写入。
+THERMAL_BK="$DATA_DIR/backup/thermal-config"
+backup_ready() { [ -f "$THERMAL_BK/.done" ] || [ -f "$MODDIR/backup/thermal-config/.done" ] || [ -f "/data/adb/HyperOS_XJ_backup/thermal-config/.done" ]; }
+backup_source() {
+  [ -f "$THERMAL_BK/.done" ] && { echo "$THERMAL_BK"; return 0; }
+  [ -f "$MODDIR/backup/thermal-config/.done" ] && { echo "$MODDIR/backup/thermal-config"; return 0; }
+  echo "/data/adb/HyperOS_XJ_backup/thermal-config"
+}
 
 factory_backup() {
   backup_ready && return 0
   [ -d "$THERMAL_PATH" ] || return 1
   _n=$(ls -A "$THERMAL_PATH" 2>/dev/null | wc -l)
   [ "${_n:-0}" -gt 0 ] || return 1
-  _bk="$MODDIR/backup/thermal-config"
+  _bk="$THERMAL_BK"
   mkdir -p "$_bk" 2>/dev/null
   cp -a "$THERMAL_PATH/." "$_bk/" 2>/dev/null
   echo "$(date '+%F %T') from=$THERMAL_PATH files=$_n" > "$_bk/.done"
@@ -303,7 +309,8 @@ guard_apply() {
   _mode="$1"
   [ "$ENABLE_GUARD" = "1" ] || { echo "$_mode"; return 0; }
   if [ "${BAT_TEMP:-0}" -ge "$TEMP_GUARD" ]; then
-    case "$_mode" in unlimited|level_1|level_2|default) printf '1' > "$CONFDIR/.guard"; echo "level_3"; return 0 ;; esac
+    # 「无限制」档按用户设置执行，不受高温守卫降档（用户明确要求）
+    case "$_mode" in level_1|level_2|default) printf '1' > "$CONFDIR/.guard"; echo "level_3"; return 0 ;; esac
   fi
   printf '0' > "$CONFDIR/.guard"
   echo "$_mode"

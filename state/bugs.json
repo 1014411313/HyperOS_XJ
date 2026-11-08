@@ -1,6 +1,6 @@
 {
   "project": "MiWKJR / HyperOS_XJ",
-  "module_version": "3.1.1 (311)",
+  "module_version": "3.1.10 (320，未发布)",
   "device": "haotian / Xiaomi 15 Pro / Android 17",
   "note": "唯一台账。收到反馈只记录不动代码；用户明确说「修复」后才按 fix_plan 逐条改。",
   "collecting": [
@@ -18,16 +18,585 @@
       "affected": [
         "ToolboxApp/androidApp/src/main/java/com/hyperos/xj/rear/RearHook.java:41"
       ]
+    }
+  ],
+  "fixed": [
+    {
+      "id": "bug-058",
+      "title": "无背屏机型上 App 内背屏预览背景永远为黑（背景读取被能力检测挡住）",
+      "reported": "2026-11-08",
+      "type": "bug",
+      "version_seen": "3.1.9 (319)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户截图：外观页背屏预览只有液体/百分比/数据行，背景纯黑。Shizuku 直读设备：rearscreen_supported=0（haotian 无背屏）、rear_bg=image:/data/local/tmp/xj_rear_bg.png、App 外部副本与 /data/local/tmp 副本均存在可读。定位：LookPage 读取背景的整段（readRearCardBg → bg 分支 → rearCardBgImage/rearCardBgGifPath）包在 if (status.rearScreenSupported) 内，无背屏机型直接跳过，预览永无背景。",
+      "root_cause": "预览背景加载被 rearScreenSupported（无背屏=0）能力检测挡住，与 bug-044「无背屏也保留预览 UI」冲突",
+      "fix_plan": "去掉 LookPage 背景读取外层的 if (status.rearScreenSupported)",
+      "affected": [
+        "app/src/commonMain/kotlin/com/hyperos/xj/pages/LookPage.kt:115"
+      ],
+      "fixed_in": "3.1.10（320，未发布）",
+      "resolution": "去掉 LookPage 背景读取外层的 if (status.rearScreenSupported)：无背屏机型也在预览里加载背景（自选图走 PNG 副本、默认/自选 GIF 走 App 侧 GIF 副本）"
+    },
+    {
+      "id": "bug-057",
+      "title": "温控守卫在「无限制」档不应降档，只按设置档位执行",
+      "reported": "2026-11-08",
+      "type": "feature",
+      "version_seen": "3.1.8 (318)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户要求：温控守卫调到无限制时，只按设置档位来。当前 guard_apply（engine/lib/thermal.sh:308-316，由 xjdaemon.sh:269 调用）：BAT_TEMP ≥ TEMP_GUARD（默认 580=58℃）时把 unlimited|level_1|level_2|default 一律压到 level_3。",
+      "root_cause": "守卫把 unlimited 也纳入高温降档列表，用户选「无限制」仍会被降到三档",
+      "fix_plan": "guard_apply 降档列表去掉 unlimited（只保留 level_1|level_2|default）",
+      "affected": [
+        "engine/lib/thermal.sh:312"
+      ],
+      "fixed_in": "3.1.9（319，未发布）",
+      "resolution": "guard_apply 降档列表去掉 unlimited：选「无限制」档时温度超阈值也不再被压到三档"
+    },
+    {
+      "id": "bug-056",
+      "title": "升级后引擎 daemon 未启动：充电档位不自动调、无限制充电比系统默认慢",
+      "reported": "2026-11-08",
+      "type": "bug",
+      "version_seen": "3.1.8 (318)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户反馈：充电场景档位不会按温度自动调档；且「无限制」不如「系统默认」充电快。诊断包（2026-11-08 23:21）+ Shizuku 直读设备确证：module.prop=3.1.8，但 ps 里无 xjdaemon 进程、log/ 无 daemon.log、status.json 仍是 3.1.6 时代内容；state/daemon.pid=11384（21:11 旧文件，bug-045 迁移时被一并复制），而 /proc/11384 现为 system_server。手动删 pidfile + boot.sh --now 后 daemon 正常启动（engine.log 23:25:52 xjdaemon started pid=13623）。",
+      "root_cause": "boot.sh 以残留 pidfile + /proc/<pid> 存在性判定 daemon 存活；Magisk 升级/重启后旧 PID 被其它进程（本次 system_server）复用，误判为存活 → daemon 永不启动；bug-045 的数据迁移把 daemon.pid 一并复制放大了该问题",
+      "fix_plan": "① boot.sh 的 start_daemon/看护循环改用 pgrep -f xjdaemon.sh（不依赖 pidfile 与 /proc）；② customize.sh 一次性迁移 state/ 时排除 *.pid；③ 可选：daemon 自写真实 PID 覆盖 pidfile",
+      "affected": [
+        "engine/boot.sh",
+        "dist/HyperOS_XJ_New/customize.sh"
+      ],
+      "fixed_in": "3.1.9（319，未发布）",
+      "resolution": "boot.sh 新增 daemon_pid()（pgrep -f xjdaemon.sh 优先，无 pgrep 则扫 /proc/*/cmdline）与 daemon_alive()，start_daemon 与看护循环不再以 pidfile+/proc 判定；启动后取真实 pid 写 pidfile（仅人工排查）；customize.sh 迁移 state 后清 *.pid"
+    },
+    {
+      "id": "bug-054",
+      "title": "背屏背景支持 GIF 动图",
+      "reported": "2026-11-08",
+      "type": "feature",
+      "version_seen": "3.1.8 (318)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户要求：背屏背景可设置 gif 图（动图）。当前 PanelView.loadBackground 用 BitmapFactory.decodeFile（静态），App 预览 RearScreen 只用位图；且 BackgroundPicker.writeRearBackgroundImage 会把所见图转码为 PNG（GIF 会变单帧静态）。",
+      "root_cause": "背景加载只支持静态位图，无 GIF 解码与帧播放；写盘环节还会把 GIF 转成 PNG",
+      "fix_plan": "PanelView 用 android.graphics.Movie 按帧绘制 GIF（注意硬件层限制）；App 预览新增 expect/actual 取 GIF 帧；写盘保留 GIF 原格式；选图允许 GIF",
+      "affected": [
+        "androidApp/src/main/java/com/hyperos/xj/rear/PanelView.java",
+        "app/src/commonMain/kotlin/com/hyperos/xj/ui/RearScreen.kt",
+        "app/src/androidMain/kotlin/com/hyperos/xj/runtime/BackgroundPicker.android.kt"
+      ],
+      "fixed_in": "3.1.9（319，未发布）",
+      "resolution": "背屏背景支持 GIF：BackgroundPicker 按 GIF 头部原样写入（不再转 PNG）、PanelView 用 android.graphics.Movie 逐帧写软件 Bitmap 走位图通路（绕开硬件层限制）、App 预览新增 expect/actual 取帧并同步动画"
+    },
+    {
+      "id": "bug-055",
+      "title": "内置默认背屏背景（四叶草蓝天图）",
+      "reported": "2026-11-08",
+      "type": "feature",
+      "version_seen": "3.1.8 (318)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户要求把四叶草蓝天图设为默认背屏背景，并说“这张图是动图”；实际附件 .aicode/attachments/35275.jpg 是静态 JPEG（1076x720，mjpeg），非 GIF。用户已选“用 AI 生一张”，但容器生图工具报未配置生图模型（需用户在设置→默认模型→生图模型选 gpt-image-1/dall-e-3）。",
+      "root_cause": "当前无内置默认背景：bgImagePath 为空时 PanelView 只画 bgColor（黑）",
+      "fix_plan": "待用户配好生图模型后生成适配背屏横条的背景图（或用户改发原 GIF），内置为模块资源（如 backdrop/default_bg.*），由引擎/App 首次运行复制到 hook 可读位置并在 rear_bg 为空时作为默认；App 预览同步显示",
+      "affected": [
+        "dist/HyperOS_XJ_New/backdrop/",
+        "engine/lib/rear.sh",
+        "androidApp/src/main/java/com/hyperos/xj/rear/PanelView.java",
+        "app/src/commonMain/kotlin/com/hyperos/xj/ui/RearScreen.kt"
+      ],
+      "fixed_in": "3.1.9（319，未发布）",
+      "resolution": "内置 backdrop/default_bg.gif（用户四叶草动图，800x457/8fps/41帧，19MB 压到 7.63MB）；service.sh 开机把默认图铺到 /data/local/tmp 与 App 外部副本（仅当缺失、不覆盖用户设置）；rear.sh 的 write_config 与 send_control 在 rear_bg 为空时使用默认路径；LookPage 预览在默认路径时走 App 侧 GIF 副本"
+    },
+    {
+      "id": "bug-051",
+      "title": "App 内背屏预览不动，无法看效果",
+      "reported": "2026-11-08",
+      "type": "bug",
+      "version_seen": "3.1.7 (317)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户反馈：背屏预览画面效果不会动，没法看效果。定位：LookPage.kt:173 传 animate = !appearance.smoothMode；smoothMode（流畅模式）开启时 RearScreen.kt:89-100 以 phase = rawPhase * 0f 把波浪相位冻结，预览因此静止。",
+      "root_cause": "预览动画与「流畅模式」绑定：开流畅模式后预览也冻结，而预览正是无背屏机型看效果的唯一途径",
+      "fix_plan": "让背屏预览始终播放动画（不跟随 smoothMode），smoothMode 只影响 App 其它动效；如需可另加预览独立开关",
+      "affected": [
+        "app/src/commonMain/kotlin/com/hyperos/xj/pages/LookPage.kt",
+        "app/src/commonMain/kotlin/com/hyperos/xj/ui/RearScreen.kt"
+      ],
+      "fixed_in": "3.1.8（318，未发布）",
+      "resolution": "LookPage 预览调用去掉 animate 实参、回落 RearScreenPreview 默认 animate=true；预览波浪/入场动画始终播放，smoothMode 不再冻结预览"
+    },
+    {
+      "id": "bug-052",
+      "title": "切换页面读取设置很慢",
+      "reported": "2026-11-08",
+      "type": "bug",
+      "version_seen": "3.1.7 (317)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户反馈：切换页面读取设置很慢。定位：各页 LaunchedEffect(Unit) 每次进入都跑 bridge.readThermalSettings()，实际是 su -c sh xjctl.sh setting dump（fork su + shell 启动，数百 ms~秒级）；配合 bug-050 的 loaded 门控（加载前不渲染），切页时先空白等待。",
+      "root_cause": "每次切页重新走 su 读取，无内存缓存；Tab 切换会销毁重建页面导致 LaunchedEffect 重跑",
+      "fix_plan": "bridge 增加内存缓存：新增同步 cachedThermalSettings() 供页面首帧秒开，readThermalSettings() 读回后更新缓存；写操作后失效缓存。页面改为先用缓存立即渲染、再后台 su 刷新",
+      "affected": [
+        "app/src/commonMain/kotlin/com/hyperos/xj/runtime/ToolboxRuntimeBridge.kt",
+        "app/src/androidMain/kotlin/com/hyperos/xj/runtime/ToolboxRuntimeBridge.android.kt",
+        "app/src/desktopMain/kotlin/com/hyperos/xj/runtime/ToolboxRuntimeBridge.desktop.kt",
+        "app/src/commonMain/kotlin/com/hyperos/xj/pages/ThermalPage.kt",
+        "app/src/commonMain/kotlin/com/hyperos/xj/pages/BatteryPage.kt"
+      ],
+      "fixed_in": "3.1.8（318，未发布）",
+      "resolution": "bridge 新增 cachedThermalSettings()（三平台）+ 内存缓存（exec/execResult 后失效）；ThermalPage 先用缓存秒开渲染再后台 su 刷新"
+    },
+    {
+      "id": "bug-053",
+      "title": "设置背屏卡片背景后，App 内预览背景仍是黑色",
+      "reported": "2026-11-08",
+      "type": "bug",
+      "version_seen": "3.1.7 (317)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户反馈：背屏壁纸设置完预览图背景还是黑的。定位：LookPage 的 RearScreenPreview(...) 调用（约 167-173 行）未传 bgColor，RearScreenPreview 默认 bgColor=\"#000000\"（RearScreen.kt:73），预览恒为黑底；页面已有 rearCardBg 状态（92 行定义、109 行从 rear.conf 读回、218/233 行设置后更新）但未接到预览。",
+      "root_cause": "两处叠加：① LookPage 调 RearScreenPreview 时没把 rearCardBg 传给 bgColor，预览永远用默认黑；② parseRearColor（RearScreen.kt:266）只解析 6/8 位 hex，color: 前缀未剥离、image: 前缀落到 Color.Black，预览不支持图片背景。",
+      "fix_plan": "① LookPage 预览调用传 bgColor = rearCardBg；② RearScreenPreview 支持两种 bg 值：color: 剥前缀后交 parseRearColor；image: 时从 App 可读副本 decode 铺底（写图 writeRearBackgroundImage 时同步把 PNG 落一份到 App 外部目录 /storage/emulated/0/Android/data/com.hyperos.xj/files/xj_rear_bg.png，预览直读免 su；/data/local/tmp 下原件仍供 subscreencenter 用）。只动预览组件与 LookPage，不碰 androidApp/ 的 PanelView 视觉。",
+      "affected": [
+        "app/src/commonMain/kotlin/com/hyperos/xj/pages/LookPage.kt:167",
+        "app/src/commonMain/kotlin/com/hyperos/xj/ui/RearScreen.kt:73",
+        "app/src/commonMain/kotlin/com/hyperos/xj/ui/RearScreen.kt:266",
+        "app/src/androidMain/kotlin/com/hyperos/xj/runtime/BackgroundPicker.android.kt:60"
+      ],
+      "fixed_in": "3.1.8（318，未发布）",
+      "resolution": "LookPage 预览传 bgColor=rearCardBg 与 bgImage；RearScreen.parseRearColor 支持 color: 前缀，新增 bgImage 位图铺底；写图时额外落一份可读副本到 App 外部目录 xj_rear_bg.png，预览免 su 直读（下发给引擎的路径仍是 /data/local/tmp/xj_rear_bg.png）"
+    },
+    {
+      "id": "bug-048",
+      "title": "卡片扭曲度范围偏小，希望加大",
+      "reported": "2026-11-08",
+      "type": "feature",
+      "version_seen": "3.1.6 (316)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户反馈：卡片扭曲的范围加大。当前滑块 LookPage.kt:263 为 0f..60f，Glass.kt:105 用 cardDistortion.coerceIn(0f,60f).dp 传给 lens；AppearanceSettings.cardDistortion 默认 36f（Appearance.kt:35）。",
+      "root_cause": "上限 60 太小，扭曲效果不明显",
+      "fix_plan": "提高扭曲上限（如 0f..120f），同步 Glass.kt 的 coerceIn 与 AppearanceStore 默认/兼容；构建+真机确认视觉",
+      "affected": [
+        "app/src/commonMain/kotlin/com/hyperos/xj/pages/LookPage.kt:263",
+        "app/src/commonMain/kotlin/com/hyperos/xj/ui/Glass.kt:105",
+        "app/src/commonMain/kotlin/com/hyperos/xj/ui/Appearance.kt:35"
+      ],
+      "fixed_in": "3.1.7（317，未发布）",
+      "resolution": "卡片扭曲上限 60→150（LookPage 滑块 0f..150f、Glass.kt coerceIn(0f,150f)），读回不 clamp 回 60"
+    },
+    {
+      "id": "bug-049",
+      "title": "卡片圆角调为 0 时只有线框变直角，卡片本体未跟随",
+      "reported": "2026-11-08",
+      "type": "bug",
+      "version_seen": "3.1.6 (316)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户反馈+截图：把「卡片圆角」调到 0，只有卡片外层的描边线框变直角，卡片本体仍是圆角矩形。代码中 GlassCard（Glass.kt:82-152）的 backdrop shape（:97）、onDrawSurface 三处 drawRoundRect（:118-146）都用 appearance.cardCorner，理论上应一致；需进一步定位（候选：kyant backdrop 库 shape 语义/缓存，或 backdrop 效果区域未按 shape 变直角）。",
+      "root_cause": "已定位（静态）：项目自带模块 backdrop 的 DrawBackdropModifier.kt 用 layoutLayerBlock（clip=true、shape=shapeProvider.shape）在 placeWithLayer 时裁剪内容，该 block 只在 measure/place 时求值；而 DrawBackdropElement.update() 只调 invalidateDrawCache()→observeEffects()（更新 renderEffect/padding），不触发重新布局，因此 shape（圆角）变化时内容裁剪层仍用旧圆角。GlassCard 的 onDrawSurface 三处 drawRoundRect 在 draw() 里执行、每次重绘读新 cardCorner，所以只有描边/填充跟随变成直角——与用户观察一致",
+      "fix_plan": "二选一：①在 backdrop 的 DrawBackdropElement.update() 中当 shapeProvider 变化时触发重新布局（invalidateMeasurement）让 layer clip 跟随；②GlassCard 侧改用显式 .clip(RoundedCornerShape(cardCorner.dp)) 或把 clip 从 graphicsLayer 移出。改动影响所有 GlassCard 与其它用 drawBackdrop 的组件，需真机复测",
+      "affected": [
+        "app/src/commonMain/kotlin/com/hyperos/xj/ui/Glass.kt"
+      ],
+      "fixed_in": "3.1.7（317，未发布）",
+      "resolution": "backdrop 的 DrawBackdropElement.update() 检测 shapeProvider 变化时调 invalidateMeasurement()（isAttached 保护），让 graphicsLayer 裁剪圆角随 cardCorner 更新"
+    },
+    {
+      "id": "bug-050",
+      "title": "切换页面时所有开关和按钮从默认状态跳到设置状态",
+      "reported": "2026-11-08",
+      "type": "bug",
+      "version_seen": "3.1.6 (316)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户反馈：切换页面时所有开关和按钮先显示默认状态、再跳到已保存状态。各页 state 初值为默认（如 ThermalPage.kt:93-106），真实值在 LaunchedEffect(Unit) 里 readThermalSettings() 异步 su 读取后才赋值（ThermalPage.kt:105-136），首帧因此先渲染默认值再跳变。",
+      "root_cause": "异步加载与首帧渲染不同步：state 初值即默认值，加载完成后整体替换",
+      "fix_plan": "加载完成前不渲染控件（占位/骨架），或首次加载完成前保持空白/上次状态；加 loaded 门控避免默认值闪现",
+      "affected": [
+        "app/src/commonMain/kotlin/com/hyperos/xj/pages/ThermalPage.kt",
+        "app/src/commonMain/kotlin/com/hyperos/xj/pages/BatteryPage.kt",
+        "app/src/commonMain/kotlin/com/hyperos/xj/pages/HomePage.kt"
+      ],
+      "fixed_in": "3.1.7（317，未发布）",
+      "resolution": "各页加载完成前用 loaded 门控不渲染控件，避免默认值先渲染再跳变（ThermalPage/BatteryPage）"
+    },
+    {
+      "id": "bug-040",
+      "title": "背屏卡片背景更换无效（重开：3.1.3 的修复不生效）",
+      "reported": "2026-11-08",
+      "type": "bug",
+      "version_seen": "3.1.6 (316)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户复反馈：在外观页给背屏卡片换纯色/图片背景，背屏实际不生效。定位：App 用 shell 直接 sed 把 bg= 写进 rear.conf（LookPage.kt:411 rearBgWriteCommand），但引擎 write_config()（engine/lib/rear.sh:66-97）只写 enabled/keep_on/accent/font_scale/fields，daemon 每 30 拍（rear_tick）与 xjctl rear set（rear_push_config）都会重写 rear.conf 且不带 bg 行，App 写入的 bg 立即被抹掉；xjctl rear set 也不接受 bg 键（xjctl.sh:243 只认 fields/font_scale/accent）。次要点：图片写在 App 外部私有目录 /storage/emulated/0/Android/data/com.hyperos.xj/files/rear_bg.png，权限默认 0600，hook（subscreencenter 进程）能否读到未验证。",
+      "root_cause": "背景没有进入引擎的持久化键：引擎任何一次重写 rear.conf 都会丢掉 App 直接写入的 bg 行",
+      "fix_plan": "①settings.conf 增加 rear_bg 持久键；②xjctl rear set 支持 bg=color:#RRGGBB|image:<path>|空（清空）并校验；③rear.sh write_config 输出 bg 行、send_control 广播带 bg；④图片改写到 hook 可读的 /data/local/tmp/xj_rear_bg.png（0644）并在 /data/local/tmp/xj_rear.conf 同步 bg=image:；⑤App rearBgWriteCommand/Clear 改为走 xjctl rear set bg=",
+      "affected": [
+        "engine/lib/rear.sh",
+        "engine/xjctl.sh",
+        "app/src/commonMain/kotlin/com/hyperos/xj/pages/LookPage.kt",
+        "app/src/androidMain/kotlin/com/hyperos/xj/runtime/BackgroundPicker.android.kt",
+        "battery/config/settings.conf"
+      ],
+      "fixed_in": "3.1.7（317，未发布）",
+      "resolution": "引擎侧持久化 rear_bg：xjctl rear set 支持 bg= 键、rear.sh write_config/send_control 带 bg、settings.conf 加 rear_bg；App 改走 Engine.rearSetBg、图片改写 /data/local/tmp/xj_rear_bg.png；ControlReceiver 补 bg extra（此前广播会整体重写 rear.conf 把 bg 抹掉）"
+    },
+    {
+      "id": "bug-045",
+      "title": "更新/重刷模块后用户设置全部丢失",
+      "reported": "2026-11-08",
+      "type": "bug",
+      "version_seen": "3.1.6 (316)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户反馈：更新模块后之前的设置会丢失。核实 Magisk 官方源码 native/src/core/module.rs 的 upgrade_modules()：升级时对旧模块目录执行 module.remove_all() + unlink_at(..., RemoveDir)，即整体删除 /data/adb/modules/<id> 后再把 modules_update/<id> 改名进来。本项目用户可变数据全在该目录内：engine/lib/env.sh:8-13 的 CONFDIR/CACHE/STATE/LOGDIR/BT_CONF/BT_STATE 都指向 $MODDIR 下，升级必然被清空。",
+      "root_cause": "把用户可变数据存在 Magisk 模块目录内，而 Magisk 升级会整体删除该目录",
+      "fix_plan": "把用户数据根迁出模块目录到 /data/adb/HyperOS_XJ/：env.sh 的 6 个变量改指新根；customize.sh 安装时（此时旧 modules/<id> 仍在）把旧 config/battery-config/state 复制过去完成一次性迁移；post-fs-data/service 只负责建目录与 seed；uninstall.sh 清理新数据根；$MODDIR/disable、module.prop 及 t_blank/thermal/profiles/baa/dtbo/app/bin/engine 等只读资源保持不动",
+      "affected": [
+        "engine/lib/env.sh",
+        "engine/xjdaemon.sh",
+        "engine/xjctl.sh",
+        "engine/boot.sh",
+        "dist/HyperOS_XJ_New/customize.sh",
+        "dist/HyperOS_XJ_New/service.sh",
+        "dist/HyperOS_XJ_New/post-fs-data.sh",
+        "dist/HyperOS_XJ_New/uninstall.sh"
+      ],
+      "fixed_in": "3.1.7（317，未发布）",
+      "resolution": "用户数据根迁出模块目录到 /data/adb/HyperOS_XJ/：env.sh 六变量改指新根 + customize.sh 幂等一次性迁移 + post-fs-data/service/uninstall 适配；$MODDIR/disable 与只读资源保持不动"
+    },
+    {
+      "id": "bug-046",
+      "title": "打开/关闭功能无成功或失败提示",
+      "reported": "2026-11-08",
+      "type": "bug",
+      "version_seen": "3.1.6 (316)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "全仓仅 DirectoryPicker.android.kt:41 一处 Toast；各页面开关只 bridge.exec(Engine.setting(...)) 不看返回值也不提示（如 ThermalPage.kt:100 save()）；ToolboxRuntimeBridge.exec 返回命令输出字符串但 runAsRoot 未回传退出码（ToolboxRuntimeBridge.android.kt:65），无法区分成功失败。",
+      "root_cause": "缺少统一的执行结果反馈通道",
+      "fix_plan": "commonMain 新增 expect fun showToast(msg)；androidMain 实现为 Toast、desktopMain 空实现；exec 回传退出码（或新增带结果的方法）；页面统一走一个 runOp 包装：执行后按结果 toast 成功/失败",
+      "affected": [
+        "app/src/commonMain/kotlin/com/hyperos/xj/runtime/ToolboxRuntimeBridge.kt",
+        "app/src/androidMain/kotlin/com/hyperos/xj/runtime/ToolboxRuntimeBridge.android.kt",
+        "app/src/commonMain/kotlin/com/hyperos/xj/pages/*"
+      ],
+      "fixed_in": "3.1.7（317，未发布）",
+      "resolution": "新增 expect showToast（android=Toast/desktop=println 空实现）+ ExecResult(exitCode) + execResult；各页面操作改为 execResult 并按结果显示成功/失败提示"
+    },
+    {
+      "id": "bug-047",
+      "title": "重构背屏显示 UI（PanelView 面板视觉）",
+      "reported": "2026-11-08",
+      "type": "feature",
+      "version_seen": "3.1.6 (316)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户要求重构背屏（副屏）上显示的 UI，明确不是手机 App 里的卡片。已提供参考：①参考仓库 https://github.com/AntiOblivionis/MiRearScreenSwitcher（原 GoldenglowSusie，Flutter+Shizuku 背屏切换器；充电动画在 android/app/src/main/java/com/tgwgroup/MiRearScreenSwitcher/LightningShapeView.java + RearScreenChargingActivity.java）；②效果视频 .aicode/attachments/share_c4c18f43d0946a2fc0c88cfc28acc583.mp4（9.8s/720x1080，帧已提取到 .aicode/tmp/frames/）：深色自定义背景上，液体满波按电量高度填充、中央 ⚡+大号百分比、底部一行 4 项实时数据（功率/温度/电流/容量）、液体内有气泡，文字淡入。",
+      "root_cause": "现有 PanelView 为 976 宽基准自绘：中央液态圆环+实时功率+四角指标+底部状态条，元素固定，与目标效果（液体波浪铺满+中央百分比）不同",
+      "fix_plan": "在本项目架构下实现该视觉效果：把 LightningShapeView 的液体/波浪(sin+waveOffset)/气泡/重力倾斜算法移植为 PanelView 内的充电视图（Java 自绘，同技术栈）；触发走已有的 overlay tick（充电中切到动画视图），不做 MRSS 的 display 投射（AGENTS/踩坑#4 明确禁止）；电量/功率/温度/电流/容量取 BatteryReader/ChargeState 现有字段。待用户确认范围（仅充电时显示 vs 常态）后实施",
+      "affected": [
+        "androidApp/src/main/java/com/hyperos/xj/rear/PanelView.java",
+        "app/src/commonMain/kotlin/com/hyperos/xj/ui/RearScreen.kt"
+      ],
+      "fixed_in": "3.1.7（317，未发布）",
+      "resolution": "PanelView 整文件重写为液体波浪常态面板：液体按电量填充（绿 0xFF34C759）、sin 波浪+Choreographer 驱动+30fps 节流、6 颗气泡、重力倾斜、中央 ⚡+大号百分比、底部一行 4 项数据；保留背景/字号/主题色/上滑退出；RearScreen.kt 预览同步重写"
+    },
+    {
+      "id": "bug-044",
+      "title": "无背屏机型上背屏卡片被替换成「本机无背屏」，无法预览/调整背屏 UI",
+      "reported": "2026-11-08",
+      "type": "bug",
+      "version_seen": "3.1.5 (315)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户反馈：haotian（小米 15 Pro）无副屏，外观页的背屏卡片直接显示成「本机无背屏」，改不了背屏 UI",
+      "root_cause": "bug-003 的实现是「rearscreen_supported=false 时整卡替换为提示卡」，把 UI 一起藏掉了",
+      "fix_plan": "背屏卡片始终可用且默认折叠；无背屏只在副标题给提示，UI 保留用于预览与调参",
+      "affected": [
+        "app/src/commonMain/kotlin/com/hyperos/xj/pages/LookPage.kt"
+      ],
+      "fixed_in": "3.1.6（316，未发布）",
+      "resolution": "去掉 if/else 替换逻辑，整块改为 CollapsibleCard(title=\"背屏\", initiallyExpanded=false)，副标题按 rearscreen_supported 显示「本机无背屏：以下仅作预览，换机型后生效」，卡片内 UI（开关/预览/四角/字号/卡片背景）全部保留",
+      "fixed_note": "待真机复测：默认折叠，展开后可调背屏 UI"
+    },
+    {
+      "id": "bug-043",
+      "title": "关于页 QQ 群改为直接跳转加群",
+      "reported": "2026-11-08",
+      "type": "feature",
+      "version_seen": "3.1.4 (314)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户提供两个 qun.qq.com 加群链接，要求点击直接跳转而不是复制群号",
+      "root_cause": "bug-036 实现的是「复制群号到剪贴板」，用户要的是点击即拉起 QQ 加群页",
+      "fix_plan": "AboutRow 的 onClick 改为 openUrl(加群链接)",
+      "affected": [
+        "app/src/commonMain/kotlin/com/hyperos/xj/pages/AboutPage.kt"
+      ],
+      "fixed_in": "3.1.5（314→315，未发布）",
+      "resolution": "新增 QQ_GROUP_DYNAMIC / QQ_GROUP_UNLOCK 两个常量（用户给的 qun.qq.com 链接），群行文案改「点击加群」并 openUrl；随之删除不再使用的 ClipboardEntry expect/actual 三份文件与相关 import",
+      "fixed_note": "待真机复测"
+    },
+    {
+      "id": "bug-042",
+      "title": "滑动条拖动会从头开始 + 上下滑页面误触滑块",
+      "reported": "2026-11-08",
+      "type": "bug",
+      "version_seen": "3.1.3 (313)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "真机：除首页外，其他页滑块一拖动就从初始值开始；上下滚动页面时手指经过滑块会改值",
+      "root_cause": "LiquidSlider 的 pointerInput 块只在 (isLtr, trackWidth) 变化时重建，直接捕获了外部的 value/onValueChange lambda。首页传 { powerWatts }（mutableFloatStateOf，读 state 恒最新）所以正常；其他页传 { appearance.xxx }（按值捕获当次组合的 data class 实例），拖动起点永远读到首次组合的值。误触则是通用 detectDragGestures 会吞掉垂直拖动",
+      "fix_plan": "滑块内部改用 rememberUpdatedState 读最新回调；拖动改为 detectHorizontalDragGestures，只认水平方向",
+      "affected": [
+        "app/src/commonMain/kotlin/com/hyperos/xj/ui/components/LiquidSlider.kt"
+      ],
+      "fixed_in": "3.1.4（314，未发布）",
+      "resolution": "加 currentValue/currentOnValueChange（rememberUpdatedState）；pointerInput 内与 DampedDragAnimation 回调、snapshotFlow 全部改读最新实例；detectDragGestures 换成 detectHorizontalDragGestures，只响应水平拖动，垂直滚动不再被滑块抢占",
+      "fixed_note": "待真机复测：各页面滑块拖动应从当前值继续；页面上下滑不误触"
+    },
+    {
+      "id": "bug-031",
+      "title": "App 与背屏电流/功率符号相反（充电显示负、放电显示正）",
+      "reported": "2026-11-08",
+      "type": "bug",
+      "version_seen": "3.1.2 (312)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "真机：充电时 App 电流显示负数；背屏居中功率为负",
+      "root_cause": "桥接层 mapStatus 用 sysfs current_now 原符号（充电为负）；背屏 BatteryReader 同样，且四角字段还包了 Math.abs",
+      "fix_plan": "统一为「充电为正、放电为负」：桥接层取反，背屏 BatteryReader 取反，四角去 abs",
+      "affected": [
+        "app/src/androidMain/kotlin/com/hyperos/xj/runtime/ToolboxRuntimeBridge.android.kt",
+        "androidApp/src/main/java/com/hyperos/xj/rear/BatteryReader.java",
+        "androidApp/src/main/java/com/hyperos/xj/rear/PanelView.java",
+        "app/src/commonMain/kotlin/com/hyperos/xj/ui/RearScreen.kt"
+      ],
+      "fixed_in": "3.1.3（313，未发布）",
+      "resolution": "mapStatus 的 currentMa/powerW 取反；BatteryReader currentA 取反（顺带修好 etaMin 充电时恒为 0 的隐藏 bug）；PanelView/RearScreen 四角去 abs",
+      "fixed_note": "待真机复测"
+    },
+    {
+      "id": "bug-032",
+      "title": "所有页面滑块可被点击跳值",
+      "reported": "2026-11-08",
+      "type": "bug",
+      "version_seen": "3.1.2 (312)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "真机：点击滑块轨道直接跳到该位置",
+      "root_cause": "LiquidSlider 有 detectTapGestures 跳值分支，且 detectDragGestures 的 onDragStart 也按绝对位置跳值",
+      "fix_plan": "去掉点击跳值；拖动改为以当前值为基准相对增减",
+      "affected": [
+        "app/src/commonMain/kotlin/com/hyperos/xj/ui/components/LiquidSlider.kt"
+      ],
+      "fixed_in": "3.1.3（313，未发布）",
+      "resolution": "删除 detectTapGestures 分支与 valueFromX；drag 用 onDragStart 记当前值、onDrag 累加 delta",
+      "fixed_note": "待真机复测"
+    },
+    {
+      "id": "bug-033",
+      "title": "自定义背景后调背景模糊度，选图会把它还原",
+      "reported": "2026-11-08",
+      "type": "bug",
+      "version_seen": "3.1.2 (312)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "真机：拖动背景模糊度后再选图，模糊度回到旧值",
+      "root_cause": "选图协程闭包捕获了组合时的 appearance 快照，回调用旧快照 copy 覆盖了期间的 bgBlur 改动",
+      "fix_plan": "改用 rememberUpdatedState 取最新 appearance 再 copy",
+      "affected": [
+        "app/src/commonMain/kotlin/com/hyperos/xj/pages/LookPage.kt"
+      ],
+      "fixed_in": "3.1.3（313，未发布）",
+      "resolution": "加 currentAppearance by rememberUpdatedState(appearance)，选图/清除都用它 copy",
+      "fixed_note": "待真机复测"
+    },
+    {
+      "id": "bug-034",
+      "title": "主页信息重复与温区只显示序号",
+      "reported": "2026-11-08",
+      "type": "bug",
+      "version_seen": "3.1.2 (312)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "真机：光圈内已有电量、实时状态又列一次；温区显示「温区 1..4」看不出部位",
+      "root_cause": "HomePage 把电量同时放在 LiquidGauge 与 MetricGrid；thermalZones 只取数值丢弃了 tz| 键名",
+      "fix_plan": "去掉重复电量；温区带部位名；实时状态与容量与寿命合并",
+      "affected": [
+        "app/src/commonMain/kotlin/com/hyperos/xj/pages/HomePage.kt",
+        "app/src/commonMain/kotlin/com/hyperos/xj/runtime/ToolboxRuntimeBridge.kt",
+        "app/src/androidMain/kotlin/com/hyperos/xj/runtime/ToolboxRuntimeBridge.android.kt"
+      ],
+      "fixed_in": "3.1.3（313，未发布）",
+      "resolution": "thermalZones 改 (部位名,温度)；加 zoneLabel 中文映射与同名序号；两个 MetricGrid 合并、删电量格",
+      "fixed_note": "待真机复测"
+    },
+    {
+      "id": "bug-035",
+      "title": "光圈线 25% 位置有一条横线",
+      "reported": "2026-11-08",
+      "type": "bug",
+      "version_seen": "3.1.2 (312)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "真机：圆环右侧约 3 点钟处有接缝",
+      "root_cause": "sweepGradient 首尾色不同（accent vs accent.copy(0.6f)），0 位在 3 点钟，正好落在弧的 25% 处",
+      "fix_plan": "让 sweepGradient 首尾同色",
+      "affected": [
+        "app/src/commonMain/kotlin/com/hyperos/xj/ui/LiquidGauge.kt"
+      ],
+      "fixed_in": "3.1.3（313，未发布）",
+      "resolution": "colorStops 的 1f 由 accent.copy(alpha=0.6f) 改为 accent",
+      "fixed_note": "待真机复测"
+    },
+    {
+      "id": "bug-036",
+      "title": "关于页作者主页与 QQ 群是占位文案",
+      "reported": "2026-11-08",
+      "type": "bug",
+      "version_seen": "3.1.2 (312)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "关于页显示「作者主页暂未收录公开链接」「暂未收录群号」",
+      "root_cause": "AboutPage 的 AboutRow 未接 onClick，也没有链接/剪贴板能力",
+      "fix_plan": "补酷安主页跳转与 QQ 群号复制",
+      "affected": [
+        "app/src/commonMain/kotlin/com/hyperos/xj/pages/AboutPage.kt",
+        "app/src/commonMain/kotlin/com/hyperos/xj/runtime/LinkLauncher.kt",
+        "app/src/commonMain/kotlin/com/hyperos/xj/runtime/ClipboardEntry.kt"
+      ],
+      "fixed_in": "3.1.3（313，未发布）",
+      "resolution": "新增 openUrl/toClipEntry 的 expect/actual；三位作者酷安主页可点，两个群号可复制",
+      "fixed_note": "待真机复测"
+    },
+    {
+      "id": "bug-037",
+      "title": "检查更新不可用（只是静态文案）",
+      "reported": "2026-11-08",
+      "type": "bug",
+      "version_seen": "3.1.2 (312)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "AboutPage「检查更新」无 onClick",
+      "root_cause": "从未实现更新检查逻辑，也没有更新源",
+      "fix_plan": "引擎加 update check，App 按钮接上；源用 GitHub 仓库 latest.json",
+      "affected": [
+        "engine/lib/update.sh",
+        "engine/xjctl.sh",
+        "app/src/commonMain/kotlin/com/hyperos/xj/pages/AboutPage.kt",
+        "battery/config/settings.conf"
+      ],
+      "fixed_in": "3.1.3（313，未发布）",
+      "resolution": "新增 update_check（支持 github_token 读私有仓库）；latest.json 已上传仓库；App 按钮显示检查结果",
+      "fixed_note": "待真机复测"
+    },
+    {
+      "id": "bug-038",
+      "title": "在线下载 DTBO 是占位",
+      "reported": "2026-11-08",
+      "type": "bug",
+      "version_seen": "3.1.2 (312)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "BatteryPage 按钮只设一段提示文字",
+      "root_cause": "没有 download 子命令与下载源",
+      "fix_plan": "引擎加 dtbo download；接 gitee 镜像仓库并校验 sha256",
+      "affected": [
+        "engine/lib/dtbo.sh",
+        "engine/xjctl.sh",
+        "app/src/commonMain/kotlin/com/hyperos/xj/pages/BatteryPage.kt",
+        "app/src/commonMain/kotlin/com/hyperos/xj/runtime/ToolboxRuntimeBridge.kt"
+      ],
+      "fixed_in": "3.1.3（313，未发布）",
+      "resolution": "dtbo download 从 dtbo_base 下 <机型>.img 到 local.img，用 index.json 校验 sha256，可直接「刷入模块内置镜像」",
+      "fixed_note": "待真机复测"
+    },
+    {
+      "id": "bug-039",
+      "title": "背屏卡片无法退出（没有手势）",
+      "reported": "2026-11-08",
+      "type": "bug",
+      "version_seen": "3.1.2 (312)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户反馈：背屏卡片叠上去后只能等它自己消失",
+      "root_cause": "PanelView 只有 onDraw，没有触摸处理；Overlay 容器 setClickable(false)",
+      "fix_plan": "加上滑退出",
+      "affected": [
+        "androidApp/src/main/java/com/hyperos/xj/rear/PanelView.java",
+        "androidApp/src/main/java/com/hyperos/xj/rear/Overlay.java"
+      ],
+      "fixed_in": "3.1.3（313，未发布）",
+      "resolution": "PanelView 加 GestureDetector/onTouchEvent 识别上滑；Overlay 接通 dismiss 并加会话退出标志，避免立刻重新叠加",
+      "fixed_note": "待真机复测"
+    },
+    {
+      "id": "bug-041",
+      "title": "App 没有自定义图标，用的是系统默认",
+      "reported": "2026-11-08",
+      "type": "bug",
+      "version_seen": "3.1.2 (312)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "AndroidManifest 无 android:icon，res 下无图标资源",
+      "root_cause": "从未添加图标",
+      "fix_plan": "生成液态玻璃风格图标（各密度位图 + 自适应图标）",
+      "affected": [
+        "androidApp/src/main/res/mipmap-*/ic_launcher.png",
+        "androidApp/src/main/res/mipmap-anydpi-v26/ic_launcher.xml",
+        "androidApp/src/main/res/drawable/ic_launcher_foreground.xml",
+        "androidApp/src/main/AndroidManifest.xml"
+      ],
+      "fixed_in": "3.1.3（313，未发布）",
+      "resolution": "纯 Python 逐像素生成深蓝底+青色渐变环+白色闪电，含 mdpi~xxxhdpi 位图与 API26+ 自适应图标；manifest 引用 @mipmap/ic_launcher",
+      "fixed_note": "待真机复测"
+    },
+    {
+      "id": "bug-030",
+      "title": "充电慢：inf 档 + APL 开启时把 wired_thermal_remove 写成 0",
+      "reported": "2026-11-08",
+      "type": "bug",
+      "version_seen": "3.1.1 (311)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "真机配置 power_limit=inf + apl_enable=1；未插枪时 power_sig=inf|1|0|、wired_thermal_remove=1。参考模块「电池解容工具箱 v3.12.9」common.sh:714-744 实测注释：thermal_remove=0 时驱动 DT 温控表接管会把电流压到约 0.5A（约 2W），此时电流节点写多少都无效",
+      "root_cause": "engine/lib/power.sh power_apply 的 inf 分支在 APL 给出目标时把 _th 置 0（交回驱动 DT 温控表），与参考模块 inf 档语义相反（参考始终 th=thermal_target()=1）；插枪、APL 一生效就踩中",
+      "fix_plan": "inf 档固定 th=1、APL 目标只作电流节点安顿值；补齐参考模块的其余机制：inf 档 58℃ 温度总闸、非 inf 档闭环反馈、充电中 1s 循环",
+      "affected": [
+        "engine/lib/power.sh",
+        "engine/xjdaemon.sh",
+        "dist/HyperOS_XJ_New/profiles/default.conf"
+      ],
+      "fixed_in": "3.1.2（312，未发布）",
+      "resolution": "power_apply 的 inf 档：th 改由 power_thermal_target()（≥580=58.0℃、30 滞回才交回驱动）决定，APL 目标不再改 th、也不进幂等签名（避免每拍重写触发 PD 重协商）；新增 power_closed_loop_ma 给非 inf 档闭环反馈；xjdaemon 充电中循环 1s（charge_interval）；profiles temp_guard 480→580；read_voltage_uv 对齐参考的多节点候选",
+      "fixed_note": "待真机复测：插枪后确认 wired_thermal_remove=1 且实测功率恢复"
     },
     {
       "id": "bug-029",
       "title": "App 首页实时运行面板刷新慢",
-      "status": "修复中",
-      "resolution": "readStatus 每 2 秒 fork 一次 su 并跑 xjctl.sh status 现场采样；改为守护写可直读状态文件 + App 免 su 直读（子代理进行中）",
-      "detected_on_device": "真机：用户反馈"
-    }
-  ],
-  "fixed": [
+      "reported": "2026-11-08",
+      "type": "bug",
+      "version_seen": "3.1.1 (311)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "真机：面板数值约 3 秒才跳一次。App 已每 0.7s 轮询读 status.json，但守护 poll_interval=3 才写一次快照；守护掉线时还会每 0.7 秒 fork 一次 su 采样造成卡顿",
+      "root_cause": "刷新率瓶颈在写端：xjdaemon 每 3 秒才写一次 status.json，App 读端再快也只能 3 秒一跳",
+      "fix_plan": "App 免 root 直读 /sys/class/power_supply/battery/* 实时字段，status.json 只补齐其余字段",
+      "affected": [
+        "ToolboxApp/app/src/androidMain/kotlin/com/hyperos/xj/runtime/ToolboxRuntimeBridge.android.kt:19"
+      ],
+      "fixed_in": "3.1.2（312，未发布）",
+      "resolution": "readStatus 先读 sysfs（capacity/status/temp/voltage_now/current_now，cell 取 voltage_avg→cell1_volt→voltage_now），再叠加 status.json 的其余字段；status.json 过期/缺失时用 sysfs 兜底而不是 fork su。容器 :androidApp:assembleDebug BUILD SUCCESSFUL in 51s",
+      "fixed_note": "待真机复测"
+    },
     {
       "id": "bug-003",
       "title": "背屏开关在无背屏机型上无能力检测",
@@ -220,7 +789,8 @@
         "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/runtime/ToolboxRuntimeBridge.kt:101"
       ],
       "fixed_in": "3.1.1（311，未发布）",
-      "resolution": "ThermalPage 新增引擎总开关 / 解除系统高温停充 / 充电温控联动"
+      "resolution": "ThermalPage 新增引擎总开关 / 解除系统高温停充 / 充电温控联动",
+      "verified_note": "2026-11-08 用户问「解除系统高温停充」有无作用：核实 hitemp_guard（engine/lib/thermal.sh:312，由 xjdaemon.sh:184 每拍调用）维护系统属性 persist.vendor.high_temp_stop_charge，开关打开时置 false 解除系统高温停充保护，功能有效；页面上的「打开动画」是开关/卡片的视觉反馈，非异常"
     },
     {
       "id": "bug-022",
@@ -344,7 +914,7 @@
         "dist/HyperOS_XJ_New/bin/baa_crypt"
       ],
       "fixed_in": "3.1.1（311，未发布）",
-      "resolution": "用户提供密钥 michargerbattery 与载荷格式后落地：新增 engine/tools/baa_crypt.c（自带 AES-128-CBC + base64，无外部依赖），编译为 aarch64 静态二进制 dist/HyperOS_XJ_New/bin/baa_crypt（706400 字节）。battery.sh 新增 baa_crypt_bin / baa_fv_force_apply：fv_force=1 且 fv_v 合法时解密选中载荷、把全部 vterm 改为 fv_v、用载荷自带 IV 重新加密、cat 原地写回 baa_src（保 inode 以穿过 bind 挂载），任一步失败即回退并记 battery.log；baa_mount 在 baa_refresh_src 后调用。xjdaemon battery_guard_tick 在 fv_v 变化时重跑并 restart batteryantiaging，无需重启生效。实测纠正：载荷 IV 是每文件自带的（payload_bixi=000102..0f、nezha=94c4f812..、stock_* 各不同，并非全局固定 10..1f），故 decrypt 一律读文件内 IV、encrypt 支持传入原 IV",
+      "resolution": "用户提供密钥（明文见项目记忆，不入库） 与载荷格式后落地：新增 engine/tools/baa_crypt.c（自带 AES-128-CBC + base64，无外部依赖），编译为 aarch64 静态二进制 dist/HyperOS_XJ_New/bin/baa_crypt（706400 字节）。battery.sh 新增 baa_crypt_bin / baa_fv_force_apply：fv_force=1 且 fv_v 合法时解密选中载荷、把全部 vterm 改为 fv_v、用载荷自带 IV 重新加密、cat 原地写回 baa_src（保 inode 以穿过 bind 挂载），任一步失败即回退并记 battery.log；baa_mount 在 baa_refresh_src 后调用。xjdaemon battery_guard_tick 在 fv_v 变化时重跑并 restart batteryantiaging，无需重启生效。实测纠正：载荷 IV 是每文件自带的（payload_bixi=000102..0f、nezha=94c4f812..、stock_* 各不同，并非全局固定 10..1f），故 decrypt 一律读文件内 IV、encrypt 支持传入原 IV",
       "fixed_note": "待真机复测：容器无 /odm/etc/charger 与 batteryantiaging，baa_mount 实测返回 2，实际挂载与整机压上限未验；容器自验为 openssl 交叉核对 + 61 个载荷解密与还原 + 沙箱 8 场景",
       "verified_on_device": "真机：设 fv_v=4700 后载荷 216 处 vterm 全部改写为 4700，applied=fv=4700，模块载荷与挂载点 sha 一致"
     },

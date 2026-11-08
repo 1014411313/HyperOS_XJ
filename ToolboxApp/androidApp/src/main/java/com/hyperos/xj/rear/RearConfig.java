@@ -14,13 +14,22 @@ public final class RearConfig {
     public final String accent;
     public final float fontScale;
     public final String fields;
+    public final String bgColor;
+    public final String bgImagePath;
 
     public RearConfig(boolean enabled, boolean keepOn, String accent, float fontScale, String fields) {
+        this(enabled, keepOn, accent, fontScale, fields, null, null);
+    }
+
+    public RearConfig(boolean enabled, boolean keepOn, String accent, float fontScale, String fields,
+                      String bgColor, String bgImagePath) {
         this.enabled = enabled;
         this.keepOn = keepOn;
         this.accent = accent == null || accent.isEmpty() ? "#38BDF8" : accent;
         this.fontScale = Math.max(0.8f, Math.min(1.4f, fontScale));
         this.fields = normalizeFields(fields);
+        this.bgColor = bgColor == null || bgColor.trim().isEmpty() ? "#000000" : bgColor.trim();
+        this.bgImagePath = bgImagePath == null ? "" : bgImagePath.trim();
     }
 
     private static String normalizeFields(String raw) {

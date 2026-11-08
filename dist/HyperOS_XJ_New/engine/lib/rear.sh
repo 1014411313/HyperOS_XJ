@@ -87,11 +87,16 @@ write_config() {
   _fields=$(cfg_get rear_fields "temp,soc,volt,cur")
   _accent=$(cfg_get rear_accent "#38BDF8")
   _font=$(cfg_get rear_font_scale "1.0")
-  printf 'enabled=%s\nkeep_on=%s\naccent=%s\nfont_scale=%s\nfields=%s\n' \
-    "$_enabled" "$_keep" "$_accent" "$_font" "$_fields" > "$CARD_CONF.tmp" 2>/dev/null
+  _bg=$(cfg_get rear_bg "")
+  # 未设背景时落到内置默认动图（service.sh 开机已铺到 /data/local/tmp）。
+  [ -n "$_bg" ] || _bg="image:/data/local/tmp/xj_rear_bg.gif"
+  _body=$(printf 'enabled=%s\nkeep_on=%s\naccent=%s\nfont_scale=%s\nfields=%s' \
+    "$_enabled" "$_keep" "$_accent" "$_font" "$_fields")
+  [ -n "$_bg" ] && _body="$_body
+bg=$_bg"
+  printf '%s\n' "$_body" > "$CARD_CONF.tmp" 2>/dev/null
   mv -f "$CARD_CONF.tmp" "$CARD_CONF" 2>/dev/null
-  printf 'enabled=%s\nkeep_on=%s\naccent=%s\nfont_scale=%s\nfields=%s\n' \
-    "$_enabled" "$_keep" "$_accent" "$_font" "$_fields" > /data/local/tmp/xj_rear.conf 2>/dev/null
+  printf '%s\n' "$_body" > /data/local/tmp/xj_rear.conf 2>/dev/null
   chmod 0644 /data/local/tmp/xj_rear.conf 2>/dev/null
   _uid=$(card_uid)
   [ "$_uid" != "0" ] && chown "$_uid:$_uid" "$CARD_CONF" 2>/dev/null
@@ -106,6 +111,7 @@ send_control() {
     --ez enabled "$_e" --ez keep_on "$_k" \
     --es fields "$(cfg_get rear_fields "temp,soc,volt,cur")" \
     --es accent "$(cfg_get rear_accent "#38BDF8")" \
+    --es bg "$(cfg_get rear_bg "image:/data/local/tmp/xj_rear_bg.gif")" \
     --ef font_scale "$(cfg_get rear_font_scale "1.0")" >/dev/null 2>&1
 }
 

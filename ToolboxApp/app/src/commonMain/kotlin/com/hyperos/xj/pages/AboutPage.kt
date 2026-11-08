@@ -30,16 +30,31 @@ import androidx.compose.ui.unit.sp
 import com.hyperos.xj.runtime.DeviceStatus
 import com.hyperos.xj.runtime.Engine
 import com.hyperos.xj.runtime.ToolboxRuntimeBridge
+import com.hyperos.xj.runtime.openUrl
 import com.hyperos.xj.ui.ActionButton
 import com.hyperos.xj.ui.CollapsibleCard
 import com.hyperos.xj.ui.GlassCard
 import com.hyperos.xj.ui.LocalAccentColor
 import com.hyperos.xj.ui.SectionLabel
 import com.hyperos.xj.ui.XJ
+import com.hyperos.xj.ui.showToast
 import com.kyant.backdrop.Backdrop
 import kotlinx.coroutines.launch
 
 private data class ToolPage(val title: String, val hint: String, val command: String)
+
+private val coolapkUrlTemplate = "https://www.coolapk.com/u/%s"
+
+// 点击即拉起 QQ 加群页
+private const val QQ_GROUP_DYNAMIC =
+    "https://qun.qq.com/universal-share/share?ac=1&authKey=UBKBf3bnabhi%2Flls1atAoS9y3sXwzBUDQaGuPxjAYEhe4L7fKBMllTJlJAKID1Y7" +
+        "&busi_data=eyJncm91cENvZGUiOiIxMDk3ODcxODgwIiwidG9rZW4iOiJTOEllamQ5dzZJMFlwamVxUGorak15UDBTL1dlaWRlODFUOEF4ckh0SlZRdCtKazVhd04welFSZmkxb0p2ZGU0IiwidWluIjoiMTAxNDQxMTMxMyJ9" +
+        "&data=J1AI8mcwvBtSrfrSJXVoPqfQeujP1VsdBgBY3hF0h_neKnkoWYV5QxLvs4hPrZ8lxSFTOj5yLW2ZtKCNci7c-A&svctype=4&tempid=h5_group_info"
+
+private const val QQ_GROUP_UNLOCK =
+    "https://qun.qq.com/universal-share/share?ac=1&authKey=YhuSvQKUmZst0N%2BcIBC0hFVMtK%2FCNB5EUlB8H0lzsIKWcBMJL1VwhbqfkSZiiRRb" +
+        "&busi_data=eyJncm91cENvZGUiOiIxMDc1OTc1ODM2IiwidG9rZW4iOiJaNUtpamlCa2xjdS96cldudGV4NXFycmR0UE9EWldlNkl4enY3ZDFTYnEzZkJPa2FnVUNtSHY3NlRadHk1SlJHIiwidWluIjoiMTAxNDQxMTMxMyJ9" +
+        "&data=zd7iIa33lYCenKfv37BpLylPQoaDyvuk_p7NoYparDlGzka01HrKp9oGYxK4Hd85vAtpNiRJCW-xhD6IZPilPg&svctype=4&tempid=h5_group_info"
 
 private val logPage = ToolPage(
     title = "运行日志",
@@ -78,6 +93,7 @@ fun AboutPage(
         showSubPage -> AboutSubPage(backdrop, onBack = { showSubPage = false })
         else -> AboutMainPage(
             backdrop,
+            bridge,
             status,
             onShowHelp = { showSubPage = true },
             onShowLog = {
@@ -96,12 +112,15 @@ fun AboutPage(
 @Composable
 private fun AboutMainPage(
     backdrop: Backdrop,
+    bridge: ToolboxRuntimeBridge,
     status: DeviceStatus,
     onShowHelp: () -> Unit,
     onShowLog: () -> Unit,
     onShowDiag: () -> Unit,
     onUninstall: () -> Unit
 ) {
+    val scope = rememberCoroutineScope()
+    var updateMsg by remember { mutableStateOf("") }
     Column(
         Modifier
             .fillMaxWidth()
@@ -111,19 +130,29 @@ private fun AboutMainPage(
     ) {
         GlassCard(backdrop, Modifier.fillMaxWidth()) {
             SectionLabel("作者与声明")
-            AboutRow("小米热炸了", "整合维护者", null)
-            AboutRow("AxiaojiuY", "动态温控作者", null)
-            AboutRow("听夜风1337", "解容工具箱作者", null)
+            AboutRow("小米热炸了", "整合维护者", "酷安主页", onClick = { openUrl(coolapkUrlTemplate.format("517965")) })
+            AboutRow("AxiaojiuY", "动态温控作者", "酷安主页", onClick = { openUrl(coolapkUrlTemplate.format("45432024")) })
+            AboutRow("听夜风1337", "解容工具箱作者", "酷安主页", onClick = { openUrl(coolapkUrlTemplate.format("37273905")) })
             BasicText(
-                text = "二改声明：整合来源和维护者。作者主页暂未收录公开链接。",
+                text = "二改声明：整合来源和维护者。点击作者名可打开其酷安主页。",
                 style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp)
             )
         }
 
         GlassCard(backdrop, Modifier.fillMaxWidth()) {
             SectionLabel("社区")
-            AboutRow("动态温控 QQ 群", "暂未收录群号与链接", null)
-            AboutRow("电池解容 QQ 群", "暂未收录群号与链接", null)
+            AboutRow(
+                "动态温控 QQ 群",
+                "群号 1097871880",
+                "点击加群",
+                onClick = { openUrl(QQ_GROUP_DYNAMIC) }
+            )
+            AboutRow(
+                "电池解容 QQ 群",
+                "群号 1075975836",
+                "点击加群",
+                onClick = { openUrl(QQ_GROUP_UNLOCK) }
+            )
         }
 
         GlassCard(backdrop, Modifier.fillMaxWidth()) {
@@ -136,9 +165,21 @@ private fun AboutMainPage(
         GlassCard(backdrop, Modifier.fillMaxWidth()) {
             SectionLabel("版本与更新")
             AboutRow("更新日志", "随模块版本发布", null)
-            AboutRow("检查更新", "当前版本 ${status.moduleVersion}，可在模块管理器检查更新", null)
+            AboutRow(
+                "检查更新",
+                updateMsg.ifBlank { "当前版本 ${status.moduleVersion}" },
+                "立即检查",
+                onClick = {
+                    updateMsg = "检查中…"
+                    scope.launch {
+                        val result = bridge.execResult(Engine.checkUpdate())
+                        showToast(if (result.success) "检查更新完成" else "失败：检查更新")
+                        updateMsg = result.output.trim().ifBlank { "无输出" }
+                    }
+                }
+            )
             BasicText(
-                text = "更新来源：GitHub / 作者酷安 / Telegram（暂未收录直达链接）",
+                text = "更新来源：GitHub / 作者酷安 / Telegram（GitHub 与 Telegram 暂未收录，酷安主页见上方作者卡片）",
                 style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp)
             )
         }
@@ -179,11 +220,13 @@ private fun ToolOutputPage(
         if (running) return
         scope.launch {
             running = true
-            output = runCatching { bridge.exec(page.command) }
-                .getOrNull()
+            val result = runCatching { bridge.execResult(page.command) }.getOrNull()
+            output = result
+                ?.output
                 ?.trim()
                 ?.ifEmpty { "(命令执行完成，无输出)" }
                 ?: "执行失败，请检查 Root 与模块安装状态"
+            showToast(if (result?.success == true) "命令执行完成" else "失败：命令执行")
             running = false
         }
     }
@@ -340,7 +383,7 @@ private fun AboutSubPage(
             HelpBullet("感谢整合维护者「小米热炸了」。")
             HelpBullet("感谢动态温控作者「AxiaojiuY」与电池解容工具箱作者「听夜风1337」，本模块的温控场景与电池解容能力整理自上述上游方案。")
             HelpBullet("引擎脚本在本仓库内重写维护，模块包只包含本仓库的引擎、温控场景与电池载荷，不打包其他第三方模块。")
-            HelpBullet("相关 QQ 群与作者主页暂未收录公开链接。")
+            HelpBullet("动态温控 QQ 群 1097871880，电池解容 QQ 群 1075975836，作者酷安主页可在「关于」首页点击打开。")
         }
         CollapsibleCard(backdrop, "注意事项", initiallyExpanded = false, modifier = Modifier.fillMaxWidth()) {
             HelpBullet("高温：引擎内置高温守卫，电池温度达到 48℃ 时会把「无限制 / 一档 / 二档 / 系统默认」强制压到三档；模块默认保留系统的高温停充保护，手动关闭后高温也会继续充电，长期高温充电会加速电池老化。")

@@ -5,6 +5,7 @@ data class DeviceStatus(
     val status: String = "未知",
     val protocol: String = "--",
     val tempC: Float = 0f,
+    // 符号约定（与背屏 BatteryReader 一致）：充电为正、放电为负。页面直接显示，不要再取绝对值。
     val currentMa: Int = 0,
     val voltageMv: Int = 0,
     val powerW: Float = 0f,
@@ -16,7 +17,8 @@ data class DeviceStatus(
     val soh: Int = 0,
     val cycles: Int = 0,
     val fakeCycles: Int = 0,
-    val thermalZones: List<Float> = emptyList(),
+    // (部位名, 温度℃)。部位名取自引擎 tz| 键名：battery / conn_therm / charger_therm0 …
+    val thermalZones: List<Pair<String, Float>> = emptyList(),
     val gear: String = "系统默认",
     val model: String = "HyperOS XJ",
     val moduleVersion: String = "--",
@@ -78,7 +80,17 @@ interface ToolboxRuntimeBridge {
 
     suspend fun readThermalSettings(): ThermalSettings
 
+    /** 最近一次 readThermalSettings 的结果；未读过或写命令后失效时为 null，供页面先渲染旧值再后台刷新。 */
+    fun cachedThermalSettings(): ThermalSettings?
+
     suspend fun exec(command: String): String
+
+    /** 与 exec 同一路径，但保留退出码：0 = 成功。 */
+    suspend fun execResult(command: String): ExecResult
+}
+
+data class ExecResult(val output: String, val exitCode: Int) {
+    val success: Boolean get() = exitCode == 0
 }
 
 expect fun createToolboxBridge(): ToolboxRuntimeBridge
@@ -116,6 +128,9 @@ object Engine {
     fun rearConfig(fields: String, fontScale: String, accent: String): String =
         build("rear", "set", "fields=$fields", "font_scale=$fontScale", "accent=$accent")
 
+    /** 空串清除卡片背景；color:#RRGGBB 或 image:<绝对路径>。 */
+    fun rearSetBg(value: String): String = build("rear", "set", "bg=$value")
+
     fun dtboStatus(): String = build("dtbo", "status")
 
     fun dtboFlash(img: String): String = build("dtbo", "flash", img)
@@ -131,6 +146,10 @@ object Engine {
     fun dtboHasLocal(): String = build("dtbo", "haslocal")
 
     fun dtboFlashLocal(): String = build("dtbo", "flashlocal")
+
+    fun dtboDownload(): String = build("dtbo", "download")
+
+    fun checkUpdate(): String = build("update", "check")
 }
 
 internal fun parseKv(raw: String): Map<String, String> =

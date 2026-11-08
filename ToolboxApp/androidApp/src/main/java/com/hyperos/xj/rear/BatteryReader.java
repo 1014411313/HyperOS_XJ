@@ -44,7 +44,8 @@ public final class BatteryReader {
             }
         } catch (Throwable ignored) {
         }
-        state.currentA = currentUa / 1_000_000.0;
+        // CURRENT_NOW 本机型充电为负，统一取反为「充电正、放电负」。
+        state.currentA = -currentUa / 1_000_000.0;
         state.powerW = state.currentA * state.voltageV;
         state.charging = status == BatteryManager.BATTERY_STATUS_CHARGING
                 || status == BatteryManager.BATTERY_STATUS_FULL;

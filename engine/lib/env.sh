@@ -5,12 +5,14 @@
 MODDIR="/data/adb/modules/HyperOS_XJ"
 [ -d "$MODDIR" ] || MODDIR="$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)"
 
-CONFDIR="$MODDIR/config"
-CACHE="$MODDIR/cache"
-STATE="$MODDIR/state"
-LOGDIR="$MODDIR/log"
-BT_CONF="$MODDIR/battery/config/settings.conf"
-BT_STATE="$MODDIR/battery/state"
+# 用户可变数据根放在模块目录外：Magisk 升级会整体删除模块目录，数据在内会丢（bug-045）。
+DATA_DIR="/data/adb/HyperOS_XJ"
+CONFDIR="$DATA_DIR/config"
+CACHE="$DATA_DIR/cache"
+STATE="$DATA_DIR/state"
+LOGDIR="$DATA_DIR/log"
+BT_CONF="$DATA_DIR/battery/settings.conf"
+BT_STATE="$DATA_DIR/battery/state"
 
 mkdir -p "$CONFDIR" "$CACHE" "$STATE" "$LOGDIR" "$BT_STATE" 2>/dev/null
 
@@ -20,13 +22,21 @@ mod_version() {
   grep -m1 '^version=' "$MODDIR/module.prop" 2>/dev/null | cut -d= -f2 | tr -d '\r'
 }
 
-# ---------- settings.json（温控/引擎配置，平铺 JSON） ----------
+# ---------- 首次 seed：配置从模块内模板复制（settings.conf 模板含机型 dev_code） ----------
 seed_settings() {
   [ -s "$CONFDIR/settings.json" ] && return 0
   mkdir -p "$CONFDIR" 2>/dev/null
   cp -f "$MODDIR/default_settings.json" "$CONFDIR/settings.json" 2>/dev/null \
     || printf '{}\n' > "$CONFDIR/settings.json"
 }
+
+seed_bt_conf() {
+  [ -s "$BT_CONF" ] && return 0
+  mkdir -p "$(dirname "$BT_CONF")" 2>/dev/null
+  cp -f "$MODDIR/battery/config/settings.conf" "$BT_CONF" 2>/dev/null
+}
+seed_settings
+seed_bt_conf
 
 json_get() {
   _f="$CONFDIR/settings.json"; _k="$1"; _d="${2:-}"

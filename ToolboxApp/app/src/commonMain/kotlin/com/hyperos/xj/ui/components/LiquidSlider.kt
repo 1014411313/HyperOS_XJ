@@ -1,8 +1,7 @@
 package com.hyperos.xj.ui.components
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -15,6 +14,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -64,6 +64,11 @@ fun LiquidSlider(
         else Color(0xFF787880).copy(0.36f)
 
     val trackBackdrop = rememberLayerBackdrop()
+    // value/onValueChange 都是外部传入的 lambda：pointerInput 块只在 (isLtr, trackWidth) 变时重建，
+    // 直接捕获会让“拖动起点”永远读到首次组合时的值（页面传 { appearance.xxx } 这种按值捕获尤其明显，
+    // 表现为一拖动就从头开始）。用 rememberUpdatedState 读最新实例。
+    val currentValue by rememberUpdatedState(value)
+    val currentOnValueChange by rememberUpdatedState(onValueChange)
 
     BoxWithConstraints(
         modifier.fillMaxWidth(),
@@ -71,14 +76,6 @@ fun LiquidSlider(
     ) {
         val trackWidth = constraints.maxWidth
         val isLtr = LocalLayoutDirection.current == LayoutDirection.Ltr
-
-        fun valueFromX(x: Float): Float {
-            val fraction = (x / trackWidth).fastCoerceIn(0f, 1f)
-            val span = valueRange.endInclusive - valueRange.start
-            val raw = if (isLtr) valueRange.start + span * fraction
-            else valueRange.endInclusive - span * fraction
-            return raw.coerceIn(valueRange.start, valueRange.endInclusive)
-        }
 
         val animationScope = rememberCoroutineScope()
         var didDrag by remember { mutableStateOf(false) }
@@ -93,7 +90,7 @@ fun LiquidSlider(
                 onDragStarted = {},
                 onDragStopped = {
                     if (didDrag) {
-                        onValueChange(targetValue)
+                        currentOnValueChange(targetValue)
                     }
                 },
                 onDrag = { _, dragAmount ->
@@ -101,7 +98,7 @@ fun LiquidSlider(
                         didDrag = dragAmount.x != 0f
                     }
                     val delta = (valueRange.endInclusive - valueRange.start) * (dragAmount.x / trackWidth)
-                    onValueChange(
+                    currentOnValueChange(
                         if (isLtr) (targetValue + delta).coerceIn(valueRange)
                         else (targetValue - delta).coerceIn(valueRange)
                     )
@@ -109,7 +106,7 @@ fun LiquidSlider(
             )
         }
         LaunchedEffect(dampedDragAnimation) {
-            snapshotFlow { value() }
+            snapshotFlow { currentValue() }
                 .collectLatest { value ->
                     if (dampedDragAnimation.targetValue != value) {
                         dampedDragAnimation.updateValue(value)
@@ -211,24 +208,22 @@ fun LiquidSlider(
                 .fillMaxWidth()
                 .height(34f.dp)
                 .pointerInput(isLtr, trackWidth) {
-                    detectTapGestures { position ->
-                        val targetValue = valueFromX(position.x)
-                        dampedDragAnimation.animateToValue(targetValue)
-                        onValueChange(targetValue)
-                    }
-                }
-                .pointerInput(isLtr, trackWidth) {
-                    detectDragGestures(
-                        onDragStart = { position ->
+                    // 只认水平拖动：点击/按下不跳值，拖动以当前值为基准相对增减；
+                    // 用水平手势而不是通用拖动，上下滚页面时就不会误触滑块。
+                    var dragValue = 0f
+                    detectHorizontalDragGestures(
+                        onDragStart = {
+                            dragValue = currentValue()
                             dampedDragAnimation.press()
-                            val targetValue = valueFromX(position.x)
-                            dampedDragAnimation.updateValue(targetValue)
-                            onValueChange(targetValue)
                         },
-                        onDrag = { change, _ ->
-                            val targetValue = valueFromX(change.position.x)
-                            dampedDragAnimation.updateValue(targetValue)
-                            onValueChange(targetValue)
+                        onHorizontalDrag = { change, dragAmount ->
+                            change.consume()
+                            val span = valueRange.endInclusive - valueRange.start
+                            val delta = span * (dragAmount / trackWidth) * (if (isLtr) 1f else -1f)
+                            dragValue = (dragValue + delta)
+                                .coerceIn(valueRange.start, valueRange.endInclusive)
+                            dampedDragAnimation.updateValue(dragValue)
+                            currentOnValueChange(dragValue)
                         },
                         onDragEnd = { dampedDragAnimation.release() },
                         onDragCancel = { dampedDragAnimation.release() }

@@ -220,7 +220,7 @@ case "$1" in
       status) rear_status ;;
       set)
         shift 2
-        [ $# -gt 0 ] || { echo "用法: rear set fields=... font_scale=... accent=..."; exit 2; }
+        [ $# -gt 0 ] || { echo "用法: rear set fields=... font_scale=... accent=... bg=..."; exit 2; }
         for _kv in "$@"; do
           case "$_kv" in *=*) ;; *) echo "非法参数: $_kv"; exit 2 ;; esac
           _k=${_kv%%=*}; _v=${_kv#*=}
@@ -234,11 +234,28 @@ case "$1" in
             accent)
               case "$_v" in \#[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]) ;; *) echo "非法 accent: $_v"; exit 2 ;; esac
               cfg_set rear_accent "$_v" ;;
+            bg)
+              case "$_v" in
+                '') cfg_set rear_bg "" ;;
+                color:\#[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F])
+                  cfg_set rear_bg "$_v" ;;
+                image:*)
+                  _p=${_v#image:}
+                  case "$_p" in
+                    /*) ;;
+                    *) echo "非法 bg: $_v"; exit 2 ;;
+                  esac
+                  case "$_p" in
+                    *[!:/A-Za-z0-9_.-]*) echo "非法 bg: $_v"; exit 2 ;;
+                  esac
+                  cfg_set rear_bg "$_v" ;;
+                *) echo "非法 bg: $_v"; exit 2 ;;
+              esac ;;
             *) echo "未知键: $_k"; exit 2 ;;
           esac
         done
         [ "$(cfg_get rearscreen 0)" = "1" ] && rear_push_config
-        echo "fields=$(cfg_get rear_fields "temp,soc,volt,cur") font_scale=$(cfg_get rear_font_scale "1.0") accent=$(cfg_get rear_accent "#38BDF8")"
+        echo "fields=$(cfg_get rear_fields "temp,soc,volt,cur") font_scale=$(cfg_get rear_font_scale "1.0") accent=$(cfg_get rear_accent "#38BDF8") bg=$(cfg_get rear_bg)"
         ;;
       *) usage; exit 9 ;;
     esac ;;
@@ -250,11 +267,19 @@ case "$1" in
       backup) dtbo_backup "$3"; exit $? ;;
       flash)  dtbo_flash "$3"; exit $? ;;
       flashlocal) dtbo_flashlocal; exit $? ;;
+      download)   dtbo_download; exit $? ;;
       haslocal)   dtbo_haslocal; exit $? ;;
       list)   dtbo_scan_list; exit $? ;;
       dirs)   dtbo_dirs_show; exit $? ;;
       adddir) dtbo_dirs_add "$3"; exit $? ;;
       deldir) dtbo_dirs_del "$3"; exit $? ;;
+      *) usage; exit 9 ;;
+    esac ;;
+
+  update)
+    . "$DIR/lib/update.sh"
+    case "$2" in
+      check) update_check; exit $? ;;
       *) usage; exit 9 ;;
     esac ;;
 

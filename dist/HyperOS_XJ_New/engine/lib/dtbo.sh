@@ -219,6 +219,54 @@ dtbo_flashlocal() {
   dtbo_flash "$_f" 1
 }
 
+# ---- 在线下载当前机型镜像 ----
+# 下载源 = battery/config/settings.conf 的 dtbo_base（可直链的仓库 raw 根），
+# 约定镜像路径 <dtbo_base>/dtbo/<dev_code>.img，清单 <dtbo_base>/dtbo/index.json（含 sha256）。
+# 下到 battery/dtbo/local.img，直接配合「刷入模块内置镜像」。
+dtbo_download() {
+  _dev=$(dev_code 2>/dev/null)
+  case "$_dev" in ''|unknown) echo "机型未识别，无法确定要下载的镜像"; return 1 ;; esac
+  _base=$(cfg_get dtbo_base "https://gitee.com/xiaomirezhale/miwkjr-dtbo/raw/master")
+  [ -n "$_base" ] || { echo "未配置 DTBO 下载源（settings.conf 的 dtbo_base）"; return 1; }
+  command -v curl >/dev/null 2>&1 || { echo "本机无 curl，无法下载"; return 1; }
+  _base=${_base%/}
+  _url="$_base/dtbo/${_dev}.img"
+  _dst=$(dtbo_local_img)
+  mkdir -p "$DTBO_DIR" 2>/dev/null
+  echo "下载中: $_url"
+  if ! curl -fsSL --connect-timeout 20 --max-time 600 -o "$_dst.tmp" "$_url" 2>/dev/null; then
+    rm -f "$_dst.tmp" 2>/dev/null
+    echo "下载失败（网络不可达或地址无效）"
+    return 1
+  fi
+  _sz=$(wc -c < "$_dst.tmp" 2>/dev/null | tr -d ' ')
+  case "$_sz" in ''|*[!0-9]*|0)
+    rm -f "$_dst.tmp" 2>/dev/null
+    echo "下载内容为空，已丢弃"
+    return 1 ;;
+  esac
+  if [ "$_sz" -lt 32768 ]; then
+    rm -f "$_dst.tmp" 2>/dev/null
+    echo "下载内容过小（${_sz}B，疑似错误页），已丢弃"
+    return 1
+  fi
+  # 仓库清单里的 sha256；拿不到清单就跳过校验，不阻断
+  _want=$(curl -fsSL --connect-timeout 15 --max-time 60 "$_base/dtbo/index.json" 2>/dev/null \
+    | grep "\"$_dev\"" | sed -n 's/.*"sha256"[[:space:]]*:[[:space:]]*"\([0-9a-f]\{64\}\)".*/\1/p' | head -n1)
+  if [ -n "$_want" ]; then
+    _got=$(sha256sum "$_dst.tmp" 2>/dev/null | awk '{print $1}')
+    if [ "$_got" != "$_want" ]; then
+      rm -f "$_dst.tmp" 2>/dev/null
+      echo "校验失败：sha256 与仓库清单不符，已丢弃"
+      return 1
+    fi
+    echo "sha256 校验通过"
+  fi
+  mv -f "$_dst.tmp" "$_dst" 2>/dev/null || { rm -f "$_dst.tmp" 2>/dev/null; echo "写入失败"; return 1; }
+  echo "已保存: $_dst（${_sz} 字节，机型 $_dev）"
+  echo "可点「刷入模块内置镜像」刷入（刷入前自动备份）"
+}
+
 # ---- 候选镜像扫描目录（list/adddir/deldir 持久化在 state/extra_dirs.txt）----
 DTBO_EDIRS_FILE="$STATE/extra_dirs.txt"
 

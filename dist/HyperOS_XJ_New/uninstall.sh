@@ -1,5 +1,6 @@
 #!/system/bin/sh
 MODDIR=${0%/*}
+DATA_DIR=/data/adb/HyperOS_XJ
 
 # 先关闭背屏并恢复旧版可能禁用的原生时钟
 [ -f "$MODDIR/engine/xjctl.sh" ] && sh "$MODDIR/engine/xjctl.sh" rear off >/dev/null 2>&1
@@ -13,9 +14,12 @@ MODDIR=${0%/*}
 
 pkill -f 'HyperOS_XJ/engine/xjdaemon\.sh' 2>/dev/null
 pkill -f 'HyperOS_XJ/engine/boot\.sh' 2>/dev/null
-rm -f "$MODDIR/state/daemon.pid" 2>/dev/null
+rm -f "$DATA_DIR/state/daemon.pid" 2>/dev/null
 
 pm uninstall --user 0 com.hyperos.xj >/dev/null 2>&1
+
+# 卸载时清掉模块目录外的用户数据（精确路径）
+rm -rf "$DATA_DIR" 2>/dev/null
 
 case "$MODDIR" in
     /data/adb/modules/*|/data/adb/modules_update/*)

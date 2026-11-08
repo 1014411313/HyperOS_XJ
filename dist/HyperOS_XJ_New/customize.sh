@@ -2,11 +2,11 @@
 SKIPUNZIP=0
 MODPATH=${MODPATH:-/data/adb/modules_update/HyperOS_XJ}
 MODDIR="$MODPATH"
+DATA_DIR=/data/adb/HyperOS_XJ
+OLD_DIR=/data/adb/modules/HyperOS_XJ
 print() { ui_print "$@"; }
 
 print " - HyperOS - 动态温控·解容（新架构）"
-mkdir -p "$MODPATH/config" "$MODPATH/state" "$MODPATH/log" \
-         "$MODPATH/battery/state" "$MODPATH/backup" 2>/dev/null
 
 _sup="annibale bixi byron dada haotian miro myron nezha onyx pandora popsicle pudding songyuan warsaw xuanyuan"
 _dev=""
@@ -26,6 +26,30 @@ else
     print " - [!] 未识别到受支持机型，解容/DTBO 将跳过（dev_code 留空）"
 fi
 
+# ---- 一次性迁移（bug-045）：用户可变数据搬到 /data/adb/HyperOS_XJ ----
+# 此刻旧模块目录仍在（Magisk 到下次重启合并时才删除），把旧设置迁出；全新安装只 seed。
+mkdir -p "$DATA_DIR/config" "$DATA_DIR/cache" "$DATA_DIR/state" "$DATA_DIR/log" \
+         "$DATA_DIR/battery/state" "$DATA_DIR/backup" 2>/dev/null
+if [ ! -s "$DATA_DIR/config/settings.json" ]; then
+    [ -d "$OLD_DIR/config" ] && cp -af "$OLD_DIR/config/." "$DATA_DIR/config/" 2>/dev/null
+    [ -d "$OLD_DIR/state" ] && cp -af "$OLD_DIR/state/." "$DATA_DIR/state/" 2>/dev/null
+    [ -d "$OLD_DIR/battery/state" ] && cp -af "$OLD_DIR/battery/state/." "$DATA_DIR/battery/state/" 2>/dev/null
+    [ -f "$OLD_DIR/battery/config/settings.conf" ] && [ ! -s "$DATA_DIR/battery/settings.conf" ] && \
+        cp -af "$OLD_DIR/battery/config/settings.conf" "$DATA_DIR/battery/settings.conf" 2>/dev/null
+    [ -d "$OLD_DIR/backup/thermal-config" ] && [ ! -e "$DATA_DIR/backup/thermal-config" ] && \
+        cp -af "$OLD_DIR/backup/thermal-config" "$DATA_DIR/backup/thermal-config" 2>/dev/null
+fi
+# 迁移来的 state/ 可能带旧 daemon.pid（bug-056）：安装后必重启、旧 pid 已无意义，
+# 清掉避免人工排查时误信；存活判定已改为按真实进程（boot.sh daemon_alive）。
+rm -f "$DATA_DIR/state"/*.pid 2>/dev/null
+[ -s "$DATA_DIR/config/settings.json" ] || \
+    cp -f "$MODPATH/default_settings.json" "$DATA_DIR/config/settings.json" 2>/dev/null
+[ -s "$DATA_DIR/battery/settings.conf" ] || \
+    cp -f "$MODPATH/battery/config/settings.conf" "$DATA_DIR/battery/settings.conf" 2>/dev/null
+if [ -n "$_dev" ] && [ -f "$DATA_DIR/battery/settings.conf" ] && ! grep -q '^dev_code=' "$DATA_DIR/battery/settings.conf" 2>/dev/null; then
+    echo "dev_code=$_dev" >> "$DATA_DIR/battery/settings.conf" 2>/dev/null
+fi
+
 _plat=$(getprop ro.board.platform 2>/dev/null)
 [ -n "$_plat" ] || _plat=$(getprop ro.hardware 2>/dev/null)
 case "$_plat" in
@@ -34,13 +58,10 @@ case "$_plat" in
             cp -f "$MODPATH/default_settings.json" "$MODPATH/default_settings.full.json" 2>/dev/null
             cp -f "$MODPATH/default_settings.mtk.json" "$MODPATH/default_settings.json" 2>/dev/null
         fi
-        printf '1' > "$MODPATH/config/mtk_fix" ;;
+        printf '1' > "$DATA_DIR/config/mtk_fix" ;;
     *)
-        rm -f "$MODPATH/config/mtk_fix" 2>/dev/null ;;
+        rm -f "$DATA_DIR/config/mtk_fix" 2>/dev/null ;;
 esac
-
-[ -s "$MODPATH/config/settings.json" ] || \
-    cp -f "$MODPATH/default_settings.json" "$MODPATH/config/settings.json" 2>/dev/null
 
 _apk="$MODPATH/app/HyperOS_XJ.apk"
 if [ -f "$_apk" ]; then

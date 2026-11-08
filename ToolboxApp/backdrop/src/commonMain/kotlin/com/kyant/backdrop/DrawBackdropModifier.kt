@@ -22,6 +22,7 @@ import androidx.compose.ui.node.GlobalPositionAwareModifierNode
 import androidx.compose.ui.node.LayoutModifierNode
 import androidx.compose.ui.node.ModifierNodeElement
 import androidx.compose.ui.node.ObserverModifierNode
+import androidx.compose.ui.node.invalidateMeasurement
 import androidx.compose.ui.node.observeReads
 import androidx.compose.ui.node.requireGraphicsContext
 import androidx.compose.ui.platform.InspectorInfo
@@ -172,6 +173,8 @@ private class DrawBackdropElement(
     }
 
     override fun update(node: DrawBackdropNode) {
+        // 裁剪层（layoutLayerBlock）只在 measure/place 时求值，shape 变化必须触发重布局才能跟随
+        val shapeChanged = node.shapeProvider.innerShape != shapeProvider.innerShape
         node.backdrop = backdrop
         node.shapeProvider = shapeProvider
         node.effects = effects
@@ -184,6 +187,9 @@ private class DrawBackdropElement(
         node.onDrawBackdrop = onDrawBackdrop
         node.onDrawSurface = onDrawSurface
         node.onDrawFront = onDrawFront
+        if (shapeChanged && node.isAttached) {
+            node.invalidateMeasurement()
+        }
         node.invalidateDrawCache()
     }
 

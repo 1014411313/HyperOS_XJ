@@ -16,11 +16,20 @@ private val sharedStatusFiles = listOf(
 )
 
 private class AndroidToolboxBridge : ToolboxRuntimeBridge {
+    @Volatile
+    private var settingsCache: ThermalSettings? = null
+
     override suspend fun readStatus(): DeviceStatus = withContext(Dispatchers.IO) {
-        readSharedStatus() ?: readStatusViaRoot()
+        val live = readSysfsLive()
+        val snap = readSharedStatusMap()
+        when {
+            snap != null -> mapStatus(if (live != null) snap + live else snap)
+            live != null -> mapStatus(live, "面板直读 · 引擎快照不可用")
+            else -> readStatusViaRoot()
+        }
     }
 
-    private fun readSharedStatus(): DeviceStatus? {
+    private fun readSharedStatusMap(): Map<String, String>? {
         for (file in sharedStatusFiles) {
             val raw = try {
                 if (file.isFile) file.readText() else null
@@ -31,13 +40,13 @@ private class AndroidToolboxBridge : ToolboxRuntimeBridge {
             if (map.isEmpty()) continue
             val ts = map["ts"]?.toLongOrNull()?.times(1000) ?: continue
             if (abs(System.currentTimeMillis() - ts) > SHARED_STATUS_STALE_MS) continue
-            return mapStatus(map)
+            return map
         }
         return null
     }
 
     private fun readStatusViaRoot(): DeviceStatus {
-        val raw = runAsRoot(Engine.status())
+        val raw = runAsRoot(Engine.status()).output
         val map = if (raw.trimStart().startsWith("{")) parseFlatJson(raw) else emptyMap()
         if (map.isEmpty()) {
             val hint = raw.lineSequence().firstOrNull { it.isNotBlank() }?.take(80) ?: "Root 不可用"
@@ -46,26 +55,69 @@ private class AndroidToolboxBridge : ToolboxRuntimeBridge {
         return mapStatus(map)
     }
 
+    override fun cachedThermalSettings(): ThermalSettings? = settingsCache
+
     override suspend fun readThermalSettings(): ThermalSettings = withContext(Dispatchers.IO) {
-        mapThermal(parseKv(runAsRoot(Engine.settingsDump())))
+        mapThermal(parseKv(runAsRoot(Engine.settingsDump()).output)).also { settingsCache = it }
     }
 
     override suspend fun exec(command: String): String = withContext(Dispatchers.IO) {
-        runAsRoot(command)
+        runAsRoot(command).also { settingsCache = null }.output
     }
 
-    private fun runAsRoot(command: String): String {
+    override suspend fun execResult(command: String): ExecResult = withContext(Dispatchers.IO) {
+        runAsRoot(command).also { settingsCache = null }
+    }
+
+    private fun runAsRoot(command: String): ExecResult {
         return try {
             val process = ProcessBuilder("su", "-c", command)
                 .redirectErrorStream(true)
                 .start()
             val output = BufferedReader(InputStreamReader(process.inputStream)).use { it.readText() }
-            process.waitFor()
-            output.trim()
+            val code = process.waitFor()
+            ExecResult(output.trim(), code)
         } catch (t: Throwable) {
-            t.message ?: "error"
+            ExecResult(t.message ?: "error", -1)
         }
     }
+}
+
+/**
+ * 免 root 直读 sysfs：守护进程以 poll_interval（默认 3s）才写一次 status.json，
+ * 面板只读快照会落在 3s 粒度上，这里直接取实时节点覆盖 cap/status/temp/volt/curr。
+ */
+private fun readSysfsLive(): Map<String, String>? {
+    val bat = "/sys/class/power_supply/battery"
+    if (!File(bat).isDirectory) return null
+    val out = LinkedHashMap<String, String>()
+    readNode("$bat/capacity")?.let { out["cap"] = it }
+    readNode("$bat/status")?.let { out["status"] = it }
+    readNode("$bat/temp")?.let { out["temp"] = it }
+    readNode("$bat/voltage_now")?.let { out["volt"] = it }
+    (readNode("$bat/current_now") ?: readNode("/sys/class/power_supply/bms/current_now"))
+        ?.let { out["curr"] = it }
+    cellUv()?.let { out["cell"] = it }
+    return out.ifEmpty { null }
+}
+
+private fun readNode(path: String): String? = try {
+    val file = File(path)
+    if (file.isFile) file.readText().trim().takeIf { it.isNotEmpty() } else null
+} catch (_: Throwable) {
+    null
+}
+
+/** 与引擎 cell_uv 同口径：双电芯机型的 voltage_now 可能是串联总压。 */
+private fun cellUv(): String? {
+    val bat = "/sys/class/power_supply/battery"
+    for (path in listOf("$bat/voltage_avg", "/sys/class/qcom-battery/cell1_volt", "$bat/voltage_now")) {
+        val v = readNode(path)?.toLongOrNull() ?: continue
+        if (v < 2_500_000L) continue
+        if (v <= 5_400_000L) return v.toString()
+    }
+    val v = readNode("$bat/voltage_now")?.toLongOrNull()
+    return if (v != null && v > 0) (v / 2).toString() else null
 }
 
 private fun num(map: Map<String, String>, key: String): Double =
@@ -103,15 +155,16 @@ private fun modeLabel(mode: String): String = when (mode) {
     else -> mode.ifBlank { "系统默认" }
 }
 
-private fun mapStatus(map: Map<String, String>): DeviceStatus {
+private fun mapStatus(map: Map<String, String>, environment: String = "Root · 模块在线"): DeviceStatus {
     val tempC = (num(map, "temp") / 10.0).toFloat()
     val currUa = num(map, "curr")
     val packUv = num(map, "volt")
     val cellUv = num(map, "cell").takeIf { it > 0 } ?: packUv
 
-    val currentMa = (currUa / 1000.0).toInt()
+    // 统一约定：充电为正、放电为负（sysfs current_now 充电时为负，这里取反）。
+    val currentMa = (-currUa / 1000.0).toInt()
     val voltageMv = (cellUv / 1000.0).toInt()
-    val powerW = (abs(currUa) / 1000.0 * packUv / 1_000_000_000.0).toFloat()
+    val powerW = (-currUa / 1000.0 * packUv / 1_000_000_000.0).toFloat()
 
     val fullMah = (num(map, "full") / 1000.0).toInt()
     val designMah = (num(map, "design") / 1000.0).toInt()
@@ -125,7 +178,8 @@ private fun mapStatus(map: Map<String, String>): DeviceStatus {
         .filter { it.key.startsWith("tz|") }
         .mapNotNull { entry ->
             val value = entry.value.toFloatOrNull() ?: return@mapNotNull null
-            if (abs(value) > 1000f) value / 1000f else value
+            val temp = if (abs(value) > 1000f) value / 1000f else value
+            entry.key.removePrefix("tz|") to temp
         }
         .take(8)
 
@@ -154,7 +208,7 @@ private fun mapStatus(map: Map<String, String>): DeviceStatus {
         moduleVersion = map["module_version"] ?: "--",
         kernelVersion = map["kernel"] ?: "",
         systemVersion = map["os_version"] ?: "--",
-        environment = "Root · 模块在线",
+        environment = environment,
         date = map["date"] ?: "",
         deviceCode = map["device_code"] ?: "",
         osVersion = map["os_version"] ?: "",

@@ -30,10 +30,17 @@ max_ma() {
 }
 
 read_voltage_uv() {
-  _v=$(cat /sys/class/power_supply/battery/voltage_now 2>/dev/null)
-  case "$_v" in ''|*[!0-9]*|0) _v=4000000 ;; esac
-  [ "$_v" -lt 100000 ] && _v=$((_v * 1000))
-  printf '%s' "$_v"
+  for _p in /sys/class/power_supply/battery/voltage_now \
+            /sys/class/power_supply/main/voltage_now \
+            /sys/class/power_supply/usb/voltage_now; do
+    _v=$(cat "$_p" 2>/dev/null)
+    case "$_v" in ''|*[!0-9]*|0) continue ;; esac
+    [ "$_v" -lt 1000 ] && continue
+    [ "$_v" -lt 100000 ] && _v=$((_v * 1000))
+    printf '%s' "$_v"
+    return 0
+  done
+  printf '%s' 4000000
 }
 
 tier_watt() {
@@ -84,6 +91,66 @@ ctrl_level() {
   echo 14
 }
 
+# inf 档的温控总闸：电池温度 ≥ thermal_ceil（默认 580 = 58.0℃）时把 wired_thermal_remove
+# 交回驱动 DT 温控表；带滞回，避免在阈值附近反复翻转触发 PMIC 重协商。
+power_thermal_target() {
+  _t=${BAT_TEMP:-0}
+  case "$_t" in ''|*[!0-9-]*) printf '%s' 1; return ;; esac
+  _on=$(cfg_get thermal_ceil 580)
+  case "$_on" in ''|*[!0-9]*) _on=580 ;; esac
+  _hyst=$(cfg_get thermal_ceil_hyst 30)
+  case "$_hyst" in ''|*[!0-9]*) _hyst=30 ;; esac
+  _f="$BT_STATE/thermal_gate"
+  _st=$(cat "$_f" 2>/dev/null)
+  if [ "$_t" -ge "$_on" ]; then
+    printf '%s' 0 > "$_f" 2>/dev/null
+    printf '%s' 0
+    return
+  fi
+  if [ "$_st" = "0" ] && [ "$_t" -gt $((_on - _hyst)) ]; then
+    printf '%s' 0
+    return
+  fi
+  [ "$_st" = "0" ] && printf '%s' 1 > "$_f" 2>/dev/null
+  printf '%s' 1
+}
+
+# 非 inf 档闭环反馈：系统会把电流节点"顶高"（实测低值压得住、中值被顶），开环写一次
+# 对不准档位实际功率，这里按实测电池电流每 2 拍微调写入值，让它贴住目标。
+power_closed_loop_ma() {
+  _tier="$1" _want="$2"
+  case "$_want" in ''|*[!0-9]*) printf '%s' "$_want"; return ;; esac
+  _b="${BAT:-/sys/class/power_supply/battery}"
+  _f="$BT_STATE/closed_loop"
+  _c=$(cat "$_f" 2>/dev/null)
+  _ct=${_c%%"|"*}
+  _cn=${_c#*"|"}
+  case "$_cn" in ''|*[!0-9]*) _cn="$_want" ;; esac
+  [ "$_ct" = "$_tier" ] || _cn="$_want"
+  case "$(cat "$_b/status" 2>/dev/null)" in
+    Discharging|"Not charging")
+      printf '%s|%s\n' "$_tier" "$_want" > "$_f.tmp" 2>/dev/null && mv -f "$_f.tmp" "$_f" 2>/dev/null
+      printf '%s' "$_want"
+      return ;;
+  esac
+  _i=$(cat "$_b/current_now" 2>/dev/null)
+  case "$_i" in ''|*[!0-9-]*) printf '%s' "$_cn"; return ;; esac
+  _i=${_i#-}
+  _i=$((_i / 1000))
+  # 偏离过大直接跳回目标，不再逐拍爬（否则被砍狠了要几十秒才恢复）
+  [ "$_cn" -lt $((_want / 2)) ] && _cn="$_want"
+  if [ $(( ${TICK_N:-0} % 2 )) -eq 0 ]; then
+    [ "$_i" -gt $((_want * 115 / 100)) ] && _cn=$((_cn * 80 / 100))
+    [ "$_i" -lt $((_want * 85 / 100)) ] && _cn=$((_cn * 110 / 100))
+  fi
+  [ "$_cn" -gt "$_want" ] && _cn="$_want"
+  _fl=$((_want * 25 / 100))
+  [ "$_fl" -lt 400 ] && _fl=400
+  [ "$_cn" -lt "$_fl" ] && _cn="$_fl"
+  printf '%s|%s\n' "$_tier" "$_cn" > "$_f.tmp" 2>/dev/null && mv -f "$_f.tmp" "$_f" 2>/dev/null
+  printf '%s' "$_cn"
+}
+
 wnode() {
   [ -e "$1" ] || return 1
   [ -w "$1" ] || chmod 0664 "$1" 2>/dev/null
@@ -127,30 +194,49 @@ nodes_ok() {
 }
 
 # 应用一个功率档；inf=不限速，其余按瓦数换算电流写节点。
-# inf 且 APL 开启时按 APL 目标做「单电流模式」（th=0 + ctrl=0，只限电流）。
-# 已应用且节点未被驱动复位时跳过，避免每拍重写触发 PD 反复重协商。
+# inf：th=1（解除驱动 DT 温控）+ ctrl=0，电流节点只做一次性「安顿」。th 绝不能写 0：
+#   驱动 DT 温控表一旦接管会把功率压到约 2W，此时电流节点写多少都没用（参考实现实测）。
+#   所以 APL 目标只作安顿值，不改 th，也不进幂等签名 —— APL 每拍会变，进了签名就会
+#   每拍重写 wired_chg_curr，而每次写都触发 PMIC 重协商 PD 契约（功率锯齿）。
+# 其余档：th=0 + ctrl 阶梯 + 按瓦数换算电流。
 power_apply() {
   _tier=$(norm_power "$1")
   _th=1 _lv=0 _ma=""
   if [ "$_tier" = "inf" ]; then
-    _ma=$(apl_target_ma) || _ma=""
-    [ -n "$_ma" ] && { _th=0; _lv=0; }
+    _ma=$(apl_target_ma) || _ma=$(apl_ceiling_ma)
+    case "$_ma" in ''|*[!0-9]*) _ma="" ;; esac
+    _th=$(power_thermal_target)
+    _sig="inf|${_th}|0|"
+    _chk=""
   else
     _w=$(tier_watt "$_tier")
     _uv=$(read_voltage_uv)
     _ma=$(watt_to_ma "$_w" "$_uv")
+    _ma=$(power_closed_loop_ma "$_tier" "$_ma")
     _lv=$(ctrl_level "$_w")
     _th=0
+    _sig="${_tier}|${_th}|${_lv}|${_ma}"
+    _chk="$_ma"
   fi
-  _sig="${_tier}|${_th}|${_lv}|${_ma}"
 
-  if [ "$(cat "$BT_STATE/power_sig" 2>/dev/null)" = "$_sig" ] && [ "$(nodes_ok "$_th" "$_lv" "$_ma")" = "1" ]; then
+  _prev=$(cat "$BT_STATE/power_sig" 2>/dev/null)
+  _need=1
+  if [ "$_prev" = "$_sig" ] && [ "$(nodes_ok "$_th" "$_lv" "$_chk")" = "1" ]; then
+    _need=0
+    if [ "$_tier" = "inf" ]; then
+      # inf 还要确认电流节点已放行（≥10A）；偏低说明未安顿，需补写一次。
+      _cur=$(cat "$WIRED_CURR" 2>/dev/null)
+      case "$_cur" in ''|*[!0-9]*) _cur=0 ;; esac
+      [ "$_cur" -ge 10000000 ] || _need=1
+    fi
+  fi
+  if [ "$_need" = "0" ]; then
     printf '%s' "$_tier" > "$BT_STATE/power_applied" 2>/dev/null
     return 0
   fi
 
   # 同档位但节点被驱动复位时按最小写间隔节流。
-  if [ "$(cat "$BT_STATE/power_sig" 2>/dev/null)" = "$_sig" ]; then
+  if [ "$_prev" = "$_sig" ]; then
     _now=$(date +%s)
     _ts=$(cat "$BT_STATE/power_write_ts" 2>/dev/null)
     case "$_ts" in ''|*[!0-9]*) _ts=0 ;; esac
@@ -165,7 +251,17 @@ power_apply() {
     wnode "$WIRELESS_TH" 1
     wnode "$WIRED_CTRL" 0
     wnode "$WIRELESS_CTRL" 0
-    restore_current
+    if [ -n "$_ma" ]; then
+      wnode "$WIRED_CURR" $((_ma * 1000))
+      wnode "$WIRED_CURR2" $((_ma * 1000))
+      wnode "$WIRELESS_CURR" "$_ma"
+    fi
+  elif [ "$_tier" = "inf" ]; then
+    # inf 高温回退：交回驱动 DT 温控表，不再顶电流节点
+    wnode "$WIRED_TH" 0
+    wnode "$WIRELESS_TH" 0
+    wnode "$WIRED_CTRL" 0
+    wnode "$WIRELESS_CTRL" 0
   else
     wnode "$WIRED_TH" 0
     wnode "$WIRELESS_TH" 0

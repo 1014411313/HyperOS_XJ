@@ -21,6 +21,7 @@ fi
 
 POLL_INTERVAL=$(profile_get poll_interval 3)
 FG_INTERVAL=$(profile_get foreground_interval 10)
+CHARGE_INTERVAL=$(profile_get charge_interval 1)
 
 screen_on() { [ "$(dumpsys deviceidle get screen 2>/dev/null)" != "false" ]; }
 
@@ -305,5 +306,10 @@ rear_boot_recover
 
 while true; do
   run_tick
-  sleep "$POLL_INTERVAL"
+  # 充电中快循环：档位切换、闭环反馈、inf 安顿都需要更短的响应时间。
+  if [ "${IS_CHARGING:-0}" = "1" ]; then
+    sleep "$CHARGE_INTERVAL"
+  else
+    sleep "$POLL_INTERVAL"
+  fi
 done

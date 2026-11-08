@@ -31,3 +31,6 @@ preview.*.log
 # Root design images (tracked copies live in docs/assets)
 /screenshot_current.jpg
 /ref_preview.png
+
+# 本地素材/产出（不上传）
+/output/
