@@ -137,19 +137,26 @@ battery_guard_tick() {
       [ "$(cat "$_n" 2>/dev/null)" = "$_cf" ] || { chmod 0666 "$_n" 2>/dev/null; echo "$_cf" > "$_n" 2>/dev/null; }
     done
   fi
-  # 满电电压：写 constant_charge_voltage / voltage_max（单位自适应）。
+  # 满电电压（fv_v）：直写 constant_charge_voltage/voltage_max 在多数机型只读或不存在，
+  # 可靠路径是改写 BAA 载荷的 vterm 并让 batteryantiaging 重读；sysfs 仅作兜底。
   _fv=$(cfg_get fv_v "")
+  case "$_fv" in ''|*[!0-9]*) _fv="" ;; esac
   if [ -n "$_fv" ]; then
-    case "$_fv" in ''|*[!0-9]*) _fv="" ;; esac
-    [ -n "$_fv" ] && for _n in /sys/class/power_supply/battery/constant_charge_voltage \
-                              /sys/class/power_supply/battery/voltage_max; do
+    # 载荷层只在挂载时改写一次，fv_v 变了要重新改写并让服务重读。
+    if [ "$(cfg_get unlock 1)" = "1" ] && [ "$(cfg_get fv_force 0)" = "1" ] && \
+       [ "$(cat "$BAT_STATE/fv_force.applied" 2>/dev/null)" != "fv=$_fv" ]; then
+      baa_fv_force_apply >/dev/null 2>&1 && setprop ctl.restart batteryantiaging 2>/dev/null
+    fi
+    # 兜底：仅当本机确实存在可写的电压节点时才写。
+    for _n in /sys/class/power_supply/battery/constant_charge_voltage \
+              /sys/class/power_supply/battery/voltage_max; do
       [ -e "$_n" ] && [ -w "$_n" ] && write_voltage_node "$_n" "$_fv" && break
     done
-  fi
-  # 原厂上限强制覆盖：载荷层只在挂载时改写一次，fv_v 变了要重新改写并让服务重读。
-  if [ "$(cfg_get unlock 1)" = "1" ] && [ "$(cfg_get fv_force 0)" = "1" ] && \
-     [ "$(cat "$BAT_STATE/fv_force.applied" 2>/dev/null)" != "fv=$(cfg_get fv_v "")" ]; then
-    baa_fv_force_apply >/dev/null 2>&1 && setprop ctl.restart batteryantiaging 2>/dev/null
+  elif [ -f "$BAT_STATE/fv_force.applied" ]; then
+    # fv_v 清空后把载荷还原为云端变体，避免旧上限残留在挂载源里。
+    baa_refresh_src >/dev/null 2>&1
+    rm -f "$BAT_STATE/fv_force.applied" 2>/dev/null
+    setprop ctl.restart batteryantiaging 2>/dev/null
   fi
   # 关机电压：放电中电压低于阈值执行软关机。
   _tv=$(cfg_get term_v "")

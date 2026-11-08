@@ -161,9 +161,9 @@ case "$1" in
         esac ;;
       volt)
         case "$3" in
-          fv) cfg_set fv_v "$4" ;;
+          fv) cfg_set fv_v "$4"; baa_fv_sync_now ;;
           term) cfg_set term_v "$4" ;;
-          force) cfg_set fv_force "$([ "$4" = "on" ] && echo 1 || echo 0)" ;;
+          force) cfg_set fv_force "$([ "$4" = "on" ] && echo 1 || echo 0)"; baa_fv_sync_now ;;
           off) cfg_set fv_v ""; cfg_set term_v "" ;;
           *) echo "fv_v=$(cfg_get fv_v "") term_v=$(cfg_get term_v "") fv_force=$(cfg_get fv_force 0)" ;;
         esac ;;

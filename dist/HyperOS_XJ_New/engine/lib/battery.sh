@@ -124,6 +124,13 @@ baa_fv_force_apply() {
   return 0
 }
 
+# 配置变更后立即同步一次（App 下发 volt fv/force 时调用，不必等守护下一拍）。
+baa_fv_sync_now() {
+  [ "$(cfg_get unlock 1)" = "1" ] && [ "$(cfg_get fv_force 0)" = "1" ] || return 0
+  baa_fv_force_apply >/dev/null 2>&1 && setprop ctl.restart batteryantiaging 2>/dev/null
+  return 0
+}
+
 baa_tgt() {
   _d=$(dev_code)
   _std="/odm/etc/charger/BAA_config_$_d.json"

@@ -18,12 +18,6 @@
       "affected": [
         "ToolboxApp/androidApp/src/main/java/com/hyperos/xj/rear/RearHook.java:41"
       ]
-    },
-    {
-      "id": "bug-027",
-      "title": "fv_v 直接写 sysfs 在 haotian 上无效",
-      "status": "待决策",
-      "resolution": "battery/voltage_max 只读、constant_charge_voltage 不存在；正确路径是 BAA 的 smart_fv/fv_force。需决定 App 提示还是改链路"
     }
   ],
   "fixed": [
@@ -441,6 +435,13 @@
       "status": "已修待复测",
       "fixed_in": "3.1.1（311，未发布）",
       "resolution": "AndroidManifest 加 QUERY_ALL_PACKAGES（已核实进 APK）；InstalledApps 合并 launchable+全量已安装；ThermalPage 改为弹出式面板（搜索/滚动/选中态）"
+    },
+    {
+      "id": "bug-027",
+      "title": "fv_v 直接写 sysfs 在 haotian 上无效",
+      "status": "已修并真机验证",
+      "resolution": "haotian 上 battery/voltage_max 只读、constant_charge_voltage 不存在，fv_v 直写 sysfs 必然失败。改为走 BAA 载荷路径：解密->改写全部 vterm->原 IV 重加密->原地覆盖 bind mount 源->重启 batteryantiaging；sysfs 直写降为兜底。另新增 baa_fv_sync_now 让 volt fv/force 下发后立即生效，fv_v 清空时还原载荷。真机实测载荷 216 处 vterm 成功改写为设定值。",
+      "fixed_in": "3.1.1（311，未发布）"
     }
   ],
   "cancelled": []
