@@ -3,6 +3,18 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+// 模块版本是唯一来源（dist/HyperOS_XJ_New/module.prop）：App 的 versionName/versionCode
+// 跟随它，避免系统应用信息里显示脚手架默认 0.1.0 与模块列表对不上。
+val moduleProp: Map<String, String> = rootProject.file("../dist/HyperOS_XJ_New/module.prop")
+    .takeIf { it.isFile }
+    ?.readLines()
+    ?.mapNotNull { line ->
+        val idx = line.indexOf('=')
+        if (idx <= 0) null else line.substring(0, idx).trim() to line.substring(idx + 1).trim()
+    }
+    ?.toMap()
+    ?: emptyMap()
+
 android {
     namespace = "com.hyperos.xj"
     compileSdk = 37
@@ -12,8 +24,8 @@ android {
         applicationId = "com.hyperos.xj"
         minSdk = 23
         targetSdk = 37
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = moduleProp["versionCode"]?.toIntOrNull() ?: 1
+        versionName = moduleProp["version"] ?: "0.0.0"
     }
 
     buildTypes {
