@@ -1598,6 +1598,20 @@
       ],
       "fixed_in": "3.1.28（338，未发布）",
       "resolution": "新增 VideoMeta 与 readVideoMeta（MediaMetadataRetriever 读 METADATA_KEY_VIDEO_WIDTH/HEIGHT/ROTATION）；applyVideoTransform 先围绕视图中心按 rotation 旋转，再按「旋转后的显示尺寸」等比 center-crop 缩放，两者都以视图中心为轴保证不偏；布局变化与 SurfaceTexture 尺寸变化时都按真实元数据重算；读不到元数据时回退 MediaPlayer 上报尺寸（rotation=0）"
+    },
+    {
+      "id": "bug-092",
+      "title": "顶部渐变模糊与内容之间有硬边；标题被遮",
+      "reported": "2026-11-09",
+      "type": "bug",
+      "version_seen": "3.1.28 (338)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "fixed_in": "3.1.29（339，未发布）",
+      "resolution": "状态栏遮罩由「单层固定高度模糊」改为两层不同半径叠加（28dp 覆盖状态栏+10dp、16dp 覆盖状态栏+44dp），两层都用垂直 alpha 渐变淡出（0.34/0.26 → 透明），模糊强度与暗度连续变化，不再在状态栏下沿切断；页面顶部预留改为 状态栏+44dp，标题初始位置落在模糊层下沿不被遮挡，滑动时仍会自然穿入模糊区",
+      "affected": [
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/App.kt"
+      ]
     }
   ],
   "cancelled": []

@@ -7,12 +7,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -103,7 +103,8 @@ fun App() {
 
             CompositionLocalProvider(
                 LocalPageInsets provides PageInsets(
-                    top = statusTop,
+                    // 顶部预留 = 状态栏 + 渐变模糊覆盖高度：标题初始位置落在模糊层下沿，不被打糊；滑动时仍会自然穿入
+                    top = statusTop + 44.dp,
                     bottom = bottomInset + navBottom + 6.dp
                 )
             ) {
@@ -124,24 +125,43 @@ fun App() {
                 }
             }
 
-            // 仅状态栏自身高度：内容上滑经过时做模糊+渐变遮罩，系统图标仍可读；不盖标题区，避免形成分割带
+            // 状态栏无痕渐变模糊：两层不同半径叠加，覆盖高度大于状态栏，靠 alpha 渐变淡出；
+            // 不在状态栏下沿切断模糊，所以不会出现「一道线 + 直接模糊」的硬边。
             Box(
                 Modifier
                     .align(Alignment.TopCenter)
                     .fillMaxWidth()
-                    .windowInsetsTopHeight(WindowInsets.statusBars)
+                    .height(statusTop + 44.dp)
                     .drawBackdrop(
                         backdrop = backdrop,
                         shape = { RoundedRectangle(0.dp) },
-                        effects = { blur(22.dp.toPx()) },
+                        effects = { blur(16.dp.toPx()) },
                         onDrawSurface = {
                             drawRect(
                                 Brush.verticalGradient(
-                                    listOf(
-                                        Color.Black.copy(alpha = 0.55f),
-                                        Color.Black.copy(alpha = 0.24f),
-                                        Color.Transparent
-                                    )
+                                    0f to Color.Black.copy(alpha = 0.26f),
+                                    0.55f to Color.Black.copy(alpha = 0.10f),
+                                    1f to Color.Transparent
+                                )
+                            )
+                        }
+                    )
+            )
+            Box(
+                Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .height(statusTop + 10.dp)
+                    .drawBackdrop(
+                        backdrop = backdrop,
+                        shape = { RoundedRectangle(0.dp) },
+                        effects = { blur(28.dp.toPx()) },
+                        onDrawSurface = {
+                            drawRect(
+                                Brush.verticalGradient(
+                                    0f to Color.Black.copy(alpha = 0.34f),
+                                    0.7f to Color.Black.copy(alpha = 0.12f),
+                                    1f to Color.Transparent
                                 )
                             )
                         }
