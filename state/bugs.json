@@ -18,6 +18,19 @@
       "affected": [
         "ToolboxApp/androidApp/src/main/java/com/hyperos/xj/rear/RearHook.java:41"
       ]
+    },
+    {
+      "id": "bug-085",
+      "title": "待用户提供两个 GIF 作为默认背景",
+      "reported": "2026-11-09",
+      "type": "feature",
+      "version_seen": "3.1.21 (331)",
+      "device": "haotian",
+      "status": "待修",
+      "evidence": "用户说明：晚些会传两个 GIF 作为默认背景",
+      "root_cause": "素材未到位",
+      "fix_plan": "等用户提供两个 GIF 后：替换/新增内置默认背景素材，确认循环、尺寸与体积，并决定是替换现有四叶草还是作为可选默认之一",
+      "affected": []
     }
   ],
   "fixed": [
@@ -1471,6 +1484,23 @@
       "status": "已修待复测",
       "fixed_in": "3.1.21（331，未发布）",
       "resolution": "页面滚动内容补回 start/end 18dp（改全屏滚动布局时漏掉外层 horizontal padding）；检查更新输出改为只显示版本名（已是最新（3.1.21）/ 发现新版本 3.1.22（当前 3.1.21）），版本号唯一来源仍是 dist/HyperOS_XJ_New/module.prop，App versionName 构建时跟随"
+    },
+    {
+      "id": "bug-084",
+      "title": "上滑时状态栏区域无渐变模糊，状态栏信息看不清",
+      "reported": "2026-11-09",
+      "type": "bug",
+      "version_seen": "3.1.21 (331)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户反馈：上滑状态栏位置不会渐变模糊，状态栏信息看不清",
+      "root_cause": "上一版把顶部模糊层整体移除，内容滑到状态栏后面时状态栏图标与内容重叠、缺少对比",
+      "fix_plan": "仅在状态栏自身高度加一层 backdrop 模糊 + 垂直渐变遮罩（顶部深、向下淡出到透明），不覆盖标题区，避免出现分割带",
+      "affected": [
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/App.kt"
+      ],
+      "fixed_in": "3.1.22（332，未发布）",
+      "resolution": "在状态栏自身高度叠一层 backdrop 模糊（22dp）+ 垂直渐变遮罩（黑 0.55 → 0.24 → 透明），只覆盖状态栏、不盖标题区；页面内容上滑经过时系统图标保持可读，且不形成分割带"
     }
   ],
   "cancelled": []

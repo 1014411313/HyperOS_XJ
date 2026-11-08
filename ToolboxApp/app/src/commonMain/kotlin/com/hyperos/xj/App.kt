@@ -6,11 +6,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -50,7 +52,9 @@ import com.hyperos.xj.ui.XJ
 import com.hyperos.xj.ui.accentColor
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
+import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
+import com.kyant.shapes.RoundedRectangle
 import kotlinx.coroutines.delay
 
 private val tabLabels = listOf("主页", "温控", "电池", "外观", "关于")
@@ -120,6 +124,30 @@ fun App() {
                 }
             }
 
+            // 仅状态栏自身高度：内容上滑经过时做模糊+渐变遮罩，系统图标仍可读；不盖标题区，避免形成分割带
+            Box(
+                Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .windowInsetsTopHeight(WindowInsets.statusBars)
+                    .drawBackdrop(
+                        backdrop = backdrop,
+                        shape = { RoundedRectangle(0.dp) },
+                        effects = { blur(22.dp.toPx()) },
+                        onDrawSurface = {
+                            drawRect(
+                                Brush.verticalGradient(
+                                    listOf(
+                                        Color.Black.copy(alpha = 0.55f),
+                                        Color.Black.copy(alpha = 0.24f),
+                                        Color.Transparent
+                                    )
+                                )
+                            )
+                        }
+                    )
+            )
+
             BottomBar(
                 selectedIndex = selectedTab,
                 labels = tabLabels,
@@ -133,9 +161,6 @@ fun App() {
         }
     }
 }
-
-@Composable
-private fun AppBackgroundPlaceholder() = Unit
 
 private val wallpaperPalette = listOf(
     listOf(Color(0xFF0B1020), Color(0xFF12213B), Color(0xFF0A1324)),
