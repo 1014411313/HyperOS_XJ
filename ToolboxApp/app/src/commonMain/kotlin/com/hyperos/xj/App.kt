@@ -32,7 +32,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
@@ -60,9 +59,7 @@ import com.hyperos.xj.ui.XJ
 import com.hyperos.xj.ui.accentColor
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
-import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
-import com.kyant.shapes.RoundedRectangle
 import kotlinx.coroutines.delay
 
 private val tabLabels = listOf("主页", "温控", "电池", "外观", "关于")
@@ -133,40 +130,30 @@ fun App() {
                 }
             }
 
-            // 状态栏渐变模糊：模糊必须自己按 alpha 遮罩淡出（DstIn），不能靠叠颜色——
-            // drawBackdrop 的模糊在矩形内均匀，矩形边界会把模糊硬切断（就是之前看到的那道线）。
-            Box(
-                Modifier
-                    .align(Alignment.TopCenter)
-                    .fillMaxWidth()
-                    .height(statusTop + 52.dp)
-                    .graphicsLayer {
-                        compositingStrategy = CompositingStrategy.Offscreen
-                        // 四条边都不能落在屏幕内：blur 核在矩形边界会 clamp 出一圈色带（那根细线）。
-                        // 左右靠 scale 撇大、顶部上移出屏，底部由 alpha 渐变淡出。
-                        scaleX = 1.06f
-                        scaleY = 1.06f
-                        transformOrigin = TransformOrigin(0.5f, 0f)
-                        translationY = -6.dp.toPx()
-                    }
-                    .drawBackdrop(
-                        backdrop = backdrop,
-                        shape = { RoundedRectangle(0.dp) },
-                        effects = { blur(26.dp.toPx()) }
-                    )
-                    .drawWithContent {
-                        drawContent()
-                        drawRect(
-                            brush = Brush.verticalGradient(
-                                0f to Color.White,
-                                0.40f to Color.White.copy(alpha = 0.50f),
-                                0.70f to Color.White.copy(alpha = 0.12f),
-                                1f to Color.White.copy(alpha = 0f)
-                            ),
-                            blendMode = BlendMode.DstIn
-                        )
-                    }
-            )
+            // 顶部渐变模糊：直接对「整层背景的模糊副本」做 alpha 遮罩，只在顶部露出。
+            // 不能用局部矩形的 drawBackdrop——矩形边界会让 blur 采样 clamp，永远在边界留一条细线。
+            // 背景是静态图/壁纸时才开（全屏模糊每帧重算，GIF/视频会卡）。
+            if (appearance.bgKind == "image" || appearance.bgKind == "wallpaper") {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .blur(32.dp)
+                        .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                        .drawWithContent {
+                            drawContent()
+                            drawRect(
+                                brush = Brush.verticalGradient(
+                                    0f to Color.White,
+                                    0.045f to Color.White.copy(alpha = 0.55f),
+                                    0.10f to Color.White.copy(alpha = 0f)
+                                ),
+                                blendMode = BlendMode.DstIn
+                            )
+                        }
+                ) {
+                    AppBackground(Modifier.fillMaxSize())
+                }
+            }
             // 单独的暗化渐变（不带模糊，所以无边界）：抬高状态栏图标与下方文字的对比度
             Box(
                 Modifier

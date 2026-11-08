@@ -18,37 +18,6 @@
       "affected": [
         "ToolboxApp/androidApp/src/main/java/com/hyperos/xj/rear/RearHook.java:41"
       ]
-    },
-    {
-      "id": "bug-085",
-      "title": "待用户提供两个 GIF 作为默认背景",
-      "reported": "2026-11-09",
-      "type": "feature",
-      "version_seen": "3.1.21 (331)",
-      "device": "haotian",
-      "status": "待修",
-      "evidence": "用户说明：晚些会传两个 GIF 作为默认背景",
-      "root_cause": "素材未到位",
-      "fix_plan": "等用户提供两个 GIF 后：替换/新增内置默认背景素材，确认循环、尺寸与体积，并决定是替换现有四叶草还是作为可选默认之一",
-      "affected": []
-    },
-    {
-      "id": "bug-086",
-      "title": "设置温控档位后充电功率没有下降",
-      "reported": "2026-11-09",
-      "type": "bug",
-      "version_seen": "3.1.21 (331)",
-      "device": "haotian",
-      "status": "已修待复测",
-      "fixed_in": "3.1.23（333，未发布）",
-      "evidence": "诊断包 2026-11-09 04:06：battery.temp=533（53.3℃）、current_mode=level_2、apl_target_ma=10000、battery.log 只有「APL 塌陷(0W)」没有温度线降档日志。说明温度保护被下限卡死：53℃ 远超二档 35℃，但目标一直停 10000mA（约 40W）",
-      "root_cause": "APL 温度保护每次只降 20%，且被两处 cap×50%（=10000mA）下限抬高——温度保护内部 `_apl_fl` 与落盘前 `_apl_fl`；温度线只能把功率降到 40W，无法按档位继续压",
-      "fix_plan": "档位温度线增加「档位→超限功率上限」映射并放宽下限",
-      "resolution": "apl_temp.sh 新增 apl_level_power_w/apl_mode_power_w（一档15W/二档25W/三档35W/四档45W/五档55W）；apl.sh 温度保护：有档位线时目标压到「瓦数/当前电压」，温度超上限 3℃ 以上直接压到位（不再逐拍 20%），下限放宽到 cap×10%（≠低于2000mA）；落盘下限在有档位线时改为 min(cap×50%, 档位功率)。沙箱验证二档 53℃ → 目标 6250mA（25W），旧逻辑 10000mA（40W）。另审核全部场景与横切逻辑：亮屏充电/息屏充电/定时/游戏最终都写 current_mode 供 APL 读取（无限制与系统默认不施加档位线，旁路跳过 APL）；但发现高温守卫（≥48℃）会把用户选的一/二档强制改成三档（放宽限制），已改为只对「系统默认」生效，用户明确档位不再被覆盖",
-      "affected": [
-        "engine/lib/apl.sh",
-        "engine/lib/apl_temp.sh"
-      ]
     }
   ],
   "fixed": [
@@ -1708,7 +1677,55 @@
         "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/runtime/AppearanceStore.kt",
         "dist/HyperOS_XJ_New/service.sh"
       ]
+    },
+    {
+      "id": "bug-086",
+      "title": "设置温控档位后充电功率没有下降",
+      "reported": "2026-11-09",
+      "type": "bug",
+      "version_seen": "3.1.21 (331)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "fixed_in": "3.1.26（336，未发布）+ 3.1.27（337）",
+      "evidence": "诊断包 2026-11-09 04:06：battery.temp=533（53.3℃）、current_mode=level_2、apl_target_ma=10000、battery.log 只有「APL 塌陷(0W)」没有温度线降档日志。说明温度保护被下限卡死：53℃ 远超二档 35℃，但目标一直停 10000mA（约 40W）",
+      "root_cause": "APL 温度保护每次只降 20%，且被两处 cap×50%（=10000mA）下限抬高——温度保护内部 `_apl_fl` 与落盘前 `_apl_fl`；温度线只能把功率降到 40W，无法按档位继续压",
+      "fix_plan": "档位温度线增加「档位→超限功率上限」映射并放宽下限",
+      "resolution": "apl_temp.sh 新增 apl_level_power_w/apl_mode_power_w（一档15W/二档25W/三档35W/四档45W/五档55W）；apl.sh 温度保护：有档位线时目标压到「瓦数/当前电压」，温度超上限 3℃ 以上直接压到位（不再逐拍 20%），下限放宽到 cap×10%（≠低于2000mA）；落盘下限在有档位线时改为 min(cap×50%, 档位功率)。沙箱验证二档 53℃ → 目标 6250mA（25W），旧逻辑 10000mA（40W）。另审核全部场景与横切逻辑：亮屏充电/息屏充电/定时/游戏最终都写 current_mode 供 APL 读取（无限制与系统默认不施加档位线，旁路跳过 APL）；但发现高温守卫（≥48℃）会把用户选的一/二档强制改成三档（放宽限制），已改为只对「系统默认」生效，用户明确档位不再被覆盖",
+      "affected": [
+        "engine/lib/apl.sh",
+        "engine/lib/apl_temp.sh"
+      ]
+    },
+    {
+      "id": "bug-099",
+      "title": "顶部渐变模糊始终残留一条细线",
+      "reported": "2026-11-09",
+      "type": "bug",
+      "version_seen": "3.1.32 (342)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "fixed_in": "3.1.33（343，未发布）",
+      "root_cause": "任何「局部矩形的模糊」都会在矩形边界处让 blur 采样 clamp，边界必然出现一圈色带；之前靠 scale/offset 把边界移出屏幕只能缓解，底部边界仍在屏内",
+      "resolution": "改用整层模糊副本：再绘一份 AppBackground 到全屏 Box，Modifier.blur(32dp) 整层模糊，再用 Offscreen 图层 + DstIn 垂直 alpha 渐变（1.0 / 0.045→0.55 / 0.10→0）只在顶部露出。模糊层覆盖全屏，没有任何内部边界，因此不会产生线；静态图/壁纸才启用，GIF/视频跳过（每帧全屏模糊会卡）",
+      "affected": [
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/App.kt"
+      ]
     }
   ],
-  "cancelled": []
+  "cancelled": [
+    {
+      "id": "bug-085",
+      "title": "待用户提供两个 GIF 作为默认背景",
+      "reported": "2026-11-09",
+      "type": "feature",
+      "version_seen": "3.1.21 (331)",
+      "device": "haotian",
+      "status": "已确认不需修",
+      "evidence": "用户说明：晚些会传两个 GIF 作为默认背景",
+      "root_cause": "素材未到位",
+      "fix_plan": "等用户提供两个 GIF 后：替换/新增内置默认背景素材，确认循环、尺寸与体积，并决定是替换现有四叶草还是作为可选默认之一",
+      "affected": [],
+      "resolution": "用户决定不做（2026-11-09）：取消两个 GIF 作为默认背景的需求"
+    }
+  ]
 }
