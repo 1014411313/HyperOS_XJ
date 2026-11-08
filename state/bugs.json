@@ -18,6 +18,13 @@
       "affected": [
         "ToolboxApp/androidApp/src/main/java/com/hyperos/xj/rear/RearHook.java:41"
       ]
+    },
+    {
+      "id": "bug-029",
+      "title": "App 首页实时运行面板刷新慢",
+      "status": "修复中",
+      "resolution": "readStatus 每 2 秒 fork 一次 su 并跑 xjctl.sh status 现场采样；改为守护写可直读状态文件 + App 免 su 直读（子代理进行中）",
+      "detected_on_device": "真机：用户反馈"
     }
   ],
   "fixed": [
@@ -130,7 +137,8 @@
         "dist/HyperOS_XJ_New/battery/config/settings.conf"
       ],
       "fixed_in": "3.1.1（311，未发布）",
-      "resolution": "机型识别改为白名单匹配（engine/lib/battery.sh + dist/customize.sh）；真机验证 BAA mounted、baa=active"
+      "resolution": "机型识别改为白名单匹配（engine/lib/battery.sh + dist/customize.sh）；真机验证 BAA mounted、baa=active",
+      "verified_on_device": "真机(haotian,3.1.1)：battery status 显示 baa=active，载荷已挂载到 /odm/etc/charger/BAA_config_haotian.json"
     },
     {
       "id": "bug-007",
@@ -280,7 +288,8 @@
         "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/pages/BatteryPage.kt:66"
       ],
       "fixed_in": "3.1.1（311，未发布）",
-      "resolution": "云控屏蔽落地：baa_refresh_src 按 cloud_guard 选 normal/_nocloud 载荷 + 云端目录隔离（xjdaemon 每 20 拍 cloud_tick）；补 32 个机型载荷 modes/*"
+      "resolution": "云控屏蔽落地：baa_refresh_src 按 cloud_guard 选 normal/_nocloud 载荷 + 云端目录隔离（xjdaemon 每 20 拍 cloud_tick）；补 32 个机型载荷 modes/*",
+      "verified_on_device": "真机：cloud_guard=1、载荷变体 normal_nocloud、巡检 last_result=clean(15:50)"
     },
     {
       "id": "bug-005",
@@ -297,7 +306,8 @@
         "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/pages/BatteryPage.kt:67"
       ],
       "fixed_in": "3.1.1（311，未发布）",
-      "resolution": "APL 落地：新增 engine/lib/apl.sh（学习-上探-退让+锁定），写 state/apl_target_ma，power.sh 的 inf 档读取，随 xjdaemon 每拍调用"
+      "resolution": "APL 落地：新增 engine/lib/apl.sh（学习-上探-退让+锁定），写 state/apl_target_ma，power.sh 的 inf 档读取，随 xjdaemon 每拍调用",
+      "verified_on_device": "真机：apl_enable=1、上限 20000mA、档案 apl_profile.haotian.kv；未充电时按设计让路不写目标"
     },
     {
       "id": "bug-020",
@@ -335,7 +345,8 @@
       ],
       "fixed_in": "3.1.1（311，未发布）",
       "resolution": "用户提供密钥 michargerbattery 与载荷格式后落地：新增 engine/tools/baa_crypt.c（自带 AES-128-CBC + base64，无外部依赖），编译为 aarch64 静态二进制 dist/HyperOS_XJ_New/bin/baa_crypt（706400 字节）。battery.sh 新增 baa_crypt_bin / baa_fv_force_apply：fv_force=1 且 fv_v 合法时解密选中载荷、把全部 vterm 改为 fv_v、用载荷自带 IV 重新加密、cat 原地写回 baa_src（保 inode 以穿过 bind 挂载），任一步失败即回退并记 battery.log；baa_mount 在 baa_refresh_src 后调用。xjdaemon battery_guard_tick 在 fv_v 变化时重跑并 restart batteryantiaging，无需重启生效。实测纠正：载荷 IV 是每文件自带的（payload_bixi=000102..0f、nezha=94c4f812..、stock_* 各不同，并非全局固定 10..1f），故 decrypt 一律读文件内 IV、encrypt 支持传入原 IV",
-      "fixed_note": "待真机复测：容器无 /odm/etc/charger 与 batteryantiaging，baa_mount 实测返回 2，实际挂载与整机压上限未验；容器自验为 openssl 交叉核对 + 61 个载荷解密与还原 + 沙箱 8 场景"
+      "fixed_note": "待真机复测：容器无 /odm/etc/charger 与 batteryantiaging，baa_mount 实测返回 2，实际挂载与整机压上限未验；容器自验为 openssl 交叉核对 + 61 个载荷解密与还原 + 沙箱 8 场景",
+      "verified_on_device": "真机：设 fv_v=4700 后载荷 216 处 vterm 全部改写为 4700，applied=fv=4700，模块载荷与挂载点 sha 一致"
     },
     {
       "id": "bug-009",
@@ -351,7 +362,8 @@
         "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/pages/AboutPage.kt"
       ],
       "fixed_in": "3.1.1（311，未发布）",
-      "resolution": "关于页接入日志/诊断打包/卸载二次确认，外链不臆造"
+      "resolution": "关于页接入日志/诊断打包/卸载二次确认，外链不臆造",
+      "verified_on_device": "真机：用户确认关于页「使用说明」已有正文"
     },
     {
       "id": "bug-013",
@@ -420,28 +432,40 @@
       ],
       "fixed_in": "3.1.1（311，未发布）",
       "resolution": "根因：data.sh 仅按 battery/status==Charging 判充电；涓流/温控暂停时 status 抖动，场景在充电/非充电间反复切（实测 default_mode<->charge_level 每数分钟切一次）。改为非放电状态一律以 usb/online 判定。真机热修后 120 秒内零次切换。",
-      "fixed_note": "热修备份在设备 /data/local/tmp/data.sh.bak；长时稳定性待观察"
+      "fixed_note": "热修备份在设备 /data/local/tmp/data.sh.bak；长时稳定性待观察",
+      "verified_on_device": "真机：充电期间无档位反复切换（修复前每数分钟切一次）；15:42 切「系统默认」系拔出充电器后的正常场景切换"
     },
     {
       "id": "bug-025",
       "title": "添加目录无法拉起系统文件管理器",
       "status": "已修待复测",
       "fixed_in": "3.1.1（311，未发布）",
-      "resolution": "新增 DirectoryPicker expect/actual（ACTION_OPEN_DOCUMENT_TREE + tree uri 转绝对路径）；BatteryPage 改为优先调系统选择器，保留手输兜底"
+      "resolution": "新增 DirectoryPicker expect/actual（ACTION_OPEN_DOCUMENT_TREE + tree uri 转绝对路径）；BatteryPage 改为优先调系统选择器，保留手输兜底",
+      "verified_on_device": "真机：用户确认 DTBO「添加目录」可拉起系统文件管理器"
     },
     {
       "id": "bug-026",
       "title": "已安装应用读取不全 + 选择器太小",
       "status": "已修待复测",
       "fixed_in": "3.1.1（311，未发布）",
-      "resolution": "AndroidManifest 加 QUERY_ALL_PACKAGES（已核实进 APK）；InstalledApps 合并 launchable+全量已安装；ThermalPage 改为弹出式面板（搜索/滚动/选中态）"
+      "resolution": "AndroidManifest 加 QUERY_ALL_PACKAGES（已核实进 APK）；InstalledApps 合并 launchable+全量已安装；ThermalPage 改为弹出式面板（搜索/滚动/选中态）",
+      "verified_on_device": "真机：用户确认「从已安装应用选择」可弹出面板且列表变全"
     },
     {
       "id": "bug-027",
       "title": "fv_v 直接写 sysfs 在 haotian 上无效",
       "status": "已修并真机验证",
       "resolution": "haotian 上 battery/voltage_max 只读、constant_charge_voltage 不存在，fv_v 直写 sysfs 必然失败。改为走 BAA 载荷路径：解密->改写全部 vterm->原 IV 重加密->原地覆盖 bind mount 源->重启 batteryantiaging；sysfs 直写降为兜底。另新增 baa_fv_sync_now 让 volt fv/force 下发后立即生效，fv_v 清空时还原载荷。真机实测载荷 216 处 vterm 成功改写为设定值。",
-      "fixed_in": "3.1.1（311，未发布）"
+      "fixed_in": "3.1.1（311，未发布）",
+      "verified_on_device": "真机：fv_v 走 BAA 载荷路径生效（216 处 vterm 改写成功）"
+    },
+    {
+      "id": "bug-028",
+      "title": "daemon.log 被 voltage_max 报错刷屏",
+      "status": "已修待复测",
+      "fixed_in": "3.1.1（311，未发布）",
+      "resolution": "echo x > 只读节点 2>/dev/null 的重定向失败在 2>/dev/null 生效前就报错，且 [ -w ] 对 root 恒真拦不住。xjdaemon.sh 5 处 + power.sh wnode 改为 { echo x > f; } 2>/dev/null，容器对比实验证实静默",
+      "detected_on_device": "真机：daemon.log 120 秒涨 46 行"
     }
   ],
   "cancelled": []

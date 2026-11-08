@@ -122,8 +122,10 @@ write_voltage_node() {
   _n="$1" _t="$2"
   [ -e "$_n" ] || return 1
   _tuv=$((_t * 1000))
-  echo "$_tuv" > "$_n" 2>/dev/null && { _r=$(cat "$_n" 2>/dev/null | tr -cd '0-9'); [ -n "$_r" ] && [ "$_r" -gt 0 ] && _d=$((_r - _tuv)) && [ "${_d#-}" -le 25000 ] && return 0; }
-  echo "$_t" > "$_n" 2>/dev/null && { _r=$(cat "$_n" 2>/dev/null | tr -cd '0-9'); [ -n "$_r" ] && [ "$_r" -gt 0 ] && _d=$((_r - _t)) && [ "${_d#-}" -le 25 ] && return 0; }
+  # 重定向失败由 shell 在打开文件时就报错，早于 2>/dev/null 生效，必须整组抑制；
+  # 且对 root 而言 [ -w ] 恒真，无法据此判断 sysfs 是否可写。
+  { echo "$_tuv" > "$_n"; } 2>/dev/null && { _r=$(cat "$_n" 2>/dev/null | tr -cd '0-9'); [ -n "$_r" ] && [ "$_r" -gt 0 ] && _d=$((_r - _tuv)) && [ "${_d#-}" -le 25000 ] && return 0; }
+  { echo "$_t" > "$_n"; } 2>/dev/null && { _r=$(cat "$_n" 2>/dev/null | tr -cd '0-9'); [ -n "$_r" ] && [ "$_r" -gt 0 ] && _d=$((_r - _t)) && [ "${_d#-}" -le 25 ] && return 0; }
   return 1
 }
 
@@ -134,7 +136,7 @@ battery_guard_tick() {
     for _n in /sys/class/xm_power/fg_master/cyclecount \
               /sys/class/power_supply/battery/cycle_count; do
       [ -f "$_n" ] && [ -w "$_n" ] || continue
-      [ "$(cat "$_n" 2>/dev/null)" = "$_cf" ] || { chmod 0666 "$_n" 2>/dev/null; echo "$_cf" > "$_n" 2>/dev/null; }
+      [ "$(cat "$_n" 2>/dev/null)" = "$_cf" ] || { chmod 0666 "$_n" 2>/dev/null; echo "$_cf" > "$_n"; } 2>/dev/null
     done
   fi
   # 满电电压（fv_v）：直写 constant_charge_voltage/voltage_max 在多数机型只读或不存在，
@@ -147,10 +149,10 @@ battery_guard_tick() {
        [ "$(cat "$BAT_STATE/fv_force.applied" 2>/dev/null)" != "fv=$_fv" ]; then
       baa_fv_force_apply >/dev/null 2>&1 && setprop ctl.restart batteryantiaging 2>/dev/null
     fi
-    # 兜底：仅当本机确实存在可写的电压节点时才写。
+    # 兜底：多数机型这两个节点只读或不存在，write_voltage_node 失败会静默返回。
     for _n in /sys/class/power_supply/battery/constant_charge_voltage \
               /sys/class/power_supply/battery/voltage_max; do
-      [ -e "$_n" ] && [ -w "$_n" ] && write_voltage_node "$_n" "$_fv" && break
+      [ -e "$_n" ] && write_voltage_node "$_n" "$_fv" && break
     done
   elif [ -f "$BAT_STATE/fv_force.applied" ]; then
     # fv_v 清空后把载荷还原为云端变体，避免旧上限残留在挂载源里。
@@ -167,11 +169,11 @@ battery_guard_tick() {
   # 公版 PPS：维护 pd_verifed 节点与开关一致。
   _pps=$(cfg_get freepps 0)
   _node=/sys/class/qcom-battery/pd_verifed
-  [ -f "$_node" ] && [ -w "$_node" ] && [ "$(cat "$_node" 2>/dev/null)" != "$_pps" ] && { chmod 0664 "$_node" 2>/dev/null; echo "$_pps" > "$_node" 2>/dev/null; }
+  [ -f "$_node" ] && [ -w "$_node" ] && [ "$(cat "$_node" 2>/dev/null)" != "$_pps" ] && { chmod 0664 "$_node" 2>/dev/null; echo "$_pps" > "$_node"; } 2>/dev/null
   # smart_fv 守护：解容开启时把 smart_fv 压回 0，防止系统服务撤销 BAA 的无降压设置。
   if [ "$(cfg_get unlock 1)" = "1" ]; then
     _sf=/sys/class/xm_power/charger/smart_charge/smart_fv
-    [ -e "$_sf" ] && [ -w "$_sf" ] && [ "$(cat "$_sf" 2>/dev/null)" != "0" ] && { chmod 0664 "$_sf" 2>/dev/null; echo 0 > "$_sf" 2>/dev/null; }
+    [ -e "$_sf" ] && [ -w "$_sf" ] && [ "$(cat "$_sf" 2>/dev/null)" != "0" ] && { chmod 0664 "$_sf" 2>/dev/null; echo 0 > "$_sf"; } 2>/dev/null
   fi
 }
 

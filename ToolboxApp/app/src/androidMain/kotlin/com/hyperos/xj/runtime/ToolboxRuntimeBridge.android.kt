@@ -1,21 +1,49 @@
 package com.hyperos.xj.runtime
 
 import java.io.BufferedReader
+import java.io.File
 import java.io.InputStreamReader
 import kotlin.math.abs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+/** 守护每拍写出的状态快照；App 直读免 fork su，过期/缺失/解析失败时回退 root 采样。 */
+private const val SHARED_STATUS_STALE_MS = 15_000L
+
+private val sharedStatusFiles = listOf(
+    File("/storage/emulated/0/Android/data/com.hyperos.xj/files/status.json"),
+    File("/data/local/tmp/xj_status.json"),
+)
+
 private class AndroidToolboxBridge : ToolboxRuntimeBridge {
     override suspend fun readStatus(): DeviceStatus = withContext(Dispatchers.IO) {
+        readSharedStatus() ?: readStatusViaRoot()
+    }
+
+    private fun readSharedStatus(): DeviceStatus? {
+        for (file in sharedStatusFiles) {
+            val raw = try {
+                if (file.isFile) file.readText() else null
+            } catch (_: Throwable) {
+                null
+            } ?: continue
+            val map = if (raw.trimStart().startsWith("{")) parseFlatJson(raw) else emptyMap()
+            if (map.isEmpty()) continue
+            val ts = map["ts"]?.toLongOrNull()?.times(1000) ?: continue
+            if (abs(System.currentTimeMillis() - ts) > SHARED_STATUS_STALE_MS) continue
+            return mapStatus(map)
+        }
+        return null
+    }
+
+    private fun readStatusViaRoot(): DeviceStatus {
         val raw = runAsRoot(Engine.status())
         val map = if (raw.trimStart().startsWith("{")) parseFlatJson(raw) else emptyMap()
         if (map.isEmpty()) {
             val hint = raw.lineSequence().firstOrNull { it.isNotBlank() }?.take(80) ?: "Root 不可用"
-            DeviceStatus(status = "未连接", environment = hint)
-        } else {
-            mapStatus(map)
+            return DeviceStatus(status = "未连接", environment = hint)
         }
+        return mapStatus(map)
     }
 
     override suspend fun readThermalSettings(): ThermalSettings = withContext(Dispatchers.IO) {

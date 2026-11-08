@@ -87,7 +87,7 @@ ctrl_level() {
 wnode() {
   [ -e "$1" ] || return 1
   [ -w "$1" ] || chmod 0664 "$1" 2>/dev/null
-  echo "$2" > "$1" 2>/dev/null
+  { echo "$2" > "$1"; } 2>/dev/null
 }
 
 save_orig_current() {

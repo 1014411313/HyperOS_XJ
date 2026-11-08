@@ -363,4 +363,92 @@ write_status_json() {
     "${BAT_TEMP:-0}" "${BAT_CUR:-0}" "${BAT_CAP:-0}" "${BAT_STATUS:-Unknown}" \
     "$(cat "$CONFDIR/current_mode" 2>/dev/null)" "${BAT_VOLT:-0}" \
     "$(cat "$CONFDIR/bypass_active" 2>/dev/null)" "$BUILD_VER" "$(date +%s)" > "$CONFDIR/status.json"
+  write_app_status_json
+}
+
+# subscreencenter 在装与否变化极少，缓存 60 秒避免每拍 fork pm。
+_subscreen_supported_cached() {
+  _f="$STATE/subscreen_ok"; _ts="$STATE/subscreen_ok.ts"
+  _now=$(date +%s); _last=$(cat "$_ts" 2>/dev/null)
+  case "$_last" in ''|*[!0-9]*) _last=0 ;; esac
+  if [ ! -s "$_f" ] || [ $((_now - _last)) -ge 60 ]; then
+    pm path com.xiaomi.subscreencenter >/dev/null 2>&1 && echo 1 > "$_f" || echo 0 > "$_f"
+    printf '%s' "$_now" > "$_ts"
+  fi
+  cat "$_f" 2>/dev/null
+}
+
+# App uid 仅重装才变，缓存 10 分钟避免每拍 fork dumpsys。
+_app_uid_cached() {
+  _f="$STATE/app_uid"; _ts="$STATE/app_uid.ts"
+  _now=$(date +%s); _last=$(cat "$_ts" 2>/dev/null)
+  case "$_last" in ''|*[!0-9]*) _last=0 ;; esac
+  if [ ! -s "$_f" ] || [ $((_now - _last)) -ge 600 ]; then
+    card_uid > "$_f" 2>/dev/null
+    printf '%s' "$_now" > "$_ts"
+  fi
+  cat "$_f" 2>/dev/null
+}
+
+# App 免 root 直读的状态副本：键名必须与 xjctl status_json 一致（App 端解析不变）。
+# 主路径与 rear.sh CARD_CONF_DIR 同款，目录不可用时退 /data/local/tmp/xj_status.json。
+write_app_status_json() {
+  _frag="$STATE/app_status.frag"
+  : > "$_frag" 2>/dev/null || return 0
+  data_read 2>/dev/null | while IFS= read -r _l; do
+    _k=${_l%%=*}; _v=${_l#*=}
+    js_line "$_k" "$_v" str >> "$_frag"
+  done
+  js_line thermal_mode "$(cat "$CONFDIR/current_mode" 2>/dev/null)" str >> "$_frag"
+  js_line thermal_default "$(json_get default_mode default)" str >> "$_frag"
+  js_line power_tier "$(power_tier)" str >> "$_frag"
+  js_line power_applied "$(cat "$BT_STATE/power_applied" 2>/dev/null)" str >> "$_frag"
+  js_line unlock "$(cfg_get unlock 1)" str >> "$_frag"
+  js_line freepps "$(cfg_get freepps 0)" str >> "$_frag"
+  js_line cloud_guard "$(cfg_get cloud_guard 1)" str >> "$_frag"
+  js_line apl_enable "$(cfg_get apl_enable 0)" str >> "$_frag"
+  js_line cycle_fake "$(cfg_get cycle_fake "")" str >> "$_frag"
+  js_line fv_v "$(cfg_get fv_v "")" str >> "$_frag"
+  js_line term_v "$(cfg_get term_v "")" str >> "$_frag"
+  js_line fv_force "$(cfg_get fv_force 0)" str >> "$_frag"
+  js_line bypass_manual "$([ -f "$CONFDIR/bypass_manual" ] && echo 1 || echo 0)" str >> "$_frag"
+  js_line rearscreen "$(cfg_get rearscreen 0)" str >> "$_frag"
+  js_line rearscreen_supported "$(_subscreen_supported_cached)" str >> "$_frag"
+  js_line module_version "$(mod_version)" str >> "$_frag"
+  js_line kernel "$(uname -r 2>/dev/null)" str >> "$_frag"
+  js_line date "$(date +%F)" str >> "$_frag"
+  _st="$STATE/sysinfo.txt"; _sts="$STATE/sysinfo.ts"
+  _now=$(date +%s); _last=$(cat "$_sts" 2>/dev/null)
+  case "$_last" in ''|*[!0-9]*) _last=0 ;; esac
+  if [ ! -s "$_st" ] || [ $((_now - _last)) -ge 60 ]; then
+    data_sysinfo > "$_st.tmp" 2>/dev/null && mv -f "$_st.tmp" "$_st"
+    printf '%s' "$_now" > "$_sts"
+  fi
+  js_line device_name "$(sed -n 1p "$_st" 2>/dev/null)" str >> "$_frag"
+  js_line device_code "$(sed -n 2p "$_st" 2>/dev/null)" str >> "$_frag"
+  js_line os_version "$(sed -n 3p "$_st" 2>/dev/null)" str >> "$_frag"
+  js_line base_firmware "$(sed -n 4p "$_st" 2>/dev/null)" str >> "$_frag"
+  js_line ts "$_now" str >> "$_frag"
+
+  _dst="/storage/emulated/0/Android/data/com.hyperos.xj/files/status.json"
+  _dir=${_dst%/*}
+  [ -d "$_dir" ] || mkdir -p "$_dir" 2>/dev/null
+  _fb=0
+  if [ ! -d "$_dir" ]; then
+    _dst="/data/local/tmp/xj_status.json"
+    _fb=1
+  fi
+  if js_emit "$_frag" > "$_dst.tmp" 2>/dev/null && mv -f "$_dst.tmp" "$_dst" 2>/dev/null; then
+    if [ "$_fb" = "1" ]; then
+      chmod 0644 "$_dst" 2>/dev/null
+    else
+      _uid=$(_app_uid_cached)
+      [ -n "$_uid" ] && [ "$_uid" != "0" ] && chown "$_uid:$_uid" "$_dst" 2>/dev/null
+      chmod 0660 "$_dst" 2>/dev/null
+    fi
+  fi
+  _prev=$(cat "$STATE/app_status.dst" 2>/dev/null)
+  [ "$_prev" != "$_dst" ] && log "App 状态副本目标：$_dst"
+  printf '%s' "$_dst" > "$STATE/app_status.dst" 2>/dev/null
+  rm -f "$_frag" "$_dst.tmp"
 }
