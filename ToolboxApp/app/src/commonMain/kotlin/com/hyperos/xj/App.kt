@@ -47,6 +47,7 @@ import com.hyperos.xj.runtime.AppearanceStore
 import com.hyperos.xj.runtime.DeviceStatus
 import com.hyperos.xj.runtime.createToolboxBridge
 import com.hyperos.xj.runtime.loadAppBackgroundImage
+import com.hyperos.xj.runtime.loadBuiltinAppBackground
 import com.hyperos.xj.ui.AppMediaBackground
 import com.hyperos.xj.ui.BottomBar
 import com.hyperos.xj.ui.LocalAccentColor
@@ -138,14 +139,15 @@ fun App() {
                 Modifier
                     .align(Alignment.TopCenter)
                     .fillMaxWidth()
-                    .height(statusTop + 48.dp)
+                    .height(statusTop + 52.dp)
                     .graphicsLayer {
                         compositingStrategy = CompositingStrategy.Offscreen
-                        // 底/左右边界往外撇一点：模糊核在矩形边界会 clamp 出一圈色带（就是那圈线框），
-                        // 让边界落到屏幕外，只靠底部 alpha 渐变收尾
-                        scaleX = 1.04f
-                        scaleY = 1.04f
+                        // 四条边都不能落在屏幕内：blur 核在矩形边界会 clamp 出一圈色带（那根细线）。
+                        // 左右靠 scale 撇大、顶部上移出屏，底部由 alpha 渐变淡出。
+                        scaleX = 1.06f
+                        scaleY = 1.06f
                         transformOrigin = TransformOrigin(0.5f, 0f)
+                        translationY = -6.dp.toPx()
                     }
                     .drawBackdrop(
                         backdrop = backdrop,
@@ -221,11 +223,16 @@ private fun AppBackground(modifier: Modifier = Modifier) {
         return
     }
 
-    // 内置/文件图片背景：默认背景与用户选图落盘后的路径都从这里读（bgImage 内存位图只在本次选择后可用）
-    if (appearance.bgKind == "image" && appearance.bgPath.isNotEmpty()) {
-        var fileBitmap by remember(appearance.bgPath) { mutableStateOf<ImageBitmap?>(null) }
-        LaunchedEffect(appearance.bgPath) {
-            fileBitmap = loadAppBackgroundImage(appearance.bgPath)
+    // 内置/文件图片背景：bgPath 为空用 APK 内置插画（首次安装即生效），否则读文件
+    if (appearance.bgKind == "image") {
+        val imagePath = appearance.bgPath
+        var fileBitmap by remember(imagePath) { mutableStateOf<ImageBitmap?>(null) }
+        LaunchedEffect(imagePath) {
+            fileBitmap = if (imagePath.isEmpty()) {
+                loadBuiltinAppBackground()
+            } else {
+                loadAppBackgroundImage(imagePath)
+            }
         }
         val bitmap = fileBitmap
         if (bitmap != null) {

@@ -372,7 +372,7 @@ fun LookPage(
                     ActionButton(
                         backdrop = backdrop,
                         text = "清除图片",
-                        onClick = { onAppearanceChange(currentAppearance.copy(bgImage = null, bgKind = "wallpaper", bgPath = "")) },
+                        onClick = { onAppearanceChange(currentAppearance.copy(bgImage = null, bgKind = "image", bgPath = "")) },
                         modifier = Modifier.fillMaxWidth(),
                         secondary = true
                     )

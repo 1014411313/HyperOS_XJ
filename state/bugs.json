@@ -1675,6 +1675,39 @@
       "affected": [
         "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/App.kt"
       ]
+    },
+    {
+      "id": "bug-097",
+      "title": "顶部渐变模糊仍有一条细线",
+      "reported": "2026-11-09",
+      "type": "bug",
+      "version_seen": "3.1.31 (341)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "fixed_in": "3.1.32（342，未发布）",
+      "root_cause": "模糊矩形四条边仍有边界落在屏幕内：scale 只扩左右，顶部边界仍在 y=0，blur 核在边界 clamp 出色带",
+      "resolution": "模糊层高度改为 状态栏+52dp、translationY=-6dp 把顶部推出屏幕、scaleX/scaleY=1.06 把左右推出屏幕，只剩底部 alpha 渐变收尾，四条边都不在屏幕内",
+      "affected": [
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/App.kt"
+      ]
+    },
+    {
+      "id": "bug-098",
+      "title": "内置默认背景图未生效",
+      "reported": "2026-11-09",
+      "type": "bug",
+      "version_seen": "3.1.31 (341)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "fixed_in": "3.1.32（342，未发布）",
+      "root_cause": "两处：①插画放在 KMP app 模块的 androidMain/assets 不会被合并进 APK（需放 androidApp/src/main/assets）；②升级用户已有 bgKind/bgPath 配置，不会套用新默认值",
+      "resolution": "插画移到 androidApp/src/main/assets/app_bg_default.jpg（APK 内 677KB），loadBuiltinAppBackground 从 assets 读取；bgPath 为空即代表内置插画；appearanceFromMap 增加旧配置迁移：从未主动设置（bgKind 缺失、或仍是默认壁纸且 wallpaperIndex=0 且无路径）时改用内置插画；清除图片回到内置插画；service.sh 的铺图块已移除",
+      "affected": [
+        "ToolboxApp/androidApp/src/main/assets/app_bg_default.jpg",
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/App.kt",
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/runtime/AppearanceStore.kt",
+        "dist/HyperOS_XJ_New/service.sh"
+      ]
     }
   ],
   "cancelled": []

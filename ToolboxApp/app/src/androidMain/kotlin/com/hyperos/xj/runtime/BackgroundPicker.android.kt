@@ -118,6 +118,10 @@ object AndroidBackgroundPicker {
         return target.absolutePath
     }
 
+    /** 读 APK assets 里的内置图片（默认 App 背景）。 */
+    fun loadAssetBitmap(name: String): android.graphics.Bitmap? =
+        appContext?.assets?.open(name)?.use { BitmapFactory.decodeStream(it) }
+
     private fun readBytes(context: Context, uri: android.net.Uri): ByteArray? =
         context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
 }
@@ -308,4 +312,8 @@ actual suspend fun loadAppBackgroundImage(path: String): ImageBitmap? = withCont
     runCatching {
         if (path.isEmpty()) null else BitmapFactory.decodeFile(path)?.asImageBitmap()
     }.getOrNull()
+}
+
+actual suspend fun loadBuiltinAppBackground(): ImageBitmap? = withContext(Dispatchers.IO) {
+    runCatching { AndroidBackgroundPicker.loadAssetBitmap("app_bg_default.jpg")?.asImageBitmap() }.getOrNull()
 }

@@ -62,6 +62,17 @@ internal fun appearanceFromMap(map: Map<String, String>): AppearanceSettings =
         bgBlur = map["bgBlur"]?.toFloatOrNull() ?: 2f,
         customBg = map["customBg"]?.toBooleanStrictOrNull() ?: true,
         bgImage = null,
-        bgKind = map["bgKind"]?.takeIf { it in backgroundKinds } ?: "image",
-        bgPath = map["bgPath"] ?: "/storage/emulated/0/Android/data/com.hyperos.xj/files/app_bg_default.jpg",
+        // 旧配置迁移：从未主动设置背景（仍是默认壁纸且没有路径）时改用内置插画，
+        // 避免升级后继续显示旧默认壁纸；用户主动选过的壁纸（index≠0）保持不动。
+        bgKind = run {
+            val saved = map["bgKind"]?.takeIf { it in backgroundKinds }
+            val path = map["bgPath"] ?: ""
+            val wallpaperIndex = map["wallpaperIndex"]?.toIntOrNull() ?: 0
+            when {
+                saved == null -> "image"
+                saved == "wallpaper" && path.isEmpty() && wallpaperIndex == 0 -> "image"
+                else -> saved
+            }
+        },
+        bgPath = map["bgPath"] ?: "",
     )

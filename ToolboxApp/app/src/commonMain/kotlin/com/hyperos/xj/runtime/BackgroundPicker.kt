@@ -48,3 +48,6 @@ fun isGifBytes(bytes: ByteArray): Boolean {
 
 /** 读取 App 背景图片文件（内置默认背景或用户图片副本）；失败返回 null。 */
 expect suspend fun loadAppBackgroundImage(path: String): ImageBitmap?
+
+/** 内置默认 App 背景（打包在 APK assets，首次安装即生效）；桌面端返回 null。 */
+expect suspend fun loadBuiltinAppBackground(): ImageBitmap?

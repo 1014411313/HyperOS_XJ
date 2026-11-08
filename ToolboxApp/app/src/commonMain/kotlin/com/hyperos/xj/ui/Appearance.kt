@@ -47,7 +47,7 @@ data class AppearanceSettings(
     val customBg: Boolean = false,
     val bgImage: ImageBitmap? = null,
     val bgKind: String = "image",   // wallpaper / image / gif / video
-    val bgPath: String = "/storage/emulated/0/Android/data/com.hyperos.xj/files/app_bg_default.jpg",
+    val bgPath: String = "",        // 空 = 用 APK 内置默认背景；否则是 gif/video/图片的绝对路径
 )
 
 val LocalAppearance = staticCompositionLocalOf { AppearanceSettings() }
