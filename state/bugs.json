@@ -1551,6 +1551,20 @@
         "engine/lib/apl.sh",
         "engine/lib/apl_temp.sh"
       ]
+    },
+    {
+      "id": "bug-089",
+      "title": "温度超限后功率缓慢降、回落后缓慢升，不要一上一下",
+      "reported": "2026-11-09",
+      "type": "bug",
+      "version_seen": "3.1.25 (335)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "fixed_in": "3.1.26（336，未发布）",
+      "resolution": "APL 温度保护改为连续调节：温度 > 档位上限时目标电流每拍降 APL_TEMP_SLOPE_DOWN=12%（不低于 5W 对应电流）；回落到「上限−2℃」以下时每拍升 APL_TEMP_SLOPE_UP=8%，并只升回降档前记录的 apl_thermal_prev，避免与上探逻辑叠加；上限−2℃ 到上限之间是死区保持不动，防振荡。apl_state 第 9 字段改为 apl_thermal_prev（替代上一版锁温标记）",
+      "affected": [
+        "engine/lib/apl.sh"
+      ]
     }
   ],
   "cancelled": []
