@@ -1,0 +1,424 @@
+{
+  "project": "MiWKJR / HyperOS_XJ",
+  "module_version": "3.1.1 (311)",
+  "device": "haotian / Xiaomi 15 Pro / Android 17",
+  "note": "唯一台账。收到反馈只记录不动代码；用户明确说「修复」后才按 fix_plan 逐条改。",
+  "collecting": [
+    {
+      "id": "bug-002",
+      "title": "充电时每 6~15 秒重复切档并重启 mi_thermald",
+      "reported": "2026-11-08",
+      "type": "bug",
+      "version_seen": "3.1.0 (310)",
+      "device": "haotian",
+      "status": "待修",
+      "evidence": "完整 engine.log：12:41:52~12:43:47 的档位变化（无限制/一档/五档）对应用户在 App 改档；12:43:47 起目标稳定为五档却仍每 6~25 秒重复「切换 → 五档 ｜ map=2」，其间仅夹 2 次「系统默认」。排除实验：①手动连续调用 apply_conf_mode level_5 三次，仅第 1 次打印切换（幂等正常）；②手写 level_5 场景到 thermal-normal.conf，静置 15 秒与重启 mi_thermald 后 md5 都不变（守护不回写）；③MiWKJR 的 core/thermal_core.sh 全文不含 thermal-normal/THERMAL_PATH/mi_thermald",
+      "root_cause": "未定。两个候选假设（守护回写、MiWKJR 抢写）均被证伪；剩可能：其他模块（elite_freq_cap/scene 等）改同一文件，或 current_mode 与 normal.conf 之间存在竞态。需在充电状态下打印 _tmd5/_curmd5/_curname 才能定位",
+      "fix_plan": "在 apply_conf_mode 幂等分支加临时日志（打印 _mode/_tmd5/_curmd5/_curname），设备充电时复现并比对；定位后再改，不盲加标记",
+      "affected": [
+        "engine/lib/thermal.sh:214",
+        "engine/xjdaemon.sh:245"
+      ]
+    },
+    {
+      "id": "bug-021",
+      "title": "待验证：LSPosed 是否启用本模块及 scope",
+      "reported": "2026-11-08",
+      "type": "bug",
+      "version_seen": "3.1.0 (310)",
+      "device": "haotian",
+      "status": "待修",
+      "evidence": "LSPosed modules 日志无 'XJRear' 输出；但本机无 subscreencenter 进程，无法据此判断模块是否启用",
+      "root_cause": "无背屏硬件，hook 无从触发，无法静态确认启用状态",
+      "fix_plan": "在有背屏机型或先确认 LSPosed 模块启用+scope=com.xiaomi.subscreencenter 后验证 RearHook 与 SubScreenCenterApp 类名",
+      "affected": [
+        "ToolboxApp/androidApp/src/main/java/com/hyperos/xj/rear/RearHook.java:41"
+      ]
+    }
+  ],
+  "fixed": [
+    {
+      "id": "bug-003",
+      "title": "背屏开关在无背屏机型上无能力检测",
+      "reported": "2026-11-08",
+      "type": "bug",
+      "version_seen": "3.1.0 (310)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "pm path com.xiaomi.subscreencenter 为空；无 subscreen 进程；无 Display #1",
+      "root_cause": "LookPage 始终显示背屏开关，未按机型/背屏存在性隐藏或提示",
+      "fix_plan": "前端按 status 中的设备能力（has_subscreen）灰显或隐藏背屏卡片开关",
+      "affected": [
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/pages/LookPage.kt:100"
+      ],
+      "fixed_in": "3.1.1（311，未发布）",
+      "resolution": "未按 fix_plan 原案的 has_subscreen，改用引擎 status 已有的 rearscreen_supported（pm path com.xiaomi.subscreencenter）驱动 LookPage：不支持时整卡替换为「本机无背屏」提示卡，开关/预览/字段选择全部隐藏",
+      "fixed_note": "待真机复测：fields 14 项中 fake 无 hook 进程数据源，背屏显示 --；容器无 JDK 未编译 App，仅静态核对"
+    },
+    {
+      "id": "bug-010",
+      "title": "背屏四角显示项只作用于 App 预览",
+      "reported": "2026-11-08",
+      "type": "feature",
+      "version_seen": "3.1.0 (310)",
+      "status": "已修待复测",
+      "evidence": "LookPage rearSelected 仅传入 RearScreenPreview；rear.conf 无 fields 字段；PanelView 四角写死温度/电量/电压/电流",
+      "root_cause": "四角字段通道未打通（AGENTS TODO 已列）",
+      "fix_plan": "rear.conf 增加 fields，引擎 write_config/send_control 传递，PanelView 按配置动态绘制",
+      "affected": [
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/pages/LookPage.kt:72",
+        "engine/lib/rear.sh:76",
+        "ToolboxApp/androidApp/src/main/java/com/hyperos/xj/rear/PanelView.java:102"
+      ],
+      "fixed_in": "3.1.1（311，未发布）",
+      "resolution": "rear.conf 新增 fields；xjctl rear set 收 fields=...；engine/lib/rear.sh write_config/send_control 传递；RearConfig/Prefs/ControlReceiver 全链路加 fields；PanelView 四角按 fields 动态渲染（白名单 14 id、去重截断 4 项、空/未知回退 temp,soc,volt,cur）；BatteryReader 扩展 /sys 采样（design/full/rm/cycle/health/soh/proto）",
+      "fixed_note": "待真机复测：fields 14 项中 fake 无 hook 进程数据源，背屏显示 --；容器无 JDK 未编译 App，仅静态核对"
+    },
+    {
+      "id": "bug-011",
+      "title": "背屏字号只作用于 App 预览",
+      "reported": "2026-11-08",
+      "type": "feature",
+      "version_seen": "3.1.0 (310)",
+      "status": "已修待复测",
+      "evidence": "LookPage rearFont 仅传入预览；rear.sh write_config 硬编码 font_scale=1.0；send_control 不发 font_scale",
+      "root_cause": "字号通道未打通",
+      "fix_plan": "把 rearFont 映射为 font_scale 写入 rear.conf 并广播",
+      "affected": [
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/pages/LookPage.kt:73",
+        "engine/lib/rear.sh:79"
+      ],
+      "fixed_in": "3.1.1（311，未发布）",
+      "resolution": "xjctl rear set 收 font_scale=（仅 0.85/1.0/1.2）；write_config 产出 font_scale（cfg_get rear_font_scale，默认 1.0）；send_control 附 --ef font_scale；LookPage 字号 onSelect 即调 Engine.rearConfig 推送",
+      "fixed_note": "待真机复测：fields 14 项中 fake 无 hook 进程数据源，背屏显示 --；容器无 JDK 未编译 App，仅静态核对"
+    },
+    {
+      "id": "bug-012",
+      "title": "背屏主题色只作用于 App 预览",
+      "reported": "2026-11-08",
+      "type": "feature",
+      "version_seen": "3.1.0 (310)",
+      "status": "已修待复测",
+      "evidence": "rear.sh write_config 硬编码 accent=#38BDF8；send_control 不发 accent；ControlReceiver 已支持 accent extra 但无人发",
+      "root_cause": "主题色通道未打通",
+      "fix_plan": "把 appearance.accentColor 写入 rear.conf 并随广播下发",
+      "affected": [
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/pages/LookPage.kt:115",
+        "engine/lib/rear.sh:79",
+        "ToolboxApp/androidApp/src/main/java/com/hyperos/xj/rear/ControlReceiver.java:19"
+      ],
+      "fixed_in": "3.1.1（311，未发布）",
+      "resolution": "xjctl rear set 收 accent=（#RRGGBB 校验）；write_config 产出 accent（cfg_get rear_accent，默认 #38BDF8）；send_control 附 --es accent；LookPage 主题两处变化即推送 accentHex(主题色)",
+      "fixed_note": "待真机复测：fields 14 项中 fake 无 hook 进程数据源，背屏显示 --；容器无 JDK 未编译 App，仅静态核对"
+    },
+    {
+      "id": "bug-017",
+      "title": "外观设置无持久化，重启 App 全部丢失",
+      "reported": "2026-11-08",
+      "type": "bug",
+      "version_seen": "3.1.0 (310)",
+      "status": "已修待复测",
+      "evidence": "App.kt:67 var appearance by remember { mutableStateOf(AppearanceSettings()) }，无 SharedPreferences/DataStore",
+      "root_cause": "外观状态仅存内存",
+      "fix_plan": "引入本地持久化，保存/恢复 AppearanceSettings（含背屏四角/字号选择）",
+      "affected": [
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/App.kt:67",
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/ui/Appearance.kt"
+      ],
+      "fixed_in": "3.1.1（311，未发布）",
+      "resolution": "commonMain 新增 expect AppearanceStore{load/save}，20 个键=AppearanceSettings 字段名（glassMode 存枚举名，bgImage 位图不持久化）；androidMain 写 SharedPreferences(xj_appearance)，Context 经 ActivityThread 反射取 Application（androidApp 入口不可改，取不到时退回默认值）；desktopMain 写 ~/.hyperos_xj_appearance.properties；App.kt 初值改 AppearanceStore.load()（首帧前同步加载），LaunchedEffect(appearance) 变更即存",
+      "fixed_note": "待真机复测：容器无 JDK 未编译 App，仅静态核对（expect/actual 签名、符号存在、语法按官方文档核对）；背屏四角/字号不在 AppearanceSettings，属 bug-010/011 已另修"
+    },
+    {
+      "id": "bug-001",
+      "title": "电池解容 BAA 挂载失败：机型代号解析成 mivendor",
+      "reported": "2026-11-08",
+      "type": "bug",
+      "version_seen": "3.1.0 (310)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "log/battery.log: 'BAA source missing: /data/adb/modules/HyperOS_XJ/battery/baa/payload_BAA_config_mivendor.json'；真机 getprop ro.product.vendor.device=mivendor，ro.product.odm.device=haotian；模块只带 payload_BAA_config_haotian.json",
+      "root_cause": "机型代号取自 ro.product.vendor.device（本机为 mivendor），应为 ro.product.odm.device；customize.sh 安装时写入 settings.conf 的 dev_code=mivendor，battery.sh 的 dev_code() fallback 顺序同样偏后",
+      "fix_plan": "改用参考模块 battery_tune v3.12.9 的白名单匹配法：customize.sh:31-46 依次读 ro.product.device/vendor.device/name，命中 15 机型白名单即为 dev_code，未命中直接 abort；common.sh:22-30 运行时再兜底标 unsupported 并跳过 BAA/DTBO。参考实现已解包到 .aicode/tmp/ref_battery/",
+      "affected": [
+        "dist/HyperOS_XJ_New/customize.sh",
+        "engine/lib/battery.sh:20",
+        "dist/HyperOS_XJ_New/battery/config/settings.conf"
+      ],
+      "fixed_in": "3.1.1（311，未发布）",
+      "resolution": "机型识别改为白名单匹配（engine/lib/battery.sh + dist/customize.sh）；真机验证 BAA mounted、baa=active"
+    },
+    {
+      "id": "bug-007",
+      "title": "旁路温度回落阈值（bypass_temp_off）是空壳",
+      "reported": "2026-11-08",
+      "type": "bug",
+      "version_seen": "3.1.0 (310)",
+      "status": "已修待复测",
+      "evidence": "bypass_decide 只读 bypass_temp_on，从不读 bypass_temp_off，无迟滞逻辑",
+      "root_cause": "回落阈值未实现",
+      "fix_plan": "在 bypass_decide 中加入回落阈值迟滞判断，或从 UI 移除该输入框",
+      "affected": [
+        "engine/xjdaemon.sh:85",
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/pages/ThermalPage.kt:356"
+      ],
+      "fixed_in": "3.1.1（311，未发布）",
+      "resolution": "bypass_decide 增加温度回落迟滞（bypass_temp_off 生效）"
+    },
+    {
+      "id": "bug-008",
+      "title": "温控页「从已安装应用选择」空实现",
+      "reported": "2026-11-08",
+      "type": "feature",
+      "version_seen": "3.1.0 (310)",
+      "status": "已修待复测",
+      "evidence": "ThermalPage.kt onClick = {}",
+      "root_cause": "应用选择器未实现",
+      "fix_plan": "实现已安装应用列表选择并写入 game_apps",
+      "affected": [
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/pages/ThermalPage.kt:277"
+      ],
+      "fixed_in": "3.1.1（311，未发布）",
+      "resolution": "ThermalPage 实现「从已安装应用选择」并写入 game_apps"
+    },
+    {
+      "id": "bug-015",
+      "title": "battery/config/settings.conf 为旧版解容工具箱配置",
+      "reported": "2026-11-08",
+      "type": "bug",
+      "version_seen": "3.1.0 (310)",
+      "status": "已修待复测",
+      "evidence": "dist 与真机该文件头注释为「电池解容工具箱 v3.9.6」，含 fv_guard/baa_fmt/cg_min_write_gap/thermal_ceil/rearscreen_boot 等新引擎不认的键",
+      "root_cause": "旧模块配置被原样打包进新模块并被新引擎复用",
+      "fix_plan": "用新引擎实际消费的键重建该配置，去除旧键；确认 dev_code 来源（见 bug-001）",
+      "affected": [
+        "dist/HyperOS_XJ_New/battery/config/settings.conf"
+      ],
+      "fixed_in": "3.1.1（311，未发布）",
+      "resolution": "按引擎实际消费键重建 battery/config/settings.conf"
+    },
+    {
+      "id": "bug-016",
+      "title": "profiles/default.conf 部分键从未被读取",
+      "reported": "2026-11-08",
+      "type": "bug",
+      "version_seen": "3.1.0 (310)",
+      "status": "已修待复测",
+      "evidence": "temp_guard=600 未被读取（thermal.sh 硬编码 TEMP_GUARD=480）；bypass_current/restart_cooldown/enable_guard/lock_conf 同样未被 profile_get",
+      "root_cause": "配置与实现脱节",
+      "fix_plan": "让 thermal.sh 从 profiles 读取这些值，或从配置文件删除以免误导",
+      "affected": [
+        "dist/HyperOS_XJ_New/profiles/default.conf",
+        "engine/lib/thermal.sh:13"
+      ],
+      "fixed_in": "3.1.1（311，未发布）",
+      "resolution": "thermal.sh 的 ENABLE_GUARD/TEMP_GUARD/LOCK_CONF/COOLDOWN 改为从 profiles/default.conf 读取"
+    },
+    {
+      "id": "bug-018",
+      "title": "引擎有实现但 App 无 UI 入口的配置项",
+      "reported": "2026-11-08",
+      "type": "feature",
+      "version_seen": "3.1.0 (310)",
+      "status": "已修待复测",
+      "evidence": "charge_gov/enabled/no_hitemp_stop/bypass_current 引擎均消费，App 无控件写入（Engine.chargeGov 已定义但无页面调用）",
+      "root_cause": "页面未暴露这些功能",
+      "fix_plan": "按需在页面暴露，或确认不需要后从 Engine 移除",
+      "affected": [
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/runtime/ToolboxRuntimeBridge.kt:101"
+      ],
+      "fixed_in": "3.1.1（311，未发布）",
+      "resolution": "ThermalPage 新增引擎总开关 / 解除系统高温停充 / 充电温控联动"
+    },
+    {
+      "id": "bug-022",
+      "title": "设备上本项目旧部署 MiWKJR 与新模块并行运行，互相冲突",
+      "reported": "2026-11-08",
+      "type": "bug",
+      "version_seen": "3.1.0 (310)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "ps 显示 /data/adb/MiWKJR/engine/daemon.sh run(10291)、collect/snapshot_loop.sh(10723)、collect/kv_loop.sh(10735)、inotifyd .../lib/fv_handler.sh(12048)、lib/fv_guard.sh(12049)、lib/apl.sh(14266) 均在运行；MiWKJR/run/core.log 每 30~60 秒输出「已解除系统高温停充保护」，而本模块 hitemp_guard 把 persist.vendor.high_temp_stop_charge 置 true，两者互相覆盖；MiWKJR/config/settings.json 与本模块同为 schema:2 同源结构",
+      "root_cause": "本项目旧部署（MiWKJR，2026-11-04）未卸载，两套引擎同时写温控配置目录、电池节点与系统属性",
+      "fix_plan": "由用户决定保留哪一套；若以新架构为准，需停止 MiWKJR 全部进程并清除 /data/adb/MiWKJR 与残留的 battery_tune 目录，避免节点互抢、属性抖动与额外耗电",
+      "affected": [
+        "/data/adb/MiWKJR/engine",
+        "/data/adb/modules/HyperOS_XJ"
+      ],
+      "fixed_in": "3.1.1（311，未发布）",
+      "resolution": "清除旧部署 MiWKJR（进程/目录/开机注入脚本/数据），high_temp_stop_charge 不再被覆盖"
+    },
+    {
+      "id": "bug-023",
+      "title": "新引擎缺 smart_fv 守护，解容的满电电压会被系统写回",
+      "reported": "2026-11-08",
+      "type": "bug",
+      "version_seen": "3.1.0 (310)",
+      "status": "已修待复测",
+      "evidence": "参考模块 scripts/fv_guard.sh:80-100 用 inotifyd 监听 /sys/class/xm_power/charger/smart_charge/smart_fv 并写回 0，另有 10 秒轮询兜底；新引擎 engine/xjdaemon.sh battery_guard_tick 只写 constant_charge_voltage/voltage_max，不守 smart_fv",
+      "root_cause": "fv 守护未移植，smart_fv 可能被系统服务反复撤销",
+      "fix_plan": "在 xjdaemon 每拍检查 smart_fv 非 0 即写回，并记录原厂值 state/fv_default 供卸载还原（不必新增常驻进程）",
+      "affected": [
+        "engine/xjdaemon.sh:132",
+        "engine/lib/battery.sh"
+      ],
+      "fixed_in": "3.1.1（311，未发布）",
+      "resolution": "battery_guard_tick 增加 smart_fv 守护（unlock=1 时压回 0）"
+    },
+    {
+      "id": "bug-024",
+      "title": "循环伪装误写权威节点 qmax_cyclecount",
+      "reported": "2026-11-08",
+      "type": "bug",
+      "version_seen": "3.1.0 (310)",
+      "status": "已修待复测",
+      "evidence": "新引擎 engine/xjdaemon.sh battery_guard_tick 把 cycle_fake 写进 fg_master/cyclecount、battery/cycle_count、fg_master/qmax_cyclecount 三处；参考模块 cycle_guard.sh 只写前两个，qmax_cyclecount 作为不受伪装影响的权威真实值只读（common.sh:215-245 cycle_real_capture）",
+      "root_cause": "移植循环伪装时多写了权威节点，且缺真实值记录",
+      "fix_plan": "从写入列表移除 fg_master/qmax_cyclecount，改为只读用于记录真实循环（cycle_real_capture），并加「值未变不写」减少无谓写入",
+      "affected": [
+        "engine/xjdaemon.sh:125"
+      ],
+      "fixed_in": "3.1.1（311，未发布）",
+      "resolution": "battery_guard_tick 不再写 qmax_cyclecount（改为权威只读值）"
+    },
+    {
+      "id": "bug-004",
+      "title": "云控屏蔽开关是空壳（引擎不消费 cloud_guard）",
+      "reported": "2026-11-08",
+      "type": "bug",
+      "version_seen": "3.1.0 (310)",
+      "status": "已修待复测",
+      "evidence": "engine 中 cloud_guard 仅在 xjctl.sh 写入/status 读回，无任何拦截或隔离逻辑",
+      "root_cause": "旧解容工具箱的云控屏蔽未移植进新引擎，仅保留配置项",
+      "fix_plan": "参考 battery_tune v3.12.9 的两层机制：①载荷替换——common.sh:1368-1381 baa_refresh_src() 按 cloud_guard 选 normal.json / normal_nocloud.json（差异仅 strategy.support_cloud_push），复制为 baa_src 再 bind mount；②目录隔离——cloud_guard.sh:44-73/170-231 每 60 秒扫 /data/vendor/batteryantiaging/cloud_config 与 /mnt/vendor/persist/charger/batteryantiaging/cloud_config，命中即 mv 到隔离区。落点：载荷替换进 engine/lib/battery.sh，巡检进 xjdaemon.sh run_tick 按拍计数（不新增常驻进程）；需补 battery/baa/modes/normal_nocloud.json",
+      "affected": [
+        "engine/xjctl.sh:127",
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/pages/BatteryPage.kt:66"
+      ],
+      "fixed_in": "3.1.1（311，未发布）",
+      "resolution": "云控屏蔽落地：baa_refresh_src 按 cloud_guard 选 normal/_nocloud 载荷 + 云端目录隔离（xjdaemon 每 20 拍 cloud_tick）；补 32 个机型载荷 modes/*"
+    },
+    {
+      "id": "bug-005",
+      "title": "自适应功率爬坡 APL 开关是空壳（引擎不消费 apl_enable）",
+      "reported": "2026-11-08",
+      "type": "bug",
+      "version_seen": "3.1.0 (310)",
+      "status": "已修待复测",
+      "evidence": "engine 中 apl_enable 仅在 xjctl.sh 写入/status 读回，无爬坡逻辑",
+      "root_cause": "旧模块 APL 未移植进新引擎",
+      "fix_plan": "参考 battery_tune v3.12.9 scripts/apl.sh 的“学习-上探-退让”算法（硬上限=min(DTBO div_max_curr,20000)、温度线跟随 ffc_temp_high、适配器指纹变化即作废、按 SOC 段存档案、7 天过期、故障/塌陷/高温锁定），改为 xjdaemon run_tick 内每拍调用 apl_tick()，写 state/apl_target_ma 供 power.sh 的 inf 档读取，不新增常驻进程",
+      "affected": [
+        "engine/xjctl.sh:133",
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/pages/BatteryPage.kt:67"
+      ],
+      "fixed_in": "3.1.1（311，未发布）",
+      "resolution": "APL 落地：新增 engine/lib/apl.sh（学习-上探-退让+锁定），写 state/apl_target_ma，power.sh 的 inf 档读取，随 xjdaemon 每拍调用"
+    },
+    {
+      "id": "bug-020",
+      "title": "把参考模块功能融合进新引擎单 daemon",
+      "reported": "2026-11-08",
+      "type": "feature",
+      "status": "已修待复测",
+      "evidence": "用户指示：会提供参考模块，学习借鉴后融合进主引擎",
+      "root_cause": "新引擎目前缺旧模块的云控/APL 等实现（见 bug-004/005）",
+      "fix_plan": "参考模块已收到并解包到 .aicode/tmp/ref_battery/（battery_tune v3.12.9），三份精读结论已并入 bug-001/004/005/006/023/024。移植原则：旧模块的 charge_guard / cloud_guard watch / apl / thermal_guard / fv_guard / cycle_guard 等常驻进程全部收敛为 xjdaemon.sh run_tick 内的按拍函数，不新增常驻脚本。设备上还有一套本项目旧部署 /data/adb/MiWKJR（见 bug-022）在并行运行，移植前需先决定其去留",
+      "affected": [
+        "engine/xjdaemon.sh",
+        "engine/lib"
+      ],
+      "fixed_in": "3.1.1（311，未发布）",
+      "resolution": "融合原则落地：云控/APL/背屏配置均在唯一 xjdaemon 内实现，未新增常驻进程"
+    },
+    {
+      "id": "bug-006",
+      "title": "强制覆盖原厂上限开关是空壳（fv_force 不被读取）",
+      "reported": "2026-11-08",
+      "type": "bug",
+      "version_seen": "3.1.0 (310)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "battery_guard_tick 写 constant_charge_voltage/voltage_max 时不检查 fv_force；fv_force 仅 xjctl 存/读回",
+      "root_cause": "参考模块（battery_tune v3.12.9）全量 grep 无 fv_force 实现；驱动按 BAA 载荷 max_vbat 钳制，节点层无越界写口；载荷为 BAA_ENC 密文，仓库无密钥无法改写",
+      "fix_plan": "暂不改引擎：节点层已尽力（write_voltage_node 带回读校验）。要真正突破需 BAA 载荷编辑方案；否则 App 侧把「强制覆盖原厂上限」灰显/加说明",
+      "affected": [
+        "engine/tools/baa_crypt.c",
+        "engine/lib/battery.sh:73",
+        "engine/lib/battery.sh:160",
+        "engine/xjdaemon.sh:149",
+        "dist/HyperOS_XJ_New/bin/baa_crypt"
+      ],
+      "fixed_in": "3.1.1（311，未发布）",
+      "resolution": "用户提供密钥 michargerbattery 与载荷格式后落地：新增 engine/tools/baa_crypt.c（自带 AES-128-CBC + base64，无外部依赖），编译为 aarch64 静态二进制 dist/HyperOS_XJ_New/bin/baa_crypt（706400 字节）。battery.sh 新增 baa_crypt_bin / baa_fv_force_apply：fv_force=1 且 fv_v 合法时解密选中载荷、把全部 vterm 改为 fv_v、用载荷自带 IV 重新加密、cat 原地写回 baa_src（保 inode 以穿过 bind 挂载），任一步失败即回退并记 battery.log；baa_mount 在 baa_refresh_src 后调用。xjdaemon battery_guard_tick 在 fv_v 变化时重跑并 restart batteryantiaging，无需重启生效。实测纠正：载荷 IV 是每文件自带的（payload_bixi=000102..0f、nezha=94c4f812..、stock_* 各不同，并非全局固定 10..1f），故 decrypt 一律读文件内 IV、encrypt 支持传入原 IV",
+      "fixed_note": "待真机复测：容器无 /odm/etc/charger 与 batteryantiaging，baa_mount 实测返回 2，实际挂载与整机压上限未验；容器自验为 openssl 交叉核对 + 61 个载荷解密与还原 + 沙箱 8 场景"
+    },
+    {
+      "id": "bug-009",
+      "title": "关于页多条条目为空实现",
+      "reported": "2026-11-08",
+      "type": "feature",
+      "version_seen": "3.1.0 (310)",
+      "status": "已修待复测",
+      "evidence": "AboutPage 中作者入口/社区/更新日志/检查更新/查看日志/诊断打包/卸载/备份恢复 onClick 均为空；子页多为占位文案",
+      "root_cause": "关于页与备份恢复功能未实现",
+      "fix_plan": "逐条实现或从 UI 移除，避免误点",
+      "affected": [
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/pages/AboutPage.kt"
+      ],
+      "fixed_in": "3.1.1（311，未发布）",
+      "resolution": "关于页接入日志/诊断打包/卸载二次确认，外链不臆造"
+    },
+    {
+      "id": "bug-013",
+      "title": "背屏 App 预览与实际 PanelView 布局不一致",
+      "reported": "2026-11-08",
+      "type": "feature",
+      "version_seen": "3.1.0 (310)",
+      "status": "已修待复测",
+      "evidence": "RearScreen.kt 为 2x2 带图标卡片；PanelView.java 为中央圆环+液面+四角文字",
+      "root_cause": "预览与实物两套设计",
+      "fix_plan": "统一预览与实际面板的视觉结构",
+      "affected": [
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/ui/RearScreen.kt",
+        "ToolboxApp/androidApp/src/main/java/com/hyperos/xj/rear/PanelView.java"
+      ],
+      "fixed_in": "3.1.1（311，未发布）",
+      "resolution": "RearScreen 预览重写为与 PanelView 同构（圆环+液面+四角文本）"
+    },
+    {
+      "id": "bug-014",
+      "title": "dist 模块缺 app/ 目录，zip 不含 APK",
+      "reported": "2026-11-08",
+      "type": "bug",
+      "version_seen": "3.1.0 (310)",
+      "status": "已修待复测",
+      "evidence": "dist/HyperOS_XJ_New/app 不存在；AGENTS 打包要求 app/HyperOS_XJ.apk 来自最新构建",
+      "root_cause": "打包产物未放入 app/，customize.sh 安装 APK 会跳过",
+      "fix_plan": "打包流程把最新 debug APK 复制到 dist/HyperOS_XJ_New/app/HyperOS_XJ.apk",
+      "affected": [
+        "dist/HyperOS_XJ_New",
+        "dist/HyperOS_XJ_New/customize.sh"
+      ],
+      "fixed_in": "3.1.1（311，未发布）",
+      "resolution": "容器构建环境打通，APK 已产出并放入 dist/app"
+    },
+    {
+      "id": "bug-019",
+      "title": "DTBO 下载/刷入按钮为占位",
+      "reported": "2026-11-08",
+      "type": "feature",
+      "version_seen": "3.1.0 (310)",
+      "status": "已修待复测",
+      "evidence": "BatteryPage DTBO 按钮点击只改文字「DTBO 引擎尚未接入」",
+      "root_cause": "DTBO 刷入流程未设计（AGENTS 约束：需二次确认+备份）",
+      "fix_plan": "设计备份+校验+二次确认的刷入流程后再接按钮；阻塞于用户确认",
+      "affected": [
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/pages/BatteryPage.kt:75"
+      ],
+      "fixed_in": "3.1.1（311，未发布）",
+      "resolution": "新增 engine/lib/dtbo.sh（status/backup/flash，严格校验+自动备份）与 diag/log 命令"
+    }
+  ],
+  "cancelled": []
+}

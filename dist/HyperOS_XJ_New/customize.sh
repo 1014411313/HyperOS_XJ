@@ -8,9 +8,12 @@ print " - HyperOS - 动态温控·解容（新架构）"
 mkdir -p "$MODPATH/config" "$MODPATH/state" "$MODPATH/log" \
          "$MODPATH/battery/state" "$MODPATH/backup" 2>/dev/null
 
-_dev=$(getprop ro.product.vendor.device 2>/dev/null)
-[ -n "$_dev" ] || _dev=$(getprop ro.product.odm.device 2>/dev/null)
-[ -n "$_dev" ] || _dev=$(getprop ro.product.device 2>/dev/null)
+_sup="annibale bixi byron dada haotian miro myron nezha onyx pandora popsicle pudding songyuan warsaw xuanyuan"
+_dev=""
+for _p in ro.product.device ro.product.vendor.device ro.product.odm.device ro.product.name; do
+    _v=$(getprop $_p 2>/dev/null)
+    case " $_sup " in *" $_v "*) _dev=$_v; break ;; esac
+done
 _conf="$MODPATH/battery/config/settings.conf"
 if [ -n "$_dev" ] && [ -f "$_conf" ]; then
     if grep -q '^dev_code=' "$_conf"; then
@@ -19,6 +22,8 @@ if [ -n "$_dev" ] && [ -f "$_conf" ]; then
         echo "dev_code=$_dev" >> "$_conf"
     fi
     print " - 机型代号：$_dev"
+else
+    print " - [!] 未识别到受支持机型，解容/DTBO 将跳过（dev_code 留空）"
 fi
 
 _plat=$(getprop ro.board.platform 2>/dev/null)

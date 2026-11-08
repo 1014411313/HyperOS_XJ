@@ -19,8 +19,10 @@ public class ControlReceiver extends BroadcastReceiver {
         if (accent == null || accent.isEmpty()) accent = old.accent;
         float scale = intent.hasExtra("font_scale")
                 ? intent.getFloatExtra("font_scale", old.fontScale) : old.fontScale;
+        String fields = intent.getStringExtra("fields");
+        if (fields == null || fields.isEmpty()) fields = old.fields;
 
-        RearConfig cfg = new RearConfig(enabled, keepOn, accent, scale);
+        RearConfig cfg = new RearConfig(enabled, keepOn, accent, scale, fields);
         Prefs.write(context, cfg);
         if (cfg.enabled) {
             RearService.start(context);

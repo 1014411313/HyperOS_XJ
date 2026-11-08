@@ -68,17 +68,43 @@ public final class BatteryReader {
             double minutes = (fullMah - remainMah) / (state.currentA * 1000.0) * 60.0;
             if (minutes >= 0 && minutes < 600) state.etaMin = (int) minutes;
         }
+
+        long designUah = readLong("/sys/class/power_supply/battery/charge_full_design");
+        state.fullMah = fullUah > 0 ? (int) (fullUah / 1000) : 0;
+        state.designMah = designUah > 0 ? (int) (designUah / 1000) : 0;
+        long rmUah = readLong("/sys/class/power_supply/battery/charge_counter");
+        if (rmUah <= 0) rmUah = readLong("/sys/class/power_supply/battery/remaining_capacity");
+        state.rmMah = rmUah > 0 ? (int) (rmUah / 1000) : 0;
+        state.cycles = (int) readLong("/sys/class/power_supply/battery/cycle_count");
+        if (state.fullMah > 0 && state.designMah > 0) {
+            state.health = state.fullMah * 100 / state.designMah;
+        }
+        int soh = (int) readLong("/sys/class/power_supply/battery/battery_soh");
+        if (soh <= 0) soh = (int) readLong("/sys/class/power_supply/battery/state_of_health");
+        if (soh <= 0) soh = state.health;
+        state.soh = soh;
+        state.proto = readString("/sys/class/qcom-battery/usb_real_type");
+        if (state.proto.isEmpty()) state.proto = readString("/sys/class/power_supply/usb/usb_type");
         return state;
     }
 
     private static long readLong(String path) {
+        String value = readString(path);
+        try {
+            return value.isEmpty() ? 0L : Long.parseLong(value);
+        } catch (Throwable t) {
+            return 0L;
+        }
+    }
+
+    private static String readString(String path) {
         BufferedReader reader = null;
         try {
             reader = new BufferedReader(new FileReader(new File(path)));
             String line = reader.readLine();
-            return line != null ? Long.parseLong(line.trim()) : 0L;
+            return line != null ? line.trim() : "";
         } catch (Throwable t) {
-            return 0L;
+            return "";
         } finally {
             try {
                 if (reader != null) reader.close();

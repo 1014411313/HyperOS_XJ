@@ -76,11 +76,22 @@ ensure_data_dir() {
 write_config() {
   _enabled="$1" _keep="$2"
   [ -d "$CARD_CONF_DIR" ] || return 1
-  printf 'enabled=%s\nkeep_on=%s\naccent=#38BDF8\nfont_scale=1.0\n' \
-    "$_enabled" "$_keep" > "$CARD_CONF.tmp" 2>/dev/null
+  # 仅刷新展示配置时（参数为空）沿用 rear.conf 现值，避免把开关状态重置成默认。
+  if [ -z "$_enabled" ] || [ -z "$_keep" ]; then
+    _cur=$(cat "$CARD_CONF" 2>/dev/null)
+    [ -z "$_enabled" ] && _enabled=$(printf '%s\n' "$_cur" | grep -a '^enabled=' | tail -n1 | cut -d= -f2)
+    [ -z "$_keep" ] && _keep=$(printf '%s\n' "$_cur" | grep -a '^keep_on=' | tail -n1 | cut -d= -f2)
+    case "$_enabled" in 0|1) ;; *) _enabled=$(cfg_get rearscreen 0) ;; esac
+    case "$_keep" in 0|1) ;; *) _keep=1 ;; esac
+  fi
+  _fields=$(cfg_get rear_fields "temp,soc,volt,cur")
+  _accent=$(cfg_get rear_accent "#38BDF8")
+  _font=$(cfg_get rear_font_scale "1.0")
+  printf 'enabled=%s\nkeep_on=%s\naccent=%s\nfont_scale=%s\nfields=%s\n' \
+    "$_enabled" "$_keep" "$_accent" "$_font" "$_fields" > "$CARD_CONF.tmp" 2>/dev/null
   mv -f "$CARD_CONF.tmp" "$CARD_CONF" 2>/dev/null
-  printf 'enabled=%s\nkeep_on=%s\naccent=#38BDF8\nfont_scale=1.0\n' \
-    "$_enabled" "$_keep" > /data/local/tmp/xj_rear.conf 2>/dev/null
+  printf 'enabled=%s\nkeep_on=%s\naccent=%s\nfont_scale=%s\nfields=%s\n' \
+    "$_enabled" "$_keep" "$_accent" "$_font" "$_fields" > /data/local/tmp/xj_rear.conf 2>/dev/null
   chmod 0644 /data/local/tmp/xj_rear.conf 2>/dev/null
   _uid=$(card_uid)
   [ "$_uid" != "0" ] && chown "$_uid:$_uid" "$CARD_CONF" 2>/dev/null
@@ -92,7 +103,19 @@ send_control() {
   _e=false; [ "$1" = "1" ] && _e=true
   _k=false; [ "$2" = "1" ] && _k=true
   am broadcast -a com.hyperos.xj.rear.CONTROL -n "$CARD_RECEIVER" \
-    --ez enabled "$_e" --ez keep_on "$_k" >/dev/null 2>&1
+    --ez enabled "$_e" --ez keep_on "$_k" \
+    --es fields "$(cfg_get rear_fields "temp,soc,volt,cur")" \
+    --es accent "$(cfg_get rear_accent "#38BDF8")" \
+    --ef font_scale "$(cfg_get rear_font_scale "1.0")" >/dev/null 2>&1
+}
+
+# rear set 之后刷新：沿用当前开关状态重写 rear.conf 并广播新展示配置。
+rear_push_config() {
+  ensure_data_dir || return 1
+  write_config "" "" || return 1
+  _en=$(grep -a '^enabled=' "$CARD_CONF" 2>/dev/null | tail -n1 | cut -d= -f2)
+  _kp=$(grep -a '^keep_on=' "$CARD_CONF" 2>/dev/null | tail -n1 | cut -d= -f2)
+  send_control "${_en:-0}" "${_kp:-1}"
 }
 
 rear_ensure() {

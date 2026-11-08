@@ -12,16 +12,17 @@ VOLTAGE_NODE=""
 BUILD_VER=$(mod_version)
 [ -n "$BUILD_VER" ] || BUILD_VER="engine"
 LAST_RESTART=0
-ENABLE_GUARD=1
-TEMP_GUARD=480
-LOCK_CONF=1
-COOLDOWN=6
 
 profile_get() {
   _p="$MODDIR/profiles/default.conf"
   _v=$(grep -aE "^[[:space:]]*$1[[:space:]]*=" "$_p" 2>/dev/null | tail -n1 | sed 's/^[^=]*=//; s/[[:space:]]*$//')
   [ -n "$_v" ] && printf '%s' "$_v" || printf '%s' "${2:-}"
 }
+
+ENABLE_GUARD=$(profile_get enable_guard 1)
+TEMP_GUARD=$(profile_get temp_guard 480)
+LOCK_CONF=$(profile_get lock_conf 1)
+COOLDOWN=$(profile_get restart_cooldown 6)
 
 mode_label() {
   case "$1" in

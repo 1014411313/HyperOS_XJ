@@ -24,7 +24,8 @@ public final class Prefs {
                 p.getBoolean("enabled", true),
                 p.getBoolean("keep_on", true),
                 p.getString("accent", "#38BDF8"),
-                p.getFloat("font_scale", 1f)
+                p.getFloat("font_scale", 1f),
+                p.getString("fields", RearConfig.DEFAULT_FIELDS)
         );
     }
 
@@ -34,6 +35,7 @@ public final class Prefs {
                 .putBoolean("keep_on", cfg.keepOn)
                 .putString("accent", cfg.accent)
                 .putFloat("font_scale", cfg.fontScale)
+                .putString("fields", cfg.fields)
                 .apply();
         sync(ctx, cfg);
     }
@@ -45,34 +47,34 @@ public final class Prefs {
             if (!dir.exists()) dir.mkdirs();
             File target = new File(dir, "rear.conf");
             File tmp = new File(dir, "rear.conf.tmp");
-            FileWriter writer = new FileWriter(tmp, false);
-            writer.write("enabled=" + (cfg.enabled ? 1 : 0) + "\n");
-            writer.write("keep_on=" + (cfg.keepOn ? 1 : 0) + "\n");
-            writer.write("accent=" + cfg.accent + "\n");
-            writer.write("font_scale=" + cfg.fontScale + "\n");
-            writer.close();
+            writeConf(tmp, cfg);
             if (!tmp.renameTo(target)) {
                 target.delete();
                 tmp.renameTo(target);
             }
             try {
-                FileWriter tmpWriter = new FileWriter(new File(TMP_CONFIG_PATH), false);
-                tmpWriter.write("enabled=" + (cfg.enabled ? 1 : 0) + "\n");
-                tmpWriter.write("keep_on=" + (cfg.keepOn ? 1 : 0) + "\n");
-                tmpWriter.write("accent=" + cfg.accent + "\n");
-                tmpWriter.write("font_scale=" + cfg.fontScale + "\n");
-                tmpWriter.close();
+                writeConf(new File(TMP_CONFIG_PATH), cfg);
             } catch (Throwable ignored) {
             }
         } catch (Throwable ignored) {
         }
     }
 
+    private static void writeConf(File file, RearConfig cfg) throws java.io.IOException {
+        FileWriter writer = new FileWriter(file, false);
+        writer.write("enabled=" + (cfg.enabled ? 1 : 0) + "\n");
+        writer.write("keep_on=" + (cfg.keepOn ? 1 : 0) + "\n");
+        writer.write("accent=" + cfg.accent + "\n");
+        writer.write("font_scale=" + cfg.fontScale + "\n");
+        writer.write("fields=" + cfg.fields + "\n");
+        writer.close();
+    }
+
     public static RearConfig readConfig() {
         try {
             File file = new File(CONFIG_PATH);
             if (!file.exists()) file = new File(TMP_CONFIG_PATH);
-            if (!file.exists()) return new RearConfig(true, true, "#38BDF8", 1f);
+            if (!file.exists()) return new RearConfig(true, true, "#38BDF8", 1f, RearConfig.DEFAULT_FIELDS);
             Map<String, String> map = new HashMap<>();
             BufferedReader reader = new BufferedReader(new FileReader(file));
             String line;
@@ -87,10 +89,11 @@ public final class Prefs {
                     !"0".equals(map.get("enabled")),
                     !"0".equals(map.get("keep_on")),
                     map.containsKey("accent") ? map.get("accent") : "#38BDF8",
-                    parseFloat(map.get("font_scale"), 1f)
+                    parseFloat(map.get("font_scale"), 1f),
+                    map.get("fields")
             );
         } catch (Throwable t) {
-            return new RearConfig(true, true, "#38BDF8", 1f);
+            return new RearConfig(true, true, "#38BDF8", 1f, RearConfig.DEFAULT_FIELDS);
         }
     }
 

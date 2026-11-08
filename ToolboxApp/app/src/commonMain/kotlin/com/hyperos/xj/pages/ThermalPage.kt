@@ -2,6 +2,7 @@ package com.hyperos.xj.pages
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -31,9 +32,11 @@ import androidx.compose.ui.unit.sp
 import com.hyperos.xj.runtime.DeviceStatus
 import com.hyperos.xj.runtime.Engine
 import com.hyperos.xj.runtime.ToolboxRuntimeBridge
+import com.hyperos.xj.runtime.installedGameCandidates
 import com.hyperos.xj.ui.ChipSelector
 import com.hyperos.xj.ui.CollapsibleCard
 import com.hyperos.xj.ui.GlassCard
+import com.hyperos.xj.ui.GlassChip
 import com.hyperos.xj.ui.GlassInput
 import com.hyperos.xj.ui.LocalAccentColor
 import com.hyperos.xj.ui.SectionLabel
@@ -79,6 +82,13 @@ fun ThermalPage(
     var bypassTempOn by remember { mutableStateOf("0") }
     var bypassTempOff by remember { mutableStateOf("0") }
     var bypassSocOn by remember { mutableStateOf("0") }
+    var engineEnabled by remember { mutableStateOf(true) }
+    var noHitempStop by remember { mutableStateOf(false) }
+    var chargeGov by remember { mutableStateOf(true) }
+    var showAppPicker by remember { mutableStateOf(false) }
+    var appsLoaded by remember { mutableStateOf(false) }
+    var appsLoading by remember { mutableStateOf(false) }
+    var appCandidates by remember { mutableStateOf(emptyList<Pair<String, String>>()) }
     var loaded by remember { mutableStateOf(false) }
 
     fun save(key: String, value: String) {
@@ -113,6 +123,9 @@ fun ThermalPage(
         bypassTempOn = s.bypassTempOn.toString()
         bypassTempOff = s.bypassTempOff.toString()
         bypassSocOn = s.bypassLevel.toString()
+        engineEnabled = s.enabled
+        noHitempStop = s.noHitempStop
+        chargeGov = s.chargeGov
         loaded = true
     }
 
@@ -133,6 +146,31 @@ fun ThermalPage(
             text = "高温保护备注：高温自动降充电功率与温度回落恢复默认开启，这里只做说明，不提供独立功能卡片。",
             style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp)
         )
+
+        GlassCard(backdrop, Modifier.fillMaxWidth()) {
+            SectionLabel("引擎控制")
+            ToggleLine(
+                backdrop = backdrop,
+                title = "引擎总开关",
+                checked = engineEnabled,
+                onCheckedChange = { engineEnabled = it; save("enabled", it.toString()) }
+            )
+            ToggleLine(
+                backdrop = backdrop,
+                title = "解除系统高温停充",
+                checked = noHitempStop,
+                onCheckedChange = { noHitempStop = it; save("no_hitemp_stop", it.toString()) }
+            )
+            ToggleLine(
+                backdrop = backdrop,
+                title = "充电温控联动",
+                checked = chargeGov,
+                onCheckedChange = {
+                    chargeGov = it
+                    scope.launch { bridge.exec(Engine.chargeGov(it)) }
+                }
+            )
+        }
 
         GlassCard(backdrop, Modifier.fillMaxWidth()) {
             SectionLabel("普通场景温控")
@@ -271,12 +309,56 @@ fun ThermalPage(
             }
             Spacer(Modifier.height(8.dp))
             BasicText(
-                text = "从已安装应用选择",
+                text = when {
+                    appsLoading -> "正在读取应用列表…"
+                    showAppPicker -> "收起应用列表"
+                    else -> "从已安装应用选择"
+                },
                 modifier = Modifier
-                    .clickableChip(backdrop, false) { }
+                    .clickableChip(backdrop, false) {
+                        when {
+                            showAppPicker -> showAppPicker = false
+                            appsLoaded -> showAppPicker = true
+                            else -> scope.launch {
+                                appsLoading = true
+                                appCandidates = installedGameCandidates()
+                                appsLoaded = true
+                                appsLoading = false
+                                showAppPicker = true
+                            }
+                        }
+                    }
                     .padding(horizontal = 14.dp, vertical = 10.dp),
                 style = TextStyle(color = XJ.TextPrimary, fontSize = 13.sp)
             )
+            if (showAppPicker) {
+                Spacer(Modifier.height(8.dp))
+                if (appCandidates.isEmpty()) {
+                    BasicText(
+                        text = "未读取到应用列表",
+                        style = TextStyle(color = XJ.TextSecondary, fontSize = 12.sp)
+                    )
+                } else {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        appCandidates.forEach { (pkg, label) ->
+                            GlassChip(
+                                backdrop = backdrop,
+                                label = label,
+                                selected = pkg in gameApps,
+                                onClick = {
+                                    gameApps = if (pkg in gameApps) gameApps - pkg else gameApps + pkg
+                                    save("game_apps", gameApps.joinToString("|"))
+                                }
+                            )
+                        }
+                    }
+                }
+            }
         }
 
         GlassCard(backdrop, Modifier.fillMaxWidth()) {

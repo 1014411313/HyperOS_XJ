@@ -145,6 +145,7 @@ private fun mapStatus(map: Map<String, String>): DeviceStatus {
         fvForce = asBool(map, "fv_force", false),
         bypassManual = asBool(map, "bypass_manual", false),
         rearScreen = asBool(map, "rearscreen", false),
+        rearScreenSupported = asBool(map, "rearscreen_supported", true),
     )
 }
 

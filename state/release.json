@@ -1,0 +1,77 @@
+{
+  "project": "MiWKJR / HyperOS_XJ",
+  "note": "版本历史。fixed_in 落在哪个版本，就登记在该版本下；未发布的版本统一标「未发布」。",
+  "history": [
+    {
+      "version": "3.1.1（311，未发布）",
+      "date": "2026-11-08",
+      "changes": [
+        {
+          "id": "bug-003",
+          "title": "背屏开关在无背屏机型上无能力检测",
+          "status": "已修待复测"
+        },
+        {
+          "id": "bug-010",
+          "title": "背屏四角显示项只作用于 App 预览",
+          "status": "已修待复测"
+        },
+        {
+          "id": "bug-011",
+          "title": "背屏字号只作用于 App 预览",
+          "status": "已修待复测"
+        },
+        {
+          "id": "bug-012",
+          "title": "背屏主题色只作用于 App 预览",
+          "status": "已修待复测"
+        },
+        {
+          "id": "bug-017",
+          "title": "外观设置无持久化，重启 App 全部丢失",
+          "status": "已修待复测"
+        },
+        {
+          "id": "bug-004",
+          "title": "云控屏蔽落在单 daemon",
+          "status": "已修待复测"
+        },
+        {
+          "id": "bug-005",
+          "title": "APL 自适应功率爬坡落在单 daemon",
+          "status": "已修待复测"
+        },
+        {
+          "id": "bug-020",
+          "title": "参考功能融合进唯一 daemon",
+          "status": "已修待复测"
+        },
+        {
+          "id": "bug-006",
+          "title": "强制覆盖原厂上限开关是空壳（fv_force 不被读取）",
+          "status": "已修待复测"
+        },
+        {
+          "id": "bug-009",
+          "title": "关于页功能",
+          "status": "已修待复测"
+        },
+        {
+          "id": "bug-013",
+          "title": "预览与实物统一",
+          "status": "已修待复测"
+        },
+        {
+          "id": "bug-019",
+          "title": "DTBO 刷入与诊断命令",
+          "status": "已修待复测"
+        },
+        {
+          "id": "bug-014",
+          "title": "构建打包",
+          "status": "已修待复测"
+        }
+      ]
+    }
+  ]
+}

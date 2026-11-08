@@ -23,6 +23,7 @@ public class PanelView extends View {
     private ChargeState state = new ChargeState();
     private float fontScale = 1f;
     private int accent = 0xFF38BDF8;
+    private String[] cornerFields = {"temp", "soc", "volt", "cur"};
 
     public PanelView(Context context) {
         super(context);
@@ -39,6 +40,7 @@ public class PanelView extends View {
         state = next;
         fontScale = Math.max(0.8f, Math.min(1.4f, cfg.fontScale));
         accent = parseColor(cfg.accent);
+        cornerFields = cfg.fields.split(",");
         invalidate();
     }
 
@@ -104,14 +106,13 @@ public class PanelView extends View {
         drawPill(canvas, centerX, 42f * scale, state.statusText, scale);
 
         float pad = 28f * scale;
-        drawMetric(canvas, "温度", String.format(Locale.US, "%.1f℃", state.tempC),
-                contentLeft + pad, 118f * scale, Paint.Align.LEFT, scale);
-        drawMetric(canvas, "电量", state.level + "%",
-                contentLeft + contentWidth - pad, 118f * scale, Paint.Align.RIGHT, scale);
-        drawMetric(canvas, "电压", String.format(Locale.US, "%.2fV", state.voltageV),
-                contentLeft + pad, height - 118f * scale, Paint.Align.LEFT, scale);
-        drawMetric(canvas, "电流", String.format(Locale.US, "%.2fA", Math.abs(state.currentA)),
-                contentLeft + contentWidth - pad, height - 118f * scale, Paint.Align.RIGHT, scale);
+        float[] xs = {contentLeft + pad, contentLeft + contentWidth - pad,
+                contentLeft + pad, contentLeft + contentWidth - pad};
+        float[] ys = {118f * scale, 118f * scale, height - 118f * scale, height - 118f * scale};
+        Paint.Align[] aligns = {Paint.Align.LEFT, Paint.Align.RIGHT, Paint.Align.LEFT, Paint.Align.RIGHT};
+        for (int i = 0; i < cornerFields.length && i < 4; i++) {
+            drawField(canvas, cornerFields[i], xs[i], ys[i], aligns[i], scale);
+        }
 
         text.setTypeface(medium);
         text.setTextAlign(Paint.Align.CENTER);
@@ -149,6 +150,45 @@ public class PanelView extends View {
         paint.setStyle(Paint.Style.FILL);
         text.setColor(accent);
         canvas.drawText(label, centerX, top + 6f * scale, text);
+    }
+
+    private void drawField(Canvas canvas, String id, float x, float y,
+                           Paint.Align align, float scale) {
+        String label;
+        String value;
+        switch (id) {
+            case "temp":
+                label = "温度"; value = String.format(Locale.US, "%.1f℃", state.tempC); break;
+            case "soc":
+                label = "电量"; value = state.level + "%"; break;
+            case "volt":
+                label = "电压"; value = String.format(Locale.US, "%.2fV", state.voltageV); break;
+            case "cur":
+                label = "电流"; value = String.format(Locale.US, "%.2fA", Math.abs(state.currentA)); break;
+            case "power":
+                label = "功率"; value = String.format(Locale.US, "%.1fW", Math.abs(state.powerW)); break;
+            case "status":
+                label = "状态"; value = state.statusText; break;
+            case "design":
+                label = "设计容量"; value = state.designMah > 0 ? state.designMah + "mAh" : "--"; break;
+            case "full":
+                label = "满充容量"; value = state.fullMah > 0 ? state.fullMah + "mAh" : "--"; break;
+            case "health":
+                label = "健康度"; value = state.health > 0 ? state.health + "%" : "--"; break;
+            case "cycle":
+                label = "循环"; value = state.cycles > 0 ? state.cycles + "次" : "--"; break;
+            case "fake":
+                label = "伪装"; value = state.fakeCycles >= 0 ? state.fakeCycles + "次" : "--"; break;
+            case "proto":
+                label = "协议"; value = state.proto.isEmpty() ? "--" : state.proto; break;
+            case "rm":
+                label = "剩余容量"; value = state.rmMah > 0 ? state.rmMah + "mAh" : "--"; break;
+            case "soh":
+                label = "电池寿命"; value = state.soh > 0 ? state.soh + "%" : "--"; break;
+            default:
+                return;
+        }
+        drawMetric(canvas, label, value, x, y, align, scale);
     }
 
     private void drawMetric(Canvas canvas, String label, String value, float x, float y,

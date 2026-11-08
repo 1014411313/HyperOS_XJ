@@ -59,6 +59,20 @@ watt_to_ma() {
   echo "$_ma"
 }
 
+# inf 档的电流目标由 APL 决定（apl.sh 每拍写 $STATE/apl_target_ma）。
+# 读不到目标（APL 关闭 / 让路 / 未插枪）返回非 0，调用方退回原有「不限速」行为。
+apl_target_ma() {
+  [ "$(cfg_get apl_enable 0)" = "1" ] || return 1
+  _t=$(cat "$STATE/apl_target_ma" 2>/dev/null)
+  case "$_t" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$_t" -ge 2000 ] || return 1
+  if [ -n "$APL_LIB" ]; then
+    _c=$(apl_ceiling_ma)
+    [ "$_t" -gt "$_c" ] && _t="$_c"
+  fi
+  printf '%s' "$_t"
+}
+
 ctrl_level() {
   _w=$1
   [ "$_w" -ge 40 ] && { echo 0; return 0; }
@@ -113,11 +127,15 @@ nodes_ok() {
 }
 
 # 应用一个功率档；inf=不限速，其余按瓦数换算电流写节点。
+# inf 且 APL 开启时按 APL 目标做「单电流模式」（th=0 + ctrl=0，只限电流）。
 # 已应用且节点未被驱动复位时跳过，避免每拍重写触发 PD 反复重协商。
 power_apply() {
   _tier=$(norm_power "$1")
   _th=1 _lv=0 _ma=""
-  if [ "$_tier" != "inf" ]; then
+  if [ "$_tier" = "inf" ]; then
+    _ma=$(apl_target_ma) || _ma=""
+    [ -n "$_ma" ] && { _th=0; _lv=0; }
+  else
     _w=$(tier_watt "$_tier")
     _uv=$(read_voltage_uv)
     _ma=$(watt_to_ma "$_w" "$_uv")
@@ -142,7 +160,7 @@ power_apply() {
   fi
 
   save_orig_current
-  if [ "$_tier" = "inf" ]; then
+  if [ "$_th" = "1" ]; then
     wnode "$WIRED_TH" 1
     wnode "$WIRELESS_TH" 1
     wnode "$WIRED_CTRL" 0

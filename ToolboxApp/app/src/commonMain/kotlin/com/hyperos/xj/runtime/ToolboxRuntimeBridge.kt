@@ -41,6 +41,7 @@ data class DeviceStatus(
     val fvForce: Boolean = false,
     val bypassManual: Boolean = false,
     val rearScreen: Boolean = false,
+    val rearScreenSupported: Boolean = true,
 ) {
     val charging: Boolean get() = status == "充电中" || status == "满电"
 }
@@ -111,6 +112,13 @@ object Engine {
     fun settingsDump(): String = build("setting", "dump")
 
     fun rear(on: Boolean): String = build("rear", if (on) "on" else "off")
+
+    fun rearConfig(fields: String, fontScale: String, accent: String): String =
+        build("rear", "set", "fields=$fields", "font_scale=$fontScale", "accent=$accent")
+
+    fun dtboStatus(): String = build("dtbo", "status")
+
+    fun dtboFlash(img: String): String = build("dtbo", "flash", img)
 }
 
 internal fun parseKv(raw: String): Map<String, String> =

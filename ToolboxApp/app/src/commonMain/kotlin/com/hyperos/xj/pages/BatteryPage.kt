@@ -1,5 +1,6 @@
 package com.hyperos.xj.pages
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -10,9 +11,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -20,6 +23,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -50,7 +54,12 @@ fun BatteryPage(
     var pps by remember { mutableStateOf(status.freepps) }
     var cloudBlock by remember { mutableStateOf(status.cloudGuard) }
     var apl by remember { mutableStateOf(status.aplEnable) }
-    var dtboStatus by remember { mutableStateOf("由模块安装器处理") }
+    var dtboStatus by remember { mutableStateOf("读取中") }
+    var dtboStatusDetail by remember { mutableStateOf("") }
+    var dtboImg by remember { mutableStateOf("") }
+    var dtboBusy by remember { mutableStateOf(false) }
+    var showDtboConfirm by remember { mutableStateOf(false) }
+    var showVoltForceConfirm by remember { mutableStateOf(false) }
     var cycleTarget by remember { mutableStateOf(status.cycleFake) }
     var fullVoltage by remember { mutableStateOf(status.fvV) }
     var forceLimit by remember { mutableStateOf(status.fvForce) }
@@ -58,6 +67,12 @@ fun BatteryPage(
 
     fun saveBattery(key: String, value: String) {
         scope.launch { bridge.exec(Engine.battery(key, value)) }
+    }
+
+    LaunchedEffect(Unit) {
+        val out = bridge.exec(Engine.dtboStatus())
+        dtboStatusDetail = out
+        dtboStatus = out.lineSequence().firstOrNull { it.isNotBlank() }?.take(24) ?: "无输出"
     }
 
     Column(
@@ -78,15 +93,58 @@ fun BatteryPage(
         GlassCard(backdrop, Modifier.fillMaxWidth()) {
             SectionLabel("DTBO")
             ValueRow("DTBO 刷入", dtboStatus)
-            Spacer(Modifier.height(6.dp))
-            ActionButton(backdrop, "在线下载当前手机 DTBO", { dtboStatus = "DTBO 引擎尚未接入" }, Modifier.fillMaxWidth())
+            if (dtboStatusDetail.isNotBlank()) {
+                Spacer(Modifier.height(6.dp))
+                BasicText(
+                    text = dtboStatusDetail,
+                    style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp)
+                )
+            }
             Spacer(Modifier.height(8.dp))
-            BasicText(
-                text = "本机 DTBO 信息 / 刷入流程占位",
-                style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp)
+            GlassInput(dtboImg, { dtboImg = it }, "镜像文件名，如 haotian.img")
+            Spacer(Modifier.height(8.dp))
+            ActionButton(
+                backdrop,
+                "在线下载当前手机 DTBO",
+                { dtboStatusDetail = "在线下载 DTBO 尚未实现，可使用模块内置镜像（battery/dtbo/）。" },
+                Modifier.fillMaxWidth()
             )
             Spacer(Modifier.height(8.dp))
-            ActionButton(backdrop, "确认刷入，重启生效", { dtboStatus = "DTBO 引擎尚未接入" }, Modifier.fillMaxWidth(), danger = true)
+            ActionButton(
+                backdrop,
+                "确认刷入，重启生效",
+                {
+                    val img = dtboImg.trim()
+                    when {
+                        dtboBusy -> dtboStatusDetail = "上一条刷入指令仍在执行。"
+                        img.isEmpty() -> dtboStatusDetail = "请先填入要刷入的镜像文件名（模块内置 battery/dtbo/ 下）。"
+                        else -> showDtboConfirm = true
+                    }
+                },
+                Modifier.fillMaxWidth(),
+                danger = true
+            )
+            if (showDtboConfirm) {
+                Spacer(Modifier.height(10.dp))
+                ConfirmCard(
+                    backdrop,
+                    title = "刷入 DTBO 镜像",
+                    detail = "将向当前 DTBO 分区写入 ${Engine.MODULE_DIR}/battery/dtbo/${dtboImg.trim()}，错误镜像或错误槽位可能导致设备无法启动，刷入后需重启生效。",
+                    confirmText = "确认刷入",
+                    onConfirm = {
+                        showDtboConfirm = false
+                        dtboBusy = true
+                        dtboStatus = "刷入中…"
+                        scope.launch {
+                            val out = bridge.exec(Engine.dtboFlash(dtboImg.trim()))
+                            dtboStatusDetail = out
+                            dtboStatus = out.lineSequence().firstOrNull { it.isNotBlank() }?.take(24) ?: "已下发，重启生效"
+                            dtboBusy = false
+                        }
+                    },
+                    onDismiss = { showDtboConfirm = false }
+                )
+            }
         }
 
         GlassCard(backdrop, Modifier.fillMaxWidth()) {
@@ -124,10 +182,29 @@ fun BatteryPage(
                 "目标值超过原厂上限时开启",
                 forceLimit,
                 onCheckedChange = {
-                    forceLimit = it
-                    scope.launch { bridge.exec(Engine.batteryRaw("volt", "force", if (it) "on" else "off")) }
+                    if (it) {
+                        showVoltForceConfirm = true
+                    } else {
+                        forceLimit = false
+                        scope.launch { bridge.exec(Engine.batteryRaw("volt", "force", "off")) }
+                    }
                 }
             )
+            if (showVoltForceConfirm) {
+                Spacer(Modifier.height(6.dp))
+                ConfirmCard(
+                    backdrop,
+                    title = "改写电池满电电压上限",
+                    detail = "将强制覆盖原厂满电电压上限，可能加速电池老化或绕过硬件保护，存在硬件风险。确认后下发 volt force on，再通过「应用电压」写入目标值。",
+                    confirmText = "确认开启",
+                    onConfirm = {
+                        showVoltForceConfirm = false
+                        forceLimit = true
+                        scope.launch { bridge.exec(Engine.batteryRaw("volt", "force", "on")) }
+                    },
+                    onDismiss = { showVoltForceConfirm = false }
+                )
+            }
             ValueRow("关机电压", "2800~3500 mV · ${status.termV.ifBlank { "未设置" }}")
             GlassInput(shutdownVoltage, { shutdownVoltage = it }, "输入关机电压 mV", numeric = true)
             Spacer(Modifier.height(10.dp))
@@ -157,6 +234,39 @@ fun BatteryPage(
                 text = "风险提示：电池老化 / 硬件保护 / 生效条件 / 还原说明。",
                 style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp)
             )
+        }
+    }
+}
+
+@Composable
+private fun ConfirmCard(
+    backdrop: Backdrop,
+    title: String,
+    detail: String,
+    confirmText: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(XJ.Danger.copy(alpha = 0.10f))
+            .padding(12.dp)
+    ) {
+        BasicText(
+            text = title,
+            style = TextStyle(color = XJ.Danger, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        )
+        Spacer(Modifier.height(4.dp))
+        BasicText(
+            text = detail,
+            style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp)
+        )
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            ActionButton(backdrop, confirmText, onConfirm, Modifier.weight(1f), danger = true)
+            ActionButton(backdrop, "取消", onDismiss, Modifier.weight(1f), secondary = true)
         }
     }
 }

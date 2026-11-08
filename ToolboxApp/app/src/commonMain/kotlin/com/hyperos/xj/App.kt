@@ -43,9 +43,9 @@ import com.hyperos.xj.pages.BatteryPage
 import com.hyperos.xj.pages.HomePage
 import com.hyperos.xj.pages.LookPage
 import com.hyperos.xj.pages.ThermalPage
+import com.hyperos.xj.runtime.AppearanceStore
 import com.hyperos.xj.runtime.DeviceStatus
 import com.hyperos.xj.runtime.createToolboxBridge
-import com.hyperos.xj.ui.AppearanceSettings
 import com.hyperos.xj.ui.BottomBar
 import com.hyperos.xj.ui.LocalAccentColor
 import com.hyperos.xj.ui.LocalAppearance
@@ -64,13 +64,17 @@ fun App() {
     val bridge = remember { createToolboxBridge() }
     var selectedTab by remember { mutableIntStateOf(0) }
     var status by remember { mutableStateOf(DeviceStatus()) }
-    var appearance by remember { mutableStateOf(AppearanceSettings()) }
+    var appearance by remember { mutableStateOf(AppearanceStore.load()) }
 
     LaunchedEffect(Unit) {
         while (true) {
             status = bridge.readStatus()
             delay(2000L)
         }
+    }
+
+    LaunchedEffect(appearance) {
+        AppearanceStore.save(appearance)
     }
 
     val baseDensity = LocalDensity.current

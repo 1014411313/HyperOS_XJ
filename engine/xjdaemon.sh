@@ -8,6 +8,8 @@ DIR=$(cd "$(dirname "$0")" && pwd)
 . "$DIR/lib/power.sh"
 . "$DIR/lib/thermal.sh"
 . "$DIR/lib/rear.sh"
+. "$DIR/lib/battery.sh"
+. "$DIR/lib/apl.sh"
 
 # 电池子系统（BAA/PSS/fv/cycle/volt/cloud/APL）存在时，其守护负责这些节点；
 # 引擎只保留功率/温控/背屏，避免两边同时写 cycle/fv/term/pd_verifed。
@@ -83,8 +85,14 @@ bypass_decide() {
   _tc=$1
   [ "$(cat "$CONFDIR/bypass_manual" 2>/dev/null)" = "1" ] && { echo "1:manual"; return 0; }
   _t_on=$(json_get bypass_temp_on 0); case "$_t_on" in ''|*[!0-9]*) _t_on=0 ;; esac
+  _t_off=$(json_get bypass_temp_off 0); case "$_t_off" in ''|*[!0-9]*) _t_off=0 ;; esac
   _lvl=$(json_get bypass_level 0); case "$_lvl" in ''|*[!0-9]*) _lvl=0 ;; esac
-  [ "$_t_on" -gt 0 ] && [ "$_tc" -ge "$_t_on" ] && { echo "1:temp"; return 0; }
+  # 温度触发带迟滞：已处于旁路时用回落阈值，否则用开启阈值。
+  if [ "$_t_on" -gt 0 ]; then
+    _eff_on=$_t_on
+    [ -f "$CONFDIR/bypass_active" ] && [ "$_t_off" -gt 0 ] && [ "$_t_off" -lt "$_t_on" ] && _eff_on=$_t_off
+    [ "$_tc" -ge "$_eff_on" ] && { echo "1:temp"; return 0; }
+  fi
   [ "$_lvl" -gt 2 ] && [ "$_lvl" -le 100 ] && [ "$BAT_CAP" -ge "$_lvl" ] && { echo "1:level"; return 0; }
   [ "$(cat "$CONFDIR/bypass_allow" 2>/dev/null)" = "1" ] && { echo "1:game"; return 0; }
   echo 0
@@ -120,12 +128,11 @@ write_voltage_node() {
 }
 
 battery_guard_tick() {
-  # 循环伪装：FG 回滚时自动重压。
+  # 循环伪装：FG 回滚时自动重压。qmax_cyclecount 是不受伪装影响的权威值，只读不写。
   _cf=$(cfg_get cycle_fake "")
   if [ -n "$_cf" ]; then
     for _n in /sys/class/xm_power/fg_master/cyclecount \
-              /sys/class/power_supply/battery/cycle_count \
-              /sys/class/xm_power/fg_master/qmax_cyclecount; do
+              /sys/class/power_supply/battery/cycle_count; do
       [ -f "$_n" ] && [ -w "$_n" ] || continue
       [ "$(cat "$_n" 2>/dev/null)" = "$_cf" ] || { chmod 0666 "$_n" 2>/dev/null; echo "$_cf" > "$_n" 2>/dev/null; }
     done
@@ -139,6 +146,11 @@ battery_guard_tick() {
       [ -e "$_n" ] && [ -w "$_n" ] && write_voltage_node "$_n" "$_fv" && break
     done
   fi
+  # 原厂上限强制覆盖：载荷层只在挂载时改写一次，fv_v 变了要重新改写并让服务重读。
+  if [ "$(cfg_get unlock 1)" = "1" ] && [ "$(cfg_get fv_force 0)" = "1" ] && \
+     [ "$(cat "$BAT_STATE/fv_force.applied" 2>/dev/null)" != "fv=$(cfg_get fv_v "")" ]; then
+    baa_fv_force_apply >/dev/null 2>&1 && setprop ctl.restart batteryantiaging 2>/dev/null
+  fi
   # 关机电压：放电中电压低于阈值执行软关机。
   _tv=$(cfg_get term_v "")
   if [ -n "$_tv" ] && [ "$IS_CHARGING" != "1" ]; then
@@ -149,9 +161,15 @@ battery_guard_tick() {
   _pps=$(cfg_get freepps 0)
   _node=/sys/class/qcom-battery/pd_verifed
   [ -f "$_node" ] && [ -w "$_node" ] && [ "$(cat "$_node" 2>/dev/null)" != "$_pps" ] && { chmod 0664 "$_node" 2>/dev/null; echo "$_pps" > "$_node" 2>/dev/null; }
+  # smart_fv 守护：解容开启时把 smart_fv 压回 0，防止系统服务撤销 BAA 的无降压设置。
+  if [ "$(cfg_get unlock 1)" = "1" ]; then
+    _sf=/sys/class/xm_power/charger/smart_charge/smart_fv
+    [ -e "$_sf" ] && [ -w "$_sf" ] && [ "$(cat "$_sf" 2>/dev/null)" != "0" ] && { chmod 0664 "$_sf" 2>/dev/null; echo 0 > "$_sf" 2>/dev/null; }
+  fi
 }
 
 run_tick() {
+  TICK_N=$((TICK_N + 1))
   ensure_thermal_dir
   hitemp_guard
 
@@ -174,6 +192,9 @@ run_tick() {
 
   hyperos_keepalive
   sample
+
+  # 云控屏蔽：云端下发目录巡检隔离，约每 20 拍（1 分钟）一次。
+  [ $((TICK_N % 20)) = 1 ] && cloud_tick
 
   _on=0; screen_on && _on=1
   _now=$(date +%s)
@@ -205,6 +226,8 @@ run_tick() {
 
   # 离开旁路时先交还充电节点，再应用功率档。
   [ -f "$CONFDIR/bypass_active" ] && release_charge
+  # APL：每拍算一次 inf 档电流目标（写 state/apl_target_ma，供 power_apply 读取）。
+  apl_tick
   power_apply "$(effective_tier)"
 
   _target="default"
@@ -262,6 +285,7 @@ factory_backup
 save_charge_orig
 data_detect >/dev/null 2>&1
 
+TICK_N=0
 if [ "$1" = "--once" ]; then
   run_tick
   exit 0

@@ -55,9 +55,11 @@ import com.hyperos.xj.ui.XJ
 import com.hyperos.xj.ui.accentColor
 import com.kyant.backdrop.Backdrop
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 private val themeOptions = listOf("极光浅色", "全息流体", "暗黑霓虹", "幻彩极光", "赛博霓虹", "熔岩鎏金", "冰川琉璃", "月海流银")
 private val rearFields = listOf("温度", "电量", "电压", "电流", "功率", "状态", "设计容量", "满充容量", "健康度", "循环", "伪装", "协议", "剩余容量", "电池寿命")
+private val rearFieldIds = listOf("temp", "soc", "volt", "cur", "power", "status", "design", "full", "health", "cycle", "fake", "proto", "rm", "soh")
 
 @Composable
 fun LookPage(
@@ -73,6 +75,12 @@ fun LookPage(
     var rearFont by remember { mutableIntStateOf(1) }
     val scope = rememberCoroutineScope()
 
+    fun pushRearConfig(selected: Set<Int>, font: Int, accent: Color) {
+        scope.launch {
+            bridge.exec(Engine.rearConfig(fieldsValue(selected), fontValue(font), accentHex(accent)))
+        }
+    }
+
     LaunchedEffect(status.rearScreen, rearTouched) {
         if (!rearTouched) rearEnabled = status.rearScreen
     }
@@ -86,71 +94,89 @@ fun LookPage(
     ) {
         GlassCard(backdrop, Modifier.fillMaxWidth()) {
             SectionLabel("主题预设")
-            ThemeSwatchRow(appearance.themeIndex) { onAppearanceChange(appearance.copy(themeIndex = it)) }
+            ThemeSwatchRow(appearance.themeIndex) {
+                onAppearanceChange(appearance.copy(themeIndex = it))
+                pushRearConfig(rearSelected, rearFont, AccentPalette[it.coerceIn(0, AccentPalette.size - 1)])
+            }
             Spacer(Modifier.height(10.dp))
             ChipSelector(
                 backdrop = backdrop,
                 title = "预设名称",
                 options = themeOptions,
                 selectedIndex = appearance.themeIndex,
-                onSelect = { onAppearanceChange(appearance.copy(themeIndex = it)) }
+                onSelect = {
+                    onAppearanceChange(appearance.copy(themeIndex = it))
+                    pushRearConfig(rearSelected, rearFont, AccentPalette[it.coerceIn(0, AccentPalette.size - 1)])
+                }
             )
         }
 
-        GlassCard(backdrop, Modifier.fillMaxWidth()) {
-            ToggleLine(
-                backdrop,
-                "背屏电池卡片",
-                "支持背屏机型投放电池卡片",
-                rearEnabled,
-                onCheckedChange = {
-                    rearTouched = true
-                    rearEnabled = it
-                    scope.launch { bridge.exec(Engine.rear(it)) }
-                }
-            )
-            Spacer(Modifier.height(10.dp))
-            if (rearEnabled) {
-                RearScreenPreview(
-                    accent = appearance.accentColor(),
-                    status = status,
-                    fields = rearSelected.toList(),
-                    modifier = Modifier.fillMaxWidth(),
-                    fontScale = when (rearFont) { 0 -> 0.85f; 2 -> 1.2f; else -> 1f },
-                    animate = !appearance.smoothMode
+        if (!status.rearScreenSupported) {
+            GlassCard(backdrop, Modifier.fillMaxWidth()) {
+                SectionLabel("背屏")
+                Spacer(Modifier.height(6.dp))
+                BasicText("本机无背屏", style = TextStyle(color = XJ.TextSecondary, fontSize = 12.sp))
+            }
+        } else {
+            GlassCard(backdrop, Modifier.fillMaxWidth()) {
+                ToggleLine(
+                    backdrop,
+                    "背屏电池卡片",
+                    "支持背屏机型投放电池卡片",
+                    rearEnabled,
+                    onCheckedChange = {
+                        rearTouched = true
+                        rearEnabled = it
+                        scope.launch { bridge.exec(Engine.rear(it)) }
+                    }
                 )
                 Spacer(Modifier.height(10.dp))
-            }
-            BasicText("四角显示项，最多选 4 项", style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp))
-            Spacer(Modifier.height(6.dp))
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(7.dp)
-            ) {
-                rearFields.forEachIndexed { index, label ->
-                    GlassChip(
-                        backdrop = backdrop,
-                        label = label,
-                        selected = index in rearSelected,
-                        onClick = {
-                            rearSelected =
-                                if (index in rearSelected) rearSelected - index
-                                else if (rearSelected.size < 4) rearSelected + index
-                                else rearSelected
-                        }
+                if (rearEnabled) {
+                    RearScreenPreview(
+                        accent = appearance.accentColor(),
+                        status = status,
+                        fields = rearSelected.toList(),
+                        modifier = Modifier.fillMaxWidth(),
+                        fontScale = when (rearFont) { 0 -> 0.85f; 2 -> 1.2f; else -> 1f },
+                        animate = !appearance.smoothMode
                     )
+                    Spacer(Modifier.height(10.dp))
                 }
+                BasicText("四角显示项，最多选 4 项", style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp))
+                Spacer(Modifier.height(6.dp))
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(7.dp)
+                ) {
+                    rearFields.forEachIndexed { index, label ->
+                        GlassChip(
+                            backdrop = backdrop,
+                            label = label,
+                            selected = index in rearSelected,
+                            onClick = {
+                                rearSelected =
+                                    if (index in rearSelected) rearSelected - index
+                                    else if (rearSelected.size < 4) rearSelected + index
+                                    else rearSelected
+                                pushRearConfig(rearSelected, rearFont, appearance.accentColor())
+                            }
+                        )
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                ChipSelector(
+                    backdrop = backdrop,
+                    title = "背屏字号",
+                    options = listOf("小", "中", "大"),
+                    selectedIndex = rearFont,
+                    onSelect = {
+                        rearFont = it
+                        pushRearConfig(rearSelected, it, appearance.accentColor())
+                    }
+                )
             }
-            Spacer(Modifier.height(10.dp))
-            ChipSelector(
-                backdrop = backdrop,
-                title = "背屏字号",
-                options = listOf("小", "中", "大"),
-                selectedIndex = rearFont,
-                onSelect = { rearFont = it }
-            )
         }
 
         GlassCard(backdrop, Modifier.fillMaxWidth()) {
@@ -306,4 +332,14 @@ private fun SwatchRow(
 private fun fmt(value: Float): String {
     val scaled = (value * 100f).toInt()
     return "${scaled / 100}.${scaled % 100}"
+}
+
+private fun fieldsValue(selected: Set<Int>): String =
+    selected.toList().map { rearFieldIds[it] }.joinToString(",")
+
+private fun fontValue(font: Int): String = when (font) { 0 -> "0.85"; 2 -> "1.2"; else -> "1.0" }
+
+private fun accentHex(color: Color): String {
+    fun channel(value: Float): String = (value.coerceIn(0f, 1f) * 255f).roundToInt().toString(16).padStart(2, '0')
+    return "#" + channel(color.red) + channel(color.green) + channel(color.blue)
 }

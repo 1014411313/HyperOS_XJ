@@ -18,6 +18,7 @@ fi
 . "$DIR/lib/data.sh"
 . "$DIR/lib/power.sh"
 . "$DIR/lib/battery.sh"
+. "$DIR/lib/apl.sh"
 
 usage() {
   cat <<'EOF'
@@ -28,10 +29,13 @@ usage() {
   detect                 重扫详情节点
   power get|set <档位>|status|restore
   thermal get|set <档位>|gov on|off|status
-  battery unlock|pps|cloud|apl <on|off>|cycle <N|clear|get>|volt <fv|term|force|off> <值>|status
+  battery unlock|pps|cloud <on|off|status>|apl <on|off|status>|cycle <N|clear|get>|volt <fv|term|force|off> <值>|status
   setting get <键>|set <键> <值>|dump
   bypass on|off|status
-  rear on|off|status
+  rear on|off|set key=value...|status
+  dtbo status|backup [目录]|flash <机型代号>.img
+  log [行数]             查看最近日志（默认 200 行）
+  diag pack              打包日志与脱敏配置到 /sdcard/Download/
   apply                  立即跑一轮主循环（单次）
 档位: inf fast mid slow；温控档位: default unlimited level_1..level_5
 EOF
@@ -57,6 +61,7 @@ status_json() {
   js_line fv_force "$(cfg_get fv_force 0)" str >> "$_tmp"
   js_line bypass_manual "$([ -f "$CONFDIR/bypass_manual" ] && echo 1 || echo 0)" str >> "$_tmp"
   js_line rearscreen "$(cfg_get rearscreen 0)" str >> "$_tmp"
+  js_line rearscreen_supported "$(pm path com.xiaomi.subscreencenter >/dev/null 2>&1 && echo 1 || echo 0)" str >> "$_tmp"
   js_line module_version "$(mod_version)" str >> "$_tmp"
   js_line kernel "$(uname -r 2>/dev/null)" str >> "$_tmp"
   js_line date "$(date +%F)" str >> "$_tmp"
@@ -124,14 +129,27 @@ case "$1" in
         esac ;;
       cloud)
         case "$3" in
-          on) cfg_set cloud_guard 1 ;;
-          off) cfg_set cloud_guard 0 ;;
+          on)
+            cfg_set cloud_guard 1
+            baa_refresh_src >/dev/null 2>&1
+            baa_mount >/dev/null 2>&1
+            setprop ctl.restart batteryantiaging 2>/dev/null
+            ;;
+          off)
+            cfg_set cloud_guard 0
+            cloud_restore >/dev/null 2>&1
+            baa_refresh_src >/dev/null 2>&1
+            baa_mount >/dev/null 2>&1
+            setprop ctl.restart batteryantiaging 2>/dev/null
+            ;;
+          status) cloud_status ;;
           *) cfg_get cloud_guard 1 ;;
         esac ;;
       apl)
         case "$3" in
           on) cfg_set apl_enable 1 ;;
-          off) cfg_set apl_enable 0 ;;
+          off) cfg_set apl_enable 0; rm -f "$STATE/apl_target_ma" 2>/dev/null ;;
+          status) apl_status ;;
           *) cfg_get apl_enable 0 ;;
         esac ;;
       cycle)
@@ -199,6 +217,48 @@ case "$1" in
       on) cfg_set rearscreen 1; rear_ensure ;;
       off) cfg_set rearscreen 0; rear_stop; echo off ;;
       status) rear_status ;;
+      set)
+        shift 2
+        [ $# -gt 0 ] || { echo "用法: rear set fields=... font_scale=... accent=..."; exit 2; }
+        for _kv in "$@"; do
+          case "$_kv" in *=*) ;; *) echo "非法参数: $_kv"; exit 2 ;; esac
+          _k=${_kv%%=*}; _v=${_kv#*=}
+          case "$_k" in
+            fields)
+              case "$_v" in ''|*[!a-z_,]*) echo "非法 fields: $_v"; exit 2 ;; esac
+              cfg_set rear_fields "$_v" ;;
+            font_scale)
+              case "$_v" in 0.85|1.0|1.2) ;; *) echo "非法 font_scale: $_v"; exit 2 ;; esac
+              cfg_set rear_font_scale "$_v" ;;
+            accent)
+              case "$_v" in \#[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]) ;; *) echo "非法 accent: $_v"; exit 2 ;; esac
+              cfg_set rear_accent "$_v" ;;
+            *) echo "未知键: $_k"; exit 2 ;;
+          esac
+        done
+        [ "$(cfg_get rearscreen 0)" = "1" ] && rear_push_config
+        echo "fields=$(cfg_get rear_fields "temp,soc,volt,cur") font_scale=$(cfg_get rear_font_scale "1.0") accent=$(cfg_get rear_accent "#38BDF8")"
+        ;;
+      *) usage; exit 9 ;;
+    esac ;;
+
+  dtbo)
+    . "$DIR/lib/dtbo.sh"
+    case "$2" in
+      status) dtbo_status; exit $? ;;
+      backup) dtbo_backup "$3"; exit $? ;;
+      flash)  dtbo_flash "$3"; exit $? ;;
+      *) usage; exit 9 ;;
+    esac ;;
+
+  log)
+    . "$DIR/lib/diag.sh"
+    diag_log "$2"; exit $? ;;
+
+  diag)
+    . "$DIR/lib/diag.sh"
+    case "$2" in
+      pack) diag_pack; exit $? ;;
       *) usage; exit 9 ;;
     esac ;;
 

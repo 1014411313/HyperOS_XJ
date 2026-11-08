@@ -11,4 +11,13 @@ public final class ChargeState {
     public String statusText = "未充电";
     public String stageText = "";
     public int etaMin = -1;
+    public int designMah = 0;
+    public int fullMah = 0;
+    public int rmMah = 0;
+    public int cycles = 0;
+    // hook 进程读不到引擎配置（cycle_fake），无数据时保持 -1，面板显示占位符。
+    public int fakeCycles = -1;
+    public int soh = 0;
+    public int health = 0;
+    public String proto = "";
 }
