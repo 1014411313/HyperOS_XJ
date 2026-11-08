@@ -16,6 +16,8 @@ APL_STATE="$STATE/apl_state"
 APL_WARMUP=90
 APL_TEMP_HYST=2
 APL_ADP_DEBOUNCE=3
+# 超过档位温度上限 3℃ 时直接压到的功率（W），锁温到回落到「上限 − 滞回」才解除
+APL_THERMAL_MIN_W=5
 
 # 档位→温度上限映射（单一来源，见 lib/apl_temp.sh）
 [ -f "$DIR/lib/apl_temp.sh" ] && . "$DIR/lib/apl_temp.sh"
@@ -149,10 +151,10 @@ apl_hard_fault() {
 # 运行态：一行 8 个字段，read 读回（无 fork）
 apl_state_load() {
   apl_prev_uon=0; apl_warm_start=0; apl_lock_until=0; apl_low_cnt=0
-  apl_stable_cnt=0; apl_stab_ibat=0; apl_prev_ibat=0; apl_last_up=0
+  apl_stable_cnt=0; apl_stab_ibat=0; apl_prev_ibat=0; apl_last_up=0; apl_thermal_lock=0
   [ -f "$APL_STATE" ] || return 0
   IFS=' ' read -r apl_prev_uon apl_warm_start apl_lock_until apl_low_cnt \
-                 apl_stable_cnt apl_stab_ibat apl_prev_ibat apl_last_up < "$APL_STATE" 2>/dev/null
+                 apl_stable_cnt apl_stab_ibat apl_prev_ibat apl_last_up apl_thermal_lock < "$APL_STATE" 2>/dev/null
   case "$apl_prev_uon" in ''|*[!0-9]*) apl_prev_uon=0 ;; esac
   case "$apl_warm_start" in ''|*[!0-9]*) apl_warm_start=0 ;; esac
   case "$apl_lock_until" in ''|*[!0-9]*) apl_lock_until=0 ;; esac
@@ -161,11 +163,12 @@ apl_state_load() {
   case "$apl_stab_ibat" in ''|*[!0-9]*) apl_stab_ibat=0 ;; esac
   case "$apl_prev_ibat" in ''|*[!0-9]*) apl_prev_ibat=0 ;; esac
   case "$apl_last_up" in ''|*[!0-9]*) apl_last_up=0 ;; esac
+  case "$apl_thermal_lock" in ''|*[!0-9]*) apl_thermal_lock=0 ;; esac
 }
 
 apl_state_save() {
-  printf '%s %s %s %s %s %s %s %s\n' "$apl_prev_uon" "$apl_warm_start" "$apl_lock_until" \
-    "$apl_low_cnt" "$apl_stable_cnt" "$apl_stab_ibat" "$apl_prev_ibat" "$apl_last_up" \
+  printf '%s %s %s %s %s %s %s %s %s\n' "$apl_prev_uon" "$apl_warm_start" "$apl_lock_until" \
+    "$apl_low_cnt" "$apl_stable_cnt" "$apl_stab_ibat" "$apl_prev_ibat" "$apl_last_up" "$apl_thermal_lock" \
     > "$APL_STATE.tmp" 2>/dev/null && mv -f "$APL_STATE.tmp" "$APL_STATE" 2>/dev/null
 }
 
@@ -296,15 +299,24 @@ apl_tick() {
   fi
 
   # ---- 温度保护 ----
+  # 锁温：超过档位上限 3℃ 压到 5W，直到回落到「上限 − 滞回（默认2℃）」才解除（滞后由 apl_thermal_lock 记状态）。
+  if [ -n "$_apl_lt" ]; then
+    if [ "$_apl_tb" -ge $(( _apl_lt + 3 )) ]; then
+      apl_thermal_lock=1
+    elif [ "$_apl_tb" -le "$_apl_tup" ]; then
+      apl_thermal_lock=0
+    fi
+  fi
   if [ "$_apl_tb" -ge "$_apl_tdn" ]; then
     _apl_new=$(( _apl_tgt * 80 / 100 ))
-    if [ -n "$_apl_lpw" ]; then
-      # 有档位功率上限：温度超上限时目标电流不得高于「上限瓦数 / 电压」，
-      # 超过上限 3℃ 以上直接压到档位功率，不再逐拍 20% 磨。
+    if [ "$apl_thermal_lock" = "1" ]; then
+      _apl_new=$(( APL_THERMAL_MIN_W * 1000 / _apl_mv ))
+      _apl_fl=300
+    elif [ -n "$_apl_lpw" ]; then
+      # 有档位功率上限：目标电流不得高于「上限瓦数 / 电压」
       _apl_pcap=$(( _apl_lpw * 1000 / _apl_mv ))
       [ "$_apl_pcap" -lt 2000 ] && _apl_pcap=2000
       [ "$_apl_new" -gt "$_apl_pcap" ] && _apl_new="$_apl_pcap"
-      [ "$_apl_tb" -ge $(( _apl_lt + 3 )) ] && _apl_new="$_apl_pcap"
       _apl_fl=$(( _apl_cap * 10 / 100 ))
       [ "$_apl_fl" -lt 2000 ] && _apl_fl=2000
     else
@@ -313,7 +325,11 @@ apl_tick() {
     [ "$_apl_new" -lt "$_apl_fl" ] && _apl_new="$_apl_fl"
     if [ "$_apl_new" -lt "$_apl_tgt" ]; then
       _apl_tgt="$_apl_new"
-      blog "APL 电池 ${_apl_tb}℃ ≥ 降档线 ${_apl_tdn}℃（档位 ${_apl_lpw:-无}W）：降 → ${_apl_tgt}mA"
+      if [ "$apl_thermal_lock" = "1" ]; then
+        blog "APL 电池 ${_apl_tb}℃ 超上限 ${_apl_lt}℃ 已 3℃，锁 ${APL_THERMAL_MIN_W}W → ${_apl_tgt}mA（回落到 ${_apl_tup}℃ 解除）"
+      else
+        blog "APL 电池 ${_apl_tb}℃ ≥ 降档线 ${_apl_tdn}℃（档位 ${_apl_lpw:-无}W）：降 → ${_apl_tgt}mA"
+      fi
       apl_lock_until=$(( _apl_now + 60 ))
       apl_stable_cnt=0
     fi
@@ -330,7 +346,7 @@ apl_tick() {
   fi
 
   # ---- 上探：热身 +8%，稳定 ≥6 拍 +6%，否则 ≥9 拍 +3% ----
-  if [ "$_apl_locked" = "0" ] && [ "$_apl_tb" -lt "$_apl_tup" ] && [ "$_apl_tgt" -lt "$_apl_cap" ]; then
+  if [ "$_apl_locked" = "0" ] && [ "$apl_thermal_lock" = "0" ] && [ "$_apl_tb" -lt "$_apl_tup" ] && [ "$_apl_tgt" -lt "$_apl_cap" ]; then
     _apl_step=0; _apl_need=99
     if [ "$apl_warm_start" -gt 0 ] && [ $(( _apl_now - apl_warm_start )) -lt "$APL_WARMUP" ]; then
       _apl_step=$(( _apl_tgt * 8 / 100 )); _apl_need=3
@@ -379,9 +395,14 @@ apl_tick() {
     _apl_pcap=$(( _apl_lpw * 1000 / _apl_mv ))
     [ "$_apl_pcap" -lt "$_apl_fl" ] && _apl_fl="$_apl_pcap"
   fi
+  # 锁温状态允许降到 5W 对应电流（~1250mA），不受 2000mA 下限约束
+  [ "$apl_thermal_lock" = "1" ] && _apl_fl=300
   [ "$_apl_tgt" -lt "$_apl_fl" ] && _apl_tgt="$_apl_fl"
   [ "$_apl_tgt" -gt "$_apl_cap" ] && _apl_tgt="$_apl_cap"
-  [ "$_apl_tgt" -lt 2000 ] && _apl_tgt=2000
+  if [ "$apl_thermal_lock" != "1" ]; then
+    [ "$_apl_tgt" -lt 2000 ] && _apl_tgt=2000
+  fi
+  [ "$_apl_tgt" -lt 300 ] && _apl_tgt=300
   apl_tgt_write "$_apl_tgt"
   apl_prev_uon="$_apl_uon"
   apl_prev_ibat="$_apl_ma"

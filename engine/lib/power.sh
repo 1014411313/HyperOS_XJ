@@ -72,7 +72,8 @@ apl_target_ma() {
   [ "$(cfg_get apl_enable 0)" = "1" ] || return 1
   _t=$(cat "$STATE/apl_target_ma" 2>/dev/null)
   case "$_t" in ''|*[!0-9]*) return 1 ;; esac
-  [ "$_t" -ge 2000 ] || return 1
+  # 锁温时目标会低于 2000mA（5W ≈ 1250mA），下限放到 300mA，否则会被当成「无目标」退回全速
+  [ "$_t" -ge 300 ] || return 1
   if [ -n "$APL_LIB" ]; then
     _c=$(apl_ceiling_ma)
     [ "$_t" -gt "$_c" ] && _t="$_c"
