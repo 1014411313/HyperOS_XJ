@@ -59,6 +59,12 @@ fun BatteryPage(
     var dtboImg by remember { mutableStateOf("") }
     var dtboBusy by remember { mutableStateOf(false) }
     var showDtboConfirm by remember { mutableStateOf(false) }
+    var dtboDir by remember { mutableStateOf("") }
+    var dtboDirs by remember { mutableStateOf<List<String>>(emptyList()) }
+    var dtboImages by remember { mutableStateOf<List<DtboImage>>(emptyList()) }
+    var dtboHasLocal by remember { mutableStateOf(false) }
+    var dtboLibraryMsg by remember { mutableStateOf("") }
+    var showLocalConfirm by remember { mutableStateOf(false) }
     var showVoltForceConfirm by remember { mutableStateOf(false) }
     var cycleTarget by remember { mutableStateOf(status.cycleFake) }
     var fullVoltage by remember { mutableStateOf(status.fvV) }
@@ -69,10 +75,42 @@ fun BatteryPage(
         scope.launch { bridge.exec(Engine.battery(key, value)) }
     }
 
+    fun refreshDtboLibrary() {
+        scope.launch {
+            dtboDirs = bridge.exec(Engine.dtboDirs())
+                .lineSequence()
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .toList()
+            dtboImages = bridge.exec(Engine.dtboList())
+                .lineSequence()
+                .mapNotNull { line ->
+                    val parts = line.trim().split('|')
+                    val bytes = parts.getOrNull(2)?.toLongOrNull()
+                    if (bytes == null) null else DtboImage(parts[1], bytes)
+                }
+                .toList()
+        }
+    }
+
+    fun dtboFlashTarget(): String {
+        val img = dtboImg.trim()
+        return if (img.contains('/')) img else "${Engine.MODULE_DIR}/battery/dtbo/$img"
+    }
+
+    fun flashLocal() {
+        scope.launch {
+            dtboHasLocal = bridge.exec(Engine.dtboHasLocal()).trim() == "yes"
+            if (dtboHasLocal) showLocalConfirm = true else dtboLibraryMsg = "未找到 local.img"
+        }
+    }
+
     LaunchedEffect(Unit) {
         val out = bridge.exec(Engine.dtboStatus())
         dtboStatusDetail = out
         dtboStatus = out.lineSequence().firstOrNull { it.isNotBlank() }?.take(24) ?: "无输出"
+        dtboHasLocal = bridge.exec(Engine.dtboHasLocal()).trim() == "yes"
+        refreshDtboLibrary()
     }
 
     Column(
@@ -101,7 +139,7 @@ fun BatteryPage(
                 )
             }
             Spacer(Modifier.height(8.dp))
-            GlassInput(dtboImg, { dtboImg = it }, "镜像文件名，如 haotian.img")
+            GlassInput(dtboImg, { dtboImg = it }, "文件名或完整路径，如 haotian.img")
             Spacer(Modifier.height(8.dp))
             ActionButton(
                 backdrop,
@@ -117,7 +155,7 @@ fun BatteryPage(
                     val img = dtboImg.trim()
                     when {
                         dtboBusy -> dtboStatusDetail = "上一条刷入指令仍在执行。"
-                        img.isEmpty() -> dtboStatusDetail = "请先填入要刷入的镜像文件名（模块内置 battery/dtbo/ 下）。"
+                        img.isEmpty() -> dtboStatusDetail = "请先填入镜像文件名，或在下方镜像库中选择。"
                         else -> showDtboConfirm = true
                     }
                 },
@@ -129,7 +167,7 @@ fun BatteryPage(
                 ConfirmCard(
                     backdrop,
                     title = "刷入 DTBO 镜像",
-                    detail = "将向当前 DTBO 分区写入 ${Engine.MODULE_DIR}/battery/dtbo/${dtboImg.trim()}，错误镜像或错误槽位可能导致设备无法启动，刷入后需重启生效。",
+                    detail = "将向当前 DTBO 分区写入 ${dtboFlashTarget()}，错误镜像或错误槽位可能导致设备无法启动，刷入后需重启生效。",
                     confirmText = "确认刷入",
                     onConfirm = {
                         showDtboConfirm = false
@@ -143,6 +181,159 @@ fun BatteryPage(
                         }
                     },
                     onDismiss = { showDtboConfirm = false }
+                )
+            }
+        }
+
+        GlassCard(backdrop, Modifier.fillMaxWidth()) {
+            SectionLabel("DTBO 镜像库")
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                GlassInput(dtboDir, { dtboDir = it }, "输入扫描目录绝对路径", Modifier.weight(1f))
+                Spacer(Modifier.width(8.dp))
+                ActionButton(
+                    backdrop,
+                    "添加目录",
+                    {
+                        val dir = dtboDir.trim()
+                        when {
+                            dir.isEmpty() -> dtboLibraryMsg = "请先输入扫描目录的绝对路径。"
+                            !dir.startsWith("/") -> dtboLibraryMsg = "扫描目录必须是绝对路径。"
+                            else -> scope.launch {
+                                dtboLibraryMsg = bridge.exec(Engine.dtboAddDir(dir))
+                                dtboDir = ""
+                                refreshDtboLibrary()
+                            }
+                        }
+                    }
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+
+            BasicText(
+                text = "扫描目录",
+                style = TextStyle(color = XJ.TextSecondary, fontSize = 12.sp)
+            )
+            if (dtboDirs.isEmpty()) {
+                BasicText(
+                    text = "暂无扫描目录",
+                    modifier = Modifier.padding(top = 4.dp),
+                    style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp)
+                )
+            } else {
+                dtboDirs.forEach { dir ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        BasicText(
+                            text = dir,
+                            modifier = Modifier.weight(1f),
+                            style = TextStyle(color = XJ.TextPrimary, fontSize = 12.sp)
+                        )
+                        BasicText(
+                            text = "删除",
+                            modifier = Modifier
+                                .clickable {
+                                    scope.launch {
+                                        dtboLibraryMsg = bridge.exec(Engine.dtboDelDir(dir))
+                                        refreshDtboLibrary()
+                                    }
+                                }
+                                .padding(horizontal = 8.dp, vertical = 2.dp),
+                            style = TextStyle(color = XJ.Danger, fontSize = 12.sp)
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+
+            BasicText(
+                text = "选择镜像",
+                style = TextStyle(color = XJ.TextSecondary, fontSize = 12.sp)
+            )
+            if (dtboImages.isEmpty()) {
+                BasicText(
+                    text = "未找到 .img",
+                    modifier = Modifier.padding(top = 4.dp),
+                    style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp)
+                )
+            } else {
+                dtboImages.forEach { img ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable { dtboImg = img.path }
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            BasicText(
+                                text = img.name,
+                                style = TextStyle(
+                                    color = if (dtboImg == img.path) accent else XJ.TextPrimary,
+                                    fontSize = 13.sp,
+                                    fontWeight = if (dtboImg == img.path) FontWeight.SemiBold else FontWeight.Normal
+                                )
+                            )
+                            BasicText(
+                                text = img.sizeText,
+                                style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp)
+                            )
+                        }
+                        if (dtboImg == img.path) {
+                            BasicText(
+                                text = "已选择",
+                                style = TextStyle(color = accent, fontSize = 12.sp)
+                            )
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+
+            ActionButton(
+                backdrop,
+                "刷本地镜像",
+                {
+                    when {
+                        dtboBusy -> dtboLibraryMsg = "上一条刷入指令仍在执行。"
+                        else -> flashLocal()
+                    }
+                },
+                Modifier.fillMaxWidth(),
+                secondary = true
+            )
+            if (dtboLibraryMsg.isNotBlank()) {
+                Spacer(Modifier.height(6.dp))
+                BasicText(
+                    text = dtboLibraryMsg,
+                    style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp)
+                )
+            }
+            if (showLocalConfirm) {
+                Spacer(Modifier.height(10.dp))
+                ConfirmCard(
+                    backdrop,
+                    title = "刷入本地镜像",
+                    detail = "将向当前 DTBO 分区写入模块内置镜像 ${Engine.MODULE_DIR}/battery/dtbo/local.img，错误镜像或错误槽位可能导致设备无法启动，刷入后需重启生效。",
+                    confirmText = "确认刷入",
+                    onConfirm = {
+                        showLocalConfirm = false
+                        dtboBusy = true
+                        dtboStatus = "刷入中…"
+                        scope.launch {
+                            val out = bridge.exec(Engine.dtboFlashLocal())
+                            dtboStatusDetail = out
+                            dtboStatus = out.lineSequence().firstOrNull { it.isNotBlank() }?.take(24) ?: "已下发，重启生效"
+                            dtboBusy = false
+                        }
+                    },
+                    onDismiss = { showLocalConfirm = false }
                 )
             }
         }
@@ -269,4 +460,19 @@ private fun ConfirmCard(
             ActionButton(backdrop, "取消", onDismiss, Modifier.weight(1f), secondary = true)
         }
     }
+}
+
+private data class DtboImage(val path: String, val bytes: Long) {
+    val name: String get() = path.substringAfterLast('/')
+    val sizeText: String
+        get() = when {
+            bytes >= 1_048_576 -> "${tenthOf(bytes, 1_048_576)} MB"
+            bytes >= 1_024 -> "${tenthOf(bytes, 1_024)} KB"
+            else -> "$bytes B"
+        }
+}
+
+private fun tenthOf(bytes: Long, unit: Long): String {
+    val tenth = bytes * 10 / unit
+    return "${tenth / 10}.${tenth % 10}"
 }

@@ -110,6 +110,7 @@ dtbo_backup() {
 
 dtbo_flash() {
   _arg="$1"
+  _skipname="${2:-}"
   [ -n "$_arg" ] || { echo "用法: xjctl.sh dtbo flash <镜像文件名>"; return 9; }
   dtbo_need_root || return 1
 
@@ -120,13 +121,17 @@ dtbo_flash() {
   [ -f "$_img" ] || { echo "已拒绝: 镜像文件不存在 -> $_img"; return 2; }
   _base=$(basename "$_img")
 
-  # 机型匹配：文件名必须是 <当前机型代号>.img，否则拒绝（exit 2）。
+  # 机型匹配：除非显式跳过（模块内置 local.img），文件名必须是 <当前机型代号>.img，否则拒绝（exit 2）。
   _dc=$(dev_code)
-  if [ "$_dc" = "unknown" ]; then
-    echo "已拒绝: 无法识别当前机型代号，不敢刷入（镜像=$_base）"; return 2
-  fi
-  if [ "$_base" != "$_dc.img" ]; then
-    echo "已拒绝: 镜像与机型不匹配（当前机型=$_dc，镜像=$_base，应为 $_dc.img）"; return 2
+  if [ "$_skipname" = "1" ]; then
+    [ "$_dc" = "unknown" ] && echo "警告: 机型未知，按显式路径刷入（已跳过文件名校验）"
+  else
+    if [ "$_dc" = "unknown" ]; then
+      echo "已拒绝: 无法识别当前机型代号，不敢刷入（镜像=$_base）"; return 2
+    fi
+    if [ "$_base" != "$_dc.img" ]; then
+      echo "已拒绝: 镜像与机型不匹配（当前机型=$_dc，镜像=$_base，应为 $_dc.img）"; return 2
+    fi
   fi
 
   _dev=$(dtbo_dev) || { echo "已拒绝: DTBO 分区未找到，不猜测设备节点"; return 2; }
@@ -198,4 +203,81 @@ dtbo_flash() {
   echo "校验失败! 分区=$_nsha 镜像=$_fsha"
   echo "请用备份恢复: $_bf"
   return 1
+}
+
+# ---- 模块内置本地镜像（配合「在线下载」或手动放入 battery/dtbo/local.img）----
+dtbo_local_img() { printf '%s' "$DTBO_DIR/local.img"; }
+
+dtbo_haslocal() {
+  [ -f "$(dtbo_local_img)" ] && echo yes || echo no
+}
+
+dtbo_flashlocal() {
+  _f=$(dtbo_local_img)
+  [ -f "$_f" ] || { echo "已拒绝: 本地镜像不存在 -> $_f（请先下载或放入）"; return 2; }
+  echo "刷本地镜像: $_f"
+  dtbo_flash "$_f" 1
+}
+
+# ---- 候选镜像扫描目录（list/adddir/deldir 持久化在 state/extra_dirs.txt）----
+DTBO_EDIRS_FILE="$STATE/extra_dirs.txt"
+
+dtbo_dirs_show() {
+  echo "[扫描目录]"
+  if [ -s "$DTBO_EDIRS_FILE" ]; then
+    while IFS= read -r _d; do
+      [ -n "$_d" ] || continue
+      if [ -d "$_d" ]; then echo "  ✓ $_d"; else echo "  - $_d (目录不存在)"; fi
+    done < "$DTBO_EDIRS_FILE"
+  else
+    echo "  (无)"
+  fi
+  echo "添加: dtbo adddir <绝对路径>"
+  return 0
+}
+
+dtbo_dirs_add() {
+  _p=$(printf '%s' "$1" | sed 's:/*$::')
+  [ -n "$_p" ] || { echo "用法: dtbo adddir <绝对路径>"; return 9; }
+  case "$_p" in /*) ;; *) echo "请使用绝对路径（以 / 开头）"; return 2 ;; esac
+  [ -d "$_p" ] || { echo "目录不存在: $_p"; return 2; }
+  mkdir -p "$STATE" 2>/dev/null
+  touch "$DTBO_EDIRS_FILE" 2>/dev/null
+  if grep -Fxq "$_p" "$DTBO_EDIRS_FILE" 2>/dev/null; then
+    echo "已在列表: $_p"; return 0
+  fi
+  printf '%s\n' "$_p" >> "$DTBO_EDIRS_FILE"
+  echo "已添加: $_p"
+  return 0
+}
+
+dtbo_dirs_del() {
+  _p=$(printf '%s' "$1" | sed 's:/*$::')
+  [ -n "$_p" ] || { echo "用法: dtbo deldir <绝对路径>"; return 9; }
+  [ -s "$DTBO_EDIRS_FILE" ] || { echo "扫描列表为空"; return 0; }
+  grep -Fxq "$_p" "$DTBO_EDIRS_FILE" 2>/dev/null || { echo "不在列表: $_p"; return 2; }
+  grep -Fxv "$_p" "$DTBO_EDIRS_FILE" > "$DTBO_EDIRS_FILE.tmp" 2>/dev/null
+  mv -f "$DTBO_EDIRS_FILE.tmp" "$DTBO_EDIRS_FILE" 2>/dev/null
+  echo "已移除: $_p"
+  return 0
+}
+
+# 列出候选镜像：序号|完整路径|字节|sha256前12位
+dtbo_scan_list() {
+  _i=0
+  if [ -s "$DTBO_EDIRS_FILE" ]; then
+    while IFS= read -r _d; do
+      [ -n "$_d" ] || continue
+      [ -d "$_d" ] || continue
+      for _f in "$_d"/*.img; do
+        [ -f "$_f" ] || continue
+        _i=$((_i+1))
+        _sz=$(stat -c %s "$_f" 2>/dev/null)
+        _sh=$(dtbo_sha "$_f" | cut -c1-12)
+        printf '%s|%s|%s|%s\n' "$_i" "$_f" "${_sz:-0}" "$_sh"
+      done
+    done < "$DTBO_EDIRS_FILE"
+  fi
+  [ "$_i" = "0" ] && echo "(未找到 .img)"
+  return 0
 }

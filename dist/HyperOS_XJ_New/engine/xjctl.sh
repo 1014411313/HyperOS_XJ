@@ -33,7 +33,8 @@ usage() {
   setting get <键>|set <键> <值>|dump
   bypass on|off|status
   rear on|off|set key=value...|status
-  dtbo status|backup [目录]|flash <机型代号>.img
+  dtbo status|backup [目录]|flash <镜像>|flashlocal|haslocal
+  dtbo list|dirs|adddir <绝对目录>|deldir <绝对目录>
   log [行数]             查看最近日志（默认 200 行）
   diag pack              打包日志与脱敏配置到 /sdcard/Download/
   apply                  立即跑一轮主循环（单次）
@@ -248,6 +249,12 @@ case "$1" in
       status) dtbo_status; exit $? ;;
       backup) dtbo_backup "$3"; exit $? ;;
       flash)  dtbo_flash "$3"; exit $? ;;
+      flashlocal) dtbo_flashlocal; exit $? ;;
+      haslocal)   dtbo_haslocal; exit $? ;;
+      list)   dtbo_scan_list; exit $? ;;
+      dirs)   dtbo_dirs_show; exit $? ;;
+      adddir) dtbo_dirs_add "$3"; exit $? ;;
+      deldir) dtbo_dirs_del "$3"; exit $? ;;
       *) usage; exit 9 ;;
     esac ;;
 

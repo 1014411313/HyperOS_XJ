@@ -119,6 +119,18 @@ object Engine {
     fun dtboStatus(): String = build("dtbo", "status")
 
     fun dtboFlash(img: String): String = build("dtbo", "flash", img)
+
+    fun dtboList(): String = build("dtbo", "list")
+
+    fun dtboAddDir(dir: String): String = build("dtbo", "adddir", dir)
+
+    fun dtboDelDir(dir: String): String = build("dtbo", "deldir", dir)
+
+    fun dtboDirs(): String = build("dtbo", "dirs")
+
+    fun dtboHasLocal(): String = build("dtbo", "haslocal")
+
+    fun dtboFlashLocal(): String = build("dtbo", "flashlocal")
 }
 
 internal fun parseKv(raw: String): Map<String, String> =
