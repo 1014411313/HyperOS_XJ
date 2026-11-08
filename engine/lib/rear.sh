@@ -3,7 +3,7 @@
 # 模块 hook com.xiaomi.subscreencenter.SubScreenLauncher.onResume，在原生时钟上
 # 叠加 PanelView；不禁用 SubScreenLauncher，也不推 Display #1 任务。
 
-RS_APK="$MODDIR/app/HyperOS_XJ.apk"
+RS_APK="$MODDIR/app/rezhale_toolbox.apk"
 RS_LOG="$LOGDIR/rearscreen.log"
 RS_STATE="$STATE/rear"
 CARD_PKG=com.hyperos.xj

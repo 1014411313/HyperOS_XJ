@@ -1,12 +1,20 @@
 #!/system/bin/sh
 SKIPUNZIP=0
-MODPATH=${MODPATH:-/data/adb/modules_update/HyperOS_XJ}
+MODPATH=${MODPATH:-/data/adb/modules_update/rezhale_toolbox}
 MODDIR="$MODPATH"
-DATA_DIR=/data/adb/HyperOS_XJ
-OLD_DIR=/data/adb/modules/HyperOS_XJ
+DATA_DIR=/data/adb/rezhale_toolbox
+OLD_DIR=/data/adb/modules/rezhale_toolbox
 print() { ui_print "$@"; }
 
-print " - HyperOS - 动态温控·解容（新架构）"
+print " - 热炸了工具箱（新架构）"
+
+# 旧模块 id（HyperOS_XJ）迁移：数据目录搬过来并清掉旧模块目录，避免两个模块并存
+if [ -d /data/adb/HyperOS_XJ ] && [ ! -d "$DATA_DIR" ]; then
+    mv /data/adb/HyperOS_XJ "$DATA_DIR" 2>/dev/null && print " - 已迁移旧数据目录（HyperOS_XJ → rezhale_toolbox）"
+fi
+if [ -d /data/adb/modules/HyperOS_XJ ]; then
+    rm -rf /data/adb/modules/HyperOS_XJ 2>/dev/null && print " - 已移除旧模块目录（HyperOS_XJ）"
+fi
 
 _sup="annibale bixi byron dada haotian miro myron nezha onyx pandora popsicle pudding songyuan warsaw xuanyuan"
 _dev=""
@@ -26,7 +34,7 @@ else
     print " - [!] 未识别到受支持机型，解容/DTBO 将跳过（dev_code 留空）"
 fi
 
-# ---- 一次性迁移（bug-045）：用户可变数据搬到 /data/adb/HyperOS_XJ ----
+# ---- 一次性迁移（bug-045）：用户可变数据搬到 /data/adb/rezhale_toolbox ----
 # 此刻旧模块目录仍在（Magisk 到下次重启合并时才删除），把旧设置迁出；全新安装只 seed。
 mkdir -p "$DATA_DIR/config" "$DATA_DIR/cache" "$DATA_DIR/state" "$DATA_DIR/log" \
          "$DATA_DIR/battery/state" "$DATA_DIR/backup" 2>/dev/null
@@ -63,7 +71,7 @@ case "$_plat" in
         rm -f "$DATA_DIR/config/mtk_fix" 2>/dev/null ;;
 esac
 
-_apk="$MODPATH/app/HyperOS_XJ.apk"
+_apk="$MODPATH/app/rezhale_toolbox.apk"
 if [ -f "$_apk" ]; then
     if ! pm install -r "$_apk" >/dev/null 2>&1; then
         pm uninstall --user 0 com.hyperos.xj >/dev/null 2>&1
@@ -74,7 +82,7 @@ if pm path com.hyperos.xj >/dev/null 2>&1; then
     print " - App 已安装（UI + 背屏 LSP 接口一体）"
     print " - 请在 LSPosed 中启用 com.hyperos.xj，scope 勾选 com.xiaomi.subscreencenter"
 else
-    print " [!] App 安装失败，可手动安装 $MODPATH/app/HyperOS_XJ.apk"
+    print " [!] App 安装失败，可手动安装 $MODPATH/app/rezhale_toolbox.apk"
 fi
 
 set_perm_recursive "$MODPATH" 0 0 0755 0644 2>/dev/null
@@ -86,6 +94,6 @@ for _s in "$MODPATH"/engine/lib/*.sh; do
     [ -f "$_s" ] && set_perm "$_s" 0 0 0644 2>/dev/null
 done
 set_perm "$MODPATH/module.prop" 0 0 0644 2>/dev/null
-set_perm "$MODPATH/app/HyperOS_XJ.apk" 0 0 0644 2>/dev/null
+set_perm "$MODPATH/app/rezhale_toolbox.apk" 0 0 0644 2>/dev/null
 
 print " - 完成。首次开机后引擎会自动接管温控/功率/背屏。"

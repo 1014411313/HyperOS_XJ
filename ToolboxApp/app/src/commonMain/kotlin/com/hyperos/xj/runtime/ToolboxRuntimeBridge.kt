@@ -97,7 +97,7 @@ expect fun createToolboxBridge(): ToolboxRuntimeBridge
 
 /** 唯一引擎入口：所有命令都走同一个 xjctl.sh，避免 App 侧散落路径。 */
 object Engine {
-    const val MODULE_DIR = "/data/adb/modules/HyperOS_XJ"
+    const val MODULE_DIR = "/data/adb/modules/rezhale_toolbox"
     const val SCRIPT = "$MODULE_DIR/engine/xjctl.sh"
 
     private fun quote(value: String): String = "'" + value.replace("'", "'\\''") + "'"

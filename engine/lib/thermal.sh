@@ -192,11 +192,11 @@ restart_daemon() {
 
 # 原厂温控备份存 DATA（模块目录会被升级删除）；旧位置仅作读取兼容，不再写入。
 THERMAL_BK="$DATA_DIR/backup/thermal-config"
-backup_ready() { [ -f "$THERMAL_BK/.done" ] || [ -f "$MODDIR/backup/thermal-config/.done" ] || [ -f "/data/adb/HyperOS_XJ_backup/thermal-config/.done" ]; }
+backup_ready() { [ -f "$THERMAL_BK/.done" ] || [ -f "$MODDIR/backup/thermal-config/.done" ] || [ -f "/data/adb/rezhale_toolbox_backup/thermal-config/.done" ]; }
 backup_source() {
   [ -f "$THERMAL_BK/.done" ] && { echo "$THERMAL_BK"; return 0; }
   [ -f "$MODDIR/backup/thermal-config/.done" ] && { echo "$MODDIR/backup/thermal-config"; return 0; }
-  echo "/data/adb/HyperOS_XJ_backup/thermal-config"
+  echo "/data/adb/rezhale_toolbox_backup/thermal-config"
 }
 
 factory_backup() {

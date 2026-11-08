@@ -18,7 +18,7 @@ try {
 $apk = Join-Path $root "ToolboxApp\androidApp\build\outputs\apk\debug\androidApp-debug.apk"
 $appDir = Join-Path $root "dist\HyperOS_XJ_New\app"
 New-Item -ItemType Directory -Force -Path $appDir | Out-Null
-Copy-Item -Force $apk (Join-Path $appDir "HyperOS_XJ.apk")
+Copy-Item -Force $apk (Join-Path $appDir "rezhale_toolbox.apk")
 
 # 根 engine/ 是唯一编辑源；打包前同步到模块树，避免两份漂移。
 $engineSrc = Join-Path $root "engine"
@@ -43,7 +43,7 @@ if ($fail -ne 0) { throw "syntax check failed" }
 
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
-$zip = Join-Path $root "dist\HyperOS_XJ_新模块_v$Version.zip"
+$zip = Join-Path $root "dist\热炸了工具箱_v$Version.zip"
 if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
 [System.IO.Compression.ZipFile]::CreateFromDirectory(
     $moduleDir, $zip, [System.IO.Compression.CompressionLevel]::Optimal, $false)

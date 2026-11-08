@@ -96,13 +96,13 @@ diag_do_targz() {
 
 diag_pack() {
   _stamp=$(date +%Y%m%d-%H%M%S)
-  _stage="/data/local/tmp/HyperOS_XJ_diag_$_stamp"
+  _stage="/data/local/tmp/rezhale_toolbox_diag_$_stamp"
   rm -rf "$_stage" 2>/dev/null
   mkdir -p "$_stage/log" "$_stage/config" 2>/dev/null \
     || { echo "无法创建临时目录: $_stage"; return 1; }
 
   {
-    echo "HyperOS_XJ 诊断包"
+    echo "热炸了工具箱 诊断包"
     echo "采集时间: $(date '+%F %T')"
     echo "机型    : $(getprop ro.product.model 2>/dev/null) / $(getprop ro.product.device 2>/dev/null)"
     echo "机型代号: $(dev_code 2>/dev/null)"
@@ -213,9 +213,9 @@ diag_pack() {
     echo "== 模块 $MODDIR/module.prop =="
     if [ -f "$MODDIR/module.prop" ]; then cat "$MODDIR/module.prop" 2>/dev/null
     else echo "（缺失）"; fi
-    echo "== 升级暂存 /data/adb/modules_update/HyperOS_XJ/module.prop =="
-    if [ -f /data/adb/modules_update/HyperOS_XJ/module.prop ]; then
-      cat /data/adb/modules_update/HyperOS_XJ/module.prop 2>/dev/null
+    echo "== 升级暂存 /data/adb/modules_update/rezhale_toolbox/module.prop =="
+    if [ -f /data/adb/modules_update/rezhale_toolbox/module.prop ]; then
+      cat /data/adb/modules_update/rezhale_toolbox/module.prop 2>/dev/null
     else
       echo "（无升级暂存）"
     fi
@@ -256,7 +256,7 @@ diag_pack() {
   fi
 
   mkdir -p /sdcard/Download 2>/dev/null
-  _zip="/sdcard/Download/HyperOS_XJ_diag_$_stamp.zip"
+  _zip="/sdcard/Download/rezhale_toolbox_diag_$_stamp.zip"
   _how=$(diag_do_zip "$_stage" "$_zip") || _how=""
   if [ -n "$_how" ]; then
     _sz=$(stat -c %s "$_zip" 2>/dev/null)
@@ -269,7 +269,7 @@ diag_pack() {
   fi
 
   # 设备无 zip 工具：回退 tar.gz，并按真实扩展名报告。
-  _tgz="/sdcard/Download/HyperOS_XJ_diag_$_stamp.tar.gz"
+  _tgz="/sdcard/Download/rezhale_toolbox_diag_$_stamp.tar.gz"
   _how=$(diag_do_targz "$_stage" "$_tgz") || _how=""
   if [ -n "$_how" ]; then
     _sz=$(stat -c %s "$_tgz" 2>/dev/null)

@@ -1,6 +1,6 @@
 #!/system/bin/sh
 MODDIR=${0%/*}
-DATA_DIR=/data/adb/HyperOS_XJ
+DATA_DIR=/data/adb/rezhale_toolbox
 
 # 先关闭背屏并恢复旧版可能禁用的原生时钟
 [ -f "$MODDIR/engine/xjctl.sh" ] && sh "$MODDIR/engine/xjctl.sh" rear off >/dev/null 2>&1
@@ -12,8 +12,8 @@ DATA_DIR=/data/adb/HyperOS_XJ
 [ -f "$MODDIR/engine/xjctl.sh" ] && sh "$MODDIR/engine/xjctl.sh" thermal set default >/dev/null 2>&1
 [ -f "$MODDIR/engine/xjctl.sh" ] && sh "$MODDIR/engine/xjctl.sh" apply >/dev/null 2>&1
 
-pkill -f 'HyperOS_XJ/engine/xjdaemon\.sh' 2>/dev/null
-pkill -f 'HyperOS_XJ/engine/boot\.sh' 2>/dev/null
+pkill -f 'rezhale_toolbox/engine/xjdaemon\.sh' 2>/dev/null
+pkill -f 'rezhale_toolbox/engine/boot\.sh' 2>/dev/null
 rm -f "$DATA_DIR/state/daemon.pid" 2>/dev/null
 
 pm uninstall --user 0 com.hyperos.xj >/dev/null 2>&1

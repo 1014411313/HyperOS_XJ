@@ -1,7 +1,7 @@
 #!/system/bin/sh
 # 新模块启动入口：只拉起自研引擎，不再启动旧 thermal_core / battery service。
 MODDIR=${0%/*}
-DATA_DIR=/data/adb/HyperOS_XJ
+DATA_DIR=/data/adb/rezhale_toolbox
 LOG="$DATA_DIR/log/service.log"
 mkdir -p "$DATA_DIR/log" "$DATA_DIR/config" "$DATA_DIR/state" "$DATA_DIR/battery/state" 2>/dev/null
 

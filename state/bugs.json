@@ -1710,6 +1710,24 @@
       "affected": [
         "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/App.kt"
       ]
+    },
+    {
+      "id": "bug-100",
+      "title": "改名：打包名/App 名/模块显示名改为「热炸了工具箱」，id 待定",
+      "reported": "2026-11-09",
+      "type": "feature",
+      "version_seen": "3.1.33 (343)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户要求：之后打包名改为热炸了工具箱，app 名也是热炸了工具箱，id 也改为热炸了工具箱",
+      "root_cause": "模块 id 不允许中文（Magisk/KernelSU 仅接受小写字母/数字/下划线），需改用 ASCII 值",
+      "fix_plan": "App android:label 与 module.prop name 改为「热炸了工具箱」；打包文件名改为「热炸了工具箱_vX.zip」；模块 id 待用户确认 ASCII 值（改 id 会影响模块目录、引擎写死路径、升级链与用户数据）",
+      "affected": [
+        "dist/HyperOS_XJ_New/module.prop",
+        "ToolboxApp/androidApp/src/main/AndroidManifest.xml"
+      ],
+      "fixed_in": "3.1.34（344，未发布）",
+      "resolution": "模块 id 改为 rezhale_toolbox、name 改为「热炸了工具箱」；App android:label 改为「热炸了工具箱」；引擎模块目录 /data/adb/modules/rezhale_toolbox、数据目录 /data/adb/rezhale_toolbox、modules_update 路径、诊断包前缀、APK 文件名 rezhale_toolbox.apk 全部同步；customize.sh 增加旧 id 迁移（数据目录 mv + 清理旧模块目录 /data/adb/modules/HyperOS_XJ），避免两个模块并存；打包文件名改为「热炸了工具箱_vX.zip」；update.sh 的仓库 URL 保持不变（GitHub/Gitee 仓库未改名）"
     }
   ],
   "cancelled": [

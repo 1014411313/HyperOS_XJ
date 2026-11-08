@@ -2,11 +2,11 @@
 # engine/lib/env.sh — 引擎公共环境：路径、日志、配置读写、JSON 片段。
 # 本文件只被 source，不单独执行；root 授权只在 xjctl / xjdaemon 入口发生一次。
 
-MODDIR="/data/adb/modules/HyperOS_XJ"
+MODDIR="/data/adb/modules/rezhale_toolbox"
 [ -d "$MODDIR" ] || MODDIR="$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)"
 
 # 用户可变数据根放在模块目录外：Magisk 升级会整体删除模块目录，数据在内会丢（bug-045）。
-DATA_DIR="/data/adb/HyperOS_XJ"
+DATA_DIR="/data/adb/rezhale_toolbox"
 CONFDIR="$DATA_DIR/config"
 CACHE="$DATA_DIR/cache"
 STATE="$DATA_DIR/state"

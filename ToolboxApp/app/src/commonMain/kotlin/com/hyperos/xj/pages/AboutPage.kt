@@ -60,7 +60,7 @@ private const val QQ_GROUP_UNLOCK =
 
 private val logPage = ToolPage(
     title = "运行日志",
-    hint = "读取模块运行日志（/data/adb/modules/HyperOS_XJ/log/）",
+    hint = "读取模块运行日志（/data/adb/modules/rezhale_toolbox/log/）",
     command = Engine.build("log")
 )
 private val diagPage = ToolPage(
@@ -369,12 +369,12 @@ private fun UninstallTipPage(backdrop: Backdrop, onBack: () -> Unit) {
         GlassCard(backdrop, Modifier.fillMaxWidth()) {
             SectionLabel("卸载模块")
             BasicText(
-                text = "请在 Root 管理器（Magisk / KernelSU / APatch 等）的「模块」页面中找到 HyperOS_XJ 并卸载，卸载完成后重启设备生效。",
+                text = "请在 Root 管理器（Magisk / KernelSU / APatch 等）的「模块」页面中找到「热炸了工具箱」并卸载，卸载完成后重启设备生效。",
                 style = TextStyle(color = XJ.TextPrimary, fontSize = 13.sp)
             )
             Spacer(Modifier.height(8.dp))
             BasicText(
-                text = "本 App 不直接删除 /data/adb/modules/HyperOS_XJ，避免跳过模块自身的还原流程。",
+                text = "本 App 不直接删除 /data/adb/modules/rezhale_toolbox，避免跳过模块自身的还原流程。",
                 style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp)
             )
             Spacer(Modifier.height(14.dp))
@@ -448,7 +448,7 @@ private fun AboutSubPage(
                 HelpBullet("改了档位不生效？切换只写入配置，引擎最多 3 秒后应用，且应用档位需重启系统温控守护（约 1～2 秒）；请确认模块未被禁用、总开关已打开；充电时实际档位由场景判定决定，可能被时段 / 息屏 / 游戏覆盖。")
                 HelpBullet("为什么需要 Root？引擎直接改写系统温控配置目录、充电电流节点与系统属性，全部通过 su 调用完成，没有 Root 无法实现。")
                 HelpBullet("DTBO 有什么风险？DTBO 是设备树分区镜像，刷错会导致设备无法开机；刷写前必须先备份原厂镜像。")
-                HelpBullet("日志在哪里？模块日志在 /data/adb/modules/HyperOS_XJ/log/，可在主页「日志」入口查看；反馈问题前先用「诊断与日志打包」生成日志包。")
+                HelpBullet("日志在哪里？模块日志在 /data/adb/modules/rezhale_toolbox/log/，可在主页「日志」入口查看；反馈问题前先用「诊断与日志打包」生成日志包。")
                 HelpBullet("温控配置会被系统改回去吗？引擎应用档位后会把配置文件加锁防止系统覆盖，恢复「系统默认」时解锁并还原首次运行时备份的原厂配置。")
             }
         }
