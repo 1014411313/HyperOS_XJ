@@ -69,7 +69,7 @@ fun App() {
     LaunchedEffect(Unit) {
         while (true) {
             status = bridge.readStatus()
-            delay(2000L)
+            delay(700L)
         }
     }
 
