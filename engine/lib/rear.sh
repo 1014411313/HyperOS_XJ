@@ -88,8 +88,8 @@ write_config() {
   _accent=$(cfg_get rear_accent "#38BDF8")
   _font=$(cfg_get rear_font_scale "1.0")
   _bg=$(cfg_get rear_bg "")
-  # 未设背景时落到内置默认动图（service.sh 开机已铺到 /data/local/tmp）。
-  [ -n "$_bg" ] || _bg="image:/data/local/tmp/xj_rear_bg.gif"
+  # 未设背景时落到内置默认动图（service.sh 开机铺到 /data/local/tmp，与用户自选图分文件）。
+  [ -n "$_bg" ] || _bg="image:/data/local/tmp/xj_rear_bg_default.gif"
   _body=$(printf 'enabled=%s\nkeep_on=%s\naccent=%s\nfont_scale=%s\nfields=%s' \
     "$_enabled" "$_keep" "$_accent" "$_font" "$_fields")
   [ -n "$_bg" ] && _body="$_body
@@ -111,7 +111,7 @@ send_control() {
     --ez enabled "$_e" --ez keep_on "$_k" \
     --es fields "$(cfg_get rear_fields "temp,soc,volt,cur")" \
     --es accent "$(cfg_get rear_accent "#38BDF8")" \
-    --es bg "$(cfg_get rear_bg "image:/data/local/tmp/xj_rear_bg.gif")" \
+    --es bg "$(cfg_get rear_bg "image:/data/local/tmp/xj_rear_bg_default.gif")" \
     --ef font_scale "$(cfg_get rear_font_scale "1.0")" >/dev/null 2>&1
 }
 

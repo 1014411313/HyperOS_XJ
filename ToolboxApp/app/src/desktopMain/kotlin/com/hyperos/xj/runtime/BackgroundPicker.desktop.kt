@@ -19,6 +19,8 @@ actual suspend fun writeRearBackgroundImage(bytes: ByteArray): String? = null
 
 actual suspend fun readRearCardBgImageBytes(): ByteArray? = null
 
-actual fun rearBgGifPreviewPath(): String? = null
+actual suspend fun rearBgGifPreviewPath(restoreFromEngine: Boolean): String? = null
+
+actual suspend fun rearDefaultBgGifPreviewPath(restoreFromEngine: Boolean): String? = null
 
 actual fun gifFrameAt(path: String, timeMs: Long): ImageBitmap? = null

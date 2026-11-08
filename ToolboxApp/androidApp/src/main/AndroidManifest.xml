@@ -13,7 +13,7 @@
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
-        android:label="HyperOS XJ 工具箱"
+        android:label="WJ工具箱"
         android:theme="@android:style/Theme.Material.NoActionBar">
         <meta-data
             android:name="xposedmodule"

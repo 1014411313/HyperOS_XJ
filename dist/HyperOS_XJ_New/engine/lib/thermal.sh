@@ -428,7 +428,10 @@ write_app_status_json() {
   _now=$(date +%s); _last=$(cat "$_sts" 2>/dev/null)
   case "$_last" in ''|*[!0-9]*) _last=0 ;; esac
   if [ ! -s "$_st" ] || [ $((_now - _last)) -ge 60 ]; then
-    data_sysinfo > "$_st.tmp" 2>/dev/null && mv -f "$_st.tmp" "$_st"
+    # 临时名带 pid：daemon 与 xjctl status 可能并发进入此分支，固定名会互相踩
+    _stmp="$_st.$$.tmp"
+    data_sysinfo > "$_stmp" 2>/dev/null && mv -f "$_stmp" "$_st"
+    rm -f "$_stmp" 2>/dev/null
     printf '%s' "$_now" > "$_sts"
   fi
   js_line device_name "$(sed -n 1p "$_st" 2>/dev/null)" str >> "$_frag"

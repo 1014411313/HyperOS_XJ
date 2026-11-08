@@ -44,6 +44,7 @@ import com.hyperos.xj.runtime.isGifBytes
 import com.hyperos.xj.runtime.pickBackgroundImageBytes
 import com.hyperos.xj.runtime.readRearCardBgImageBytes
 import com.hyperos.xj.runtime.rearBgGifPreviewPath
+import com.hyperos.xj.runtime.rearDefaultBgGifPreviewPath
 import com.hyperos.xj.runtime.writeRearBackgroundImage
 import com.hyperos.xj.ui.AccentPalette
 import com.hyperos.xj.ui.ActionButton
@@ -72,14 +73,7 @@ private val rearConfPaths = listOf(
     "/storage/emulated/0/Android/data/com.hyperos.xj/files/rear.conf",
     "/data/local/tmp/xj_rear.conf",
 )
-private const val rearBgDefaultEnginePath = "/data/local/tmp/xj_rear_bg.gif"
-private val rearCardBgPalette = listOf(
-    Color(0xFF101418),
-    Color(0xFF142031),
-    Color(0xFF13261E),
-    Color(0xFF2B1520),
-    Color(0xFF241B31),
-)
+private const val rearBgDefaultEnginePath = "/data/local/tmp/xj_rear_bg_default.gif"
 
 @Composable
 fun LookPage(
@@ -114,16 +108,25 @@ fun LookPage(
     // 无背屏机型也要能在预览里看到背景（与 bug-044 一致），不按 rearScreenSupported 跳过
     LaunchedEffect(bridge) {
         rearCardBg = readRearCardBg(bridge)
-        if (rearCardBg?.startsWith("image:") == true) {
-            val gifPath = rearBgGifPreviewPath()
-            if (rearCardBg == "image:$rearBgDefaultEnginePath" || gifPath != null) {
-                // 默认背景与自选 GIF 共用引擎路径：预览只认 App 侧 GIF 副本，
-                // 副本缺失时不能回退 PNG 副本（那是旧静态图），直接不显背景。
+        val currentBg = rearCardBg
+        if (currentBg?.startsWith("image:") == true) {
+            // 副本可能因清数据/换机丢失：按背景类型选定补铺源，默认图与用户图分文件，不能混用（bug-070）；
+            // PNG 背景不能回退 GIF 副本（那是旧动图）
+            val gifPath = when {
+                currentBg == "image:$rearBgDefaultEnginePath" -> rearDefaultBgGifPreviewPath(true)
+                currentBg.endsWith(".gif") -> rearBgGifPreviewPath(true)
+                else -> null
+            }
+            if (gifPath != null) {
                 rearCardBgGifPath = gifPath
                 rearCardBgImage = null
             } else {
                 rearCardBgImage = readRearCardBgImageBytes()?.let { decodeBackgroundImage(it) }
             }
+        } else if (currentBg == null) {
+            // bg 为空即默认状态：预览必须回落内置默认动图，不画背景就是黑屏（bug-070）
+            rearCardBgGifPath = rearDefaultBgGifPreviewPath(true)
+            rearCardBgImage = null
         }
     }
 
@@ -229,22 +232,8 @@ fun LookPage(
                 }
             )
             Spacer(Modifier.height(14.dp))
-            BasicText("卡片背景，纯色或相册图片", style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp))
+            BasicText("卡片背景，从相册选择图片", style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp))
             Spacer(Modifier.height(6.dp))
-            SwatchRow(
-                rearCardBgPalette,
-                rearCardBgPalette.indexOfFirst { "color:${accentHex(it)}" == rearCardBg }
-            ) { index ->
-                val value = "color:${accentHex(rearCardBgPalette[index])}"
-                rearCardBg = value
-                rearCardBgImage = null
-                rearCardBgGifPath = null
-                scope.launch {
-                    val result = bridge.execResult(Engine.rearSetBg(value))
-                    showToast(if (result.success) "卡片背景已设置" else "失败：设置卡片背景")
-                }
-            }
-            Spacer(Modifier.height(10.dp))
             ActionButton(
                 backdrop = backdrop,
                 text = if (rearCardBg?.startsWith("image:") == true) "更换卡片图片" else "选择卡片图片",
@@ -256,7 +245,7 @@ fun LookPage(
                                 val value = "image:$enginePath"
                                 rearCardBg = value
                                 if (isGifBytes(bytes)) {
-                                    rearCardBgGifPath = rearBgGifPreviewPath()
+                                    rearCardBgGifPath = rearBgGifPreviewPath(false)
                                     rearCardBgImage = null
                                 } else {
                                     rearCardBgGifPath = null
@@ -274,14 +263,16 @@ fun LookPage(
                 Spacer(Modifier.height(8.dp))
                 ActionButton(
                     backdrop = backdrop,
-                    text = "清除卡片背景",
+                    text = "恢复默认背景",
                     onClick = {
                         rearCardBg = null
                         rearCardBgImage = null
                         rearCardBgGifPath = null
                         scope.launch {
+                            // 立即把预览拉回默认动图，不等下次进页
+                            rearCardBgGifPath = rearDefaultBgGifPreviewPath(true)
                             val result = bridge.execResult(Engine.rearSetBg(""))
-                            showToast(if (result.success) "卡片背景已清除" else "失败：清除卡片背景")
+                            showToast(if (result.success) "已恢复默认背景" else "失败：恢复默认背景")
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),

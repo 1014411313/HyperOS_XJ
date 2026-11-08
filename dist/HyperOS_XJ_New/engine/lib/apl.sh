@@ -6,13 +6,19 @@
 #
 # 安全边界（永不越界）：
 #   目标 ≤ min(DTBO div_max_curr, apl_max_ma, 20000)
-#   温度线跟随 DTBO ffc_temp_high（上探 = -8，降档 = -3）
+#   温度线：有温控档位温度上限时以其为降档线，低于（上限 − 2℃）才恢复上探；
+#           无档位线（unlimited/default/bypass）退回 DTBO ffc_temp_high（上探 = -8，降档 = -3）
 #   CV 段（vbat ≥ vterm-30mV）、未插枪、power_limit≠inf 一律让路（移除目标文件）
 
 APL_LIB=1
 APL_TGT="$STATE/apl_target_ma"
 APL_STATE="$STATE/apl_state"
 APL_WARMUP=90
+APL_TEMP_HYST=2
+APL_ADP_DEBOUNCE=3
+
+# 档位→温度上限映射（单一来源，见 lib/apl_temp.sh）
+[ -f "$DIR/lib/apl_temp.sh" ] && . "$DIR/lib/apl_temp.sh"
 
 apl_num() {
   case "$1" in ''|*[!0-9]*) printf '%s' 0 ;; *) printf '%s' "$1" ;; esac
@@ -98,6 +104,38 @@ apl_prof_best() {
     END { if (max > 0) print max }'
 }
 
+# 适配器变更判定（去抖）：新指纹需连续 APL_ADP_DEBOUNCE 拍稳定才认定换头，返回原因；
+# 首次记录（档案无 adp）立即生效，避免插枪协商期指纹抖动把功率反复重置。
+apl_adp_check() {
+  _fp="$1"
+  _old=$(apl_prof_get adp)
+  if [ -z "$_old" ]; then
+    apl_prof_set adp "$_fp"
+    apl_prof_set adpc ""
+    apl_prof_set adpn 0
+    return 0
+  fi
+  if [ "$_old" = "$_fp" ]; then
+    [ -n "$(apl_prof_get adpc)" ] && { apl_prof_set adpc ""; apl_prof_set adpn 0; }
+    return 0
+  fi
+  _cand=$(apl_prof_get adpc)
+  if [ "$_cand" = "$_fp" ]; then
+    _n=$(( $(apl_num "$(apl_prof_get adpn)") + 1 ))
+  else
+    _n=1
+  fi
+  if [ "$_n" -ge "$APL_ADP_DEBOUNCE" ]; then
+    apl_prof_set adp "$_fp"
+    apl_prof_set adpc ""
+    apl_prof_set adpn 0
+    printf '%s' "适配器变更"
+    return 0
+  fi
+  apl_prof_set adpc "$_fp"
+  apl_prof_set adpn "$_n"
+}
+
 # dmesg 增量里出现充电泵硬故障
 apl_hard_fault() {
   _mark="$STATE/apl_dmesg_mark"
@@ -157,26 +195,32 @@ apl_tick() {
   _apl_uon=$(apl_rd /sys/class/power_supply/usb/online)
   _apl_vterm=$(apl_vterm_mv)
   _apl_cap=$(apl_ceiling_ma)
-  _apl_fh=$(ffc_temp_high_c)
-  _apl_tup=$(( _apl_fh - 8 )); [ "$_apl_tup" -lt 40 ] && _apl_tup=40
-  _apl_tdn=$(( _apl_fh - 3 )); [ "$_apl_tdn" -lt 45 ] && _apl_tdn=45
+  # 温度线：有档位温度上限 → 以其为降档线，低于（上限 − 滞回）才恢复上探；
+  # 无档位线（unlimited/default/bypass）→ 退回 DTBO ffc_temp_high（上探 -8，降档 -3）。
+  _apl_lt=$(apl_mode_temp_c)
+  if [ -n "$_apl_lt" ]; then
+    _apl_tdn="$_apl_lt"
+    _apl_tup=$(( _apl_lt - APL_TEMP_HYST ))
+  else
+    _apl_fh=$(ffc_temp_high_c)
+    _apl_tup=$(( _apl_fh - 8 )); [ "$_apl_tup" -lt 40 ] && _apl_tup=40
+    _apl_tdn=$(( _apl_fh - 3 )); [ "$_apl_tdn" -lt 45 ] && _apl_tdn=45
+  fi
   _apl_gap=$(apl_num "$(cfg_get cg_min_write_gap 60)")
   [ "$_apl_gap" -lt 15 ] && _apl_gap=15
 
-  # ---- 学习档案：适配器变更 / 超过 7 天 → 作废重学 ----
+  # ---- 学习档案：适配器变更（去抖）/ 超过 7 天 → 作废重学 ----
   _apl_fp=$(apl_adp_fp)
-  _apl_old_adp=$(apl_prof_get adp)
   _apl_seen=$(apl_num "$(apl_prof_get seen)")
-  _apl_why=""
-  [ -n "$_apl_old_adp" ] && [ "$_apl_old_adp" != "$_apl_fp" ] && _apl_why="适配器变更"
+  _apl_why=$(apl_adp_check "$_apl_fp")
   [ "$_apl_seen" -gt 0 ] && [ $(( _apl_now - _apl_seen )) -gt 604800 ] && \
     _apl_why="${_apl_why:+$_apl_why;}档案>7天"
   if [ -n "$_apl_why" ]; then
     : > "$_apl_prof" 2>/dev/null
+    apl_prof_set adp "$_apl_fp"
+    apl_prof_set seen "$_apl_now"
     blog "APL 档案重置: $_apl_why"
-  fi
-  [ "$_apl_old_adp" = "$_apl_fp" ] || apl_prof_set adp "$_apl_fp"
-  if [ "$_apl_seen" = "0" ] || [ $(( _apl_now - _apl_seen )) -gt 600 ]; then
+  elif [ "$_apl_seen" = "0" ] || [ $(( _apl_now - _apl_seen )) -gt 600 ]; then
     apl_prof_set seen "$_apl_now"
   fi
 

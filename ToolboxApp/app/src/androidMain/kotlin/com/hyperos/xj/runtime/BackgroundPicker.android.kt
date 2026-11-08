@@ -51,6 +51,30 @@ object AndroidBackgroundPicker {
     fun rearBgGifCopyFile(): File? =
         appContext?.getExternalFilesDir(null)?.let { File(it, "xj_rear_bg.gif") }
 
+    /** 内置默认动图的 App 副本；与用户自选图分文件，恢复默认时读这份。 */
+    fun rearBgDefaultGifCopyFile(): File? =
+        appContext?.getExternalFilesDir(null)?.let { File(it, "xj_rear_bg_default.gif") }
+
+    /** App 侧 GIF 副本缺失时经 su 从引擎侧补铺：service.sh 开机铺设可能因 FUSE 未就绪静默失败（bug-059）。 */
+    fun restoreEngineGifCopy(target: File, enginePath: String = "/data/local/tmp/xj_rear_bg.gif"): Boolean {
+        val context = appContext ?: return false
+        val probe = ProcessBuilder("su", "-c", "[ -f $enginePath ]")
+            .redirectErrorStream(true).start()
+        if (probe.waitFor() != 0) return false
+        val uid = context.applicationInfo.uid
+        val targetPath = "'${target.absolutePath}'"
+        val process = ProcessBuilder(
+            "su", "-c",
+            "cp -f $enginePath $targetPath && chmod 0644 $targetPath && chown $uid:$uid $targetPath"
+        ).redirectErrorStream(true).start()
+        process.inputStream.use { it.readBytes() }
+        if (process.waitFor() != 0) {
+            runCatching { target.delete() }
+            return false
+        }
+        return true
+    }
+
     private fun readBytes(context: Context, uri: android.net.Uri): ByteArray? =
         context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
 }
@@ -111,15 +135,32 @@ actual suspend fun writeRearBackgroundImage(bytes: ByteArray): String? = withCon
     }.getOrNull()
 }
 
+actual suspend fun rearDefaultBgGifPreviewPath(restoreFromEngine: Boolean): String? = withContext(Dispatchers.IO) {
+    runCatching {
+        val file = AndroidBackgroundPicker.rearBgDefaultGifCopyFile() ?: return@runCatching null
+        if (!file.isFile && restoreFromEngine &&
+            !AndroidBackgroundPicker.restoreEngineGifCopy(file, "/data/local/tmp/xj_rear_bg_default.gif")
+        ) {
+            return@runCatching null
+        }
+        if (isGifFile(file)) file.absolutePath else null
+    }.getOrNull()
+}
+
 actual suspend fun readRearCardBgImageBytes(): ByteArray? = withContext(Dispatchers.IO) {
     runCatching {
         AndroidBackgroundPicker.rearBgCopyFile()?.takeIf { it.isFile }?.readBytes()
     }.getOrNull()
 }
 
-actual fun rearBgGifPreviewPath(): String? {
-    val file = AndroidBackgroundPicker.rearBgGifCopyFile() ?: return null
-    return if (isGifFile(file)) file.absolutePath else null
+actual suspend fun rearBgGifPreviewPath(restoreFromEngine: Boolean): String? = withContext(Dispatchers.IO) {
+    runCatching {
+        val file = AndroidBackgroundPicker.rearBgGifCopyFile() ?: return@runCatching null
+        if (!file.isFile && restoreFromEngine && !AndroidBackgroundPicker.restoreEngineGifCopy(file)) {
+            return@runCatching null
+        }
+        if (isGifFile(file)) file.absolutePath else null
+    }.getOrNull()
 }
 
 /** 预览取帧上限：超出时等比缩小缓冲，避免超大 GIF 占满内存。 */

@@ -1,6 +1,6 @@
 {
   "project": "MiWKJR / HyperOS_XJ",
-  "module_version": "3.1.10 (320，未发布)",
+  "module_version": "3.1.17 (327，未发布)",
   "device": "haotian / Xiaomi 15 Pro / Android 17",
   "note": "唯一台账。收到反馈只记录不动代码；用户明确说「修复」后才按 fix_plan 逐条改。",
   "collecting": [
@@ -18,9 +18,197 @@
       "affected": [
         "ToolboxApp/androidApp/src/main/java/com/hyperos/xj/rear/RearHook.java:41"
       ]
+    },
+    {
+      "id": "bug-077",
+      "title": "检查更新在国内网络下大概率失败",
+      "reported": "2026-11-09",
+      "type": "bug",
+      "version_seen": "3.1.18 (328)",
+      "device": "haotian",
+      "status": "待修",
+      "evidence": "用户反馈：检查更新，大部分都在国内可能链接不上，就无法检查更新。用户明确说下次改。",
+      "root_cause": "待查：更新检查走境外地址（GitHub raw/release 或 latest.json 托管在境外），国内直连超时",
+      "fix_plan": "下次处理：核对 App 更新检查的 URL 与超时策略；改为可切换的国内镜像/加速地址（如 Gitee 或自建），或同时请求多个源取先返回者；超时给明确提示而不是静默失败",
+      "affected": []
     }
   ],
   "fixed": [
+    {
+      "id": "bug-068",
+      "title": "增强诊断包采集范围（一次带齐排查所需数据）",
+      "reported": "2026-11-09",
+      "type": "feature",
+      "version_seen": "3.1.16 (326)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户反馈：现在日志你自己都读不了，把诊断日志改一改，能获取所有需要的数据。本次排查（bug-056/067）时诊断包缺：state/ 下的 APL 状态与 pidfile、daemon 存活证据（ps 看不到 root 进程需扫 /proc）、充电/电池/USB/充电器 sysfs 节点值、系统热控目录 $THERMAL_PATH、模块与 App 版本一致性（module.prop / modules_update / update 标记 / dumpsys package）、settings.conf、dmesg 尾部。",
+      "root_cause": "diag_pack() 只采 device_info + log/* + config/*，缺 state/ 与运行时/系统节点快照",
+      "fix_plan": "diag_pack 新增：state/ 目录、runtime.txt（/proc 扫 xjdaemon + daemon.pid 校验 + uptime）、sysfs.txt（充电/电池/USB/充电器/thermal_zone 配对）、thermal_dir.txt、module_state.txt（模块与 App 版本核对）、settings_conf.txt、dmesg_tail.txt；全部容错且过敏感名过滤；打印采集统计",
+      "affected": [
+        "engine/lib/diag.sh",
+        "dist/HyperOS_XJ_New/engine/lib/diag.sh"
+      ],
+      "fixed_in": "3.1.17（327，未发布）",
+      "resolution": "diag_pack 在原 device_info/log/config 基础上新增 7 类采集：state/（运行态全量，含 rear/ 子目录，tmp/frag 跳过）、runtime.txt（/proc 扫 xjdaemon + pidfile 核验 + 时间基准）、sysfs.txt（充电/电池/USB/充电器节点 + thermal_zone type/temp 配对）、thermal_dir.txt（热控目录清单 + t_map 尺寸对比，不 dump 内容）、module_state.txt（模块/升级暂存/update·disable 标记 + dumpsys App 版本三方对账）、settings_conf.txt、dmesg_tail.txt；全部逐项容错并过敏感名过滤，结尾打印采集统计。另收窄过宽的 *_key 过滤为 api?key|secret_key|_private_key（保留 *.key 兜底），避免将来误杀 xxx_key 业务文件"
+    },
+    {
+      "id": "bug-067",
+      "title": "温控档位切换后充电功率不随之调整；APL 反复『档案重置:适配器变更』",
+      "reported": "2026-11-09",
+      "type": "bug",
+      "version_seen": "3.1.15 (325)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户反馈：温控档位切换了但温度达到也不降功率，要求功率按设置档位调整并逐个档位排查，且要标注各档温度区间。诊断包（2026-11-09 01:25）分析：engine.log 有『01:25:06 切换 → 五档 ｜ map=2』；battery.log 显示充电功率实际由 APL 逻辑控制（『APL 插枪：热身 90s，目标先置 20000mA』『APL 塌陷(0W < 目标90W)：降 10000mA，锁 60s』『APL 电池 55℃ ≥ 降档线 55℃，降 20% → 16000mA』），而『APL 档案重置: 适配器变更』在 23:28~23:34 与 01:01~01:13 高频重复（数十次）；daemon.log 仍刷 bug-060 的 mv 报错（设备为 3.1.15，未含该修复）。",
+      "root_cause": "充电功率目标由 engine/lib/apl.sh 计算，其温度线跟随 DTBO ffc_temp_high，与温控档位（$CONFDIR/current_mode）无映射；另有 APL『适配器变更』指纹抖动导致学习档案被反复重置",
+      "fix_plan": "①建立档位→温度上限单一来源映射（一档30/二档35/三档40/四档45/五档50；unlimited/default 不施加）；②apl.sh 温度线改用当前档位阈值（带 2℃ 滞回），档位为 unlimited/default 时退回原 DTBO 行为；③apl_adp_fp 加去抖（连续 3 次变化才认换头）",
+      "affected": [
+        "engine/lib/battery.sh",
+        "engine/xjdaemon.sh",
+        "engine/lib/thermal.sh"
+      ],
+      "user_input": "用户给定各档温度上限：一档30℃、二档35℃、三档40℃、四档45℃、五档50℃",
+      "fixed_in": "3.1.17（327，未发布）",
+      "resolution": "引擎侧落地：新增 engine/lib/apl_temp.sh 作为档位→温度上限单一来源（level_1..5 = 30/35/40/45/50℃；unlimited/default/bypass/off/空 不施加档位线）；apl.sh 的温度降档线改为：有档位上限时以「上限」为降档线、「上限−2℃」为恢复上探线，无档位线时退回原 DTBO ffc_temp_high 行为；新增 apl_adp_check() 适配器指纹去抖（连续 3 拍稳定才认定换头并重置学习档案，首次记录立即生效），修掉日志里高频『适配器变更』重置。未改塌陷/硬故障退让与学习档案机制"
+    },
+    {
+      "id": "bug-065",
+      "title": "液体新增焦散与去色偏（用户新提示词）",
+      "reported": "2026-11-09",
+      "type": "feature",
+      "version_seen": "3.1.15 (325)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户提示词：抽象液态扭曲，超透明水对暗背景的折射，形状透过液体呈平滑波浪弯曲，微弱焦散，细高光线，透明，照片级真实，无色偏，高对比边缘，4K，无缝循环。已实现：逐行折射/断续高光/空心气泡/极淡吸收色/GIF 无缝循环；缺：微弱焦散、无色偏（现吸收色 0x0A4D22 偏绿）、少量高亮短段。",
+      "root_cause": "焦散未实现；吸收色偏绿造成色偏",
+      "fix_plan": "水面下 0~12% 区域叠加微弱不规则焦散亮纹（极短极细 alpha 0.05~0.18、随时间缓慢移动）；吸收色改中性/更淡；高光里加入少量 alpha 0.95~1.0 的极短段做高对比边缘",
+      "affected": [
+        "androidApp/src/main/java/com/hyperos/xj/rear/PanelView.java",
+        "app/src/commonMain/kotlin/com/hyperos/xj/ui/LiquidRefraction.kt",
+        "app/src/commonMain/kotlin/com/hyperos/xj/ui/RearScreen.kt"
+      ],
+      "fixed_in": "3.1.16（326，未发布）",
+      "resolution": "两侧同步：水面下 0~12% 带叠加 40 条微弱焦散亮纹（固定 seed 缓慢漂移）；吸收色 0x0A4D22→0x14202A（中性海蓝灰）去色偏；高光新增 8 段 alpha 0.95~1.0 极短段做高对比边缘；并按用户反馈 REFRACT_AMP 72→36"
+    },
+    {
+      "id": "bug-066",
+      "title": "背屏「清除卡片背景」改为「恢复默认背景」",
+      "reported": "2026-11-09",
+      "type": "feature",
+      "version_seen": "3.1.15 (325)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户要求：背屏的清除卡片背景改成恢复默认背景。核对 LookPage：按钮文案为“清除卡片背景”，行为是 Engine.rearSetBg(\"\") 清空 rear_bg → 引擎回落默认图（即已是恢复默认语义），仅文案不符。",
+      "root_cause": "文案与语义不一致（行为已是恢复默认）",
+      "fix_plan": "按钮文案与 toast 改为“恢复默认背景”/“已恢复默认背景”",
+      "resolution": "LookPage「清除卡片背景」按钮文案与提示改为「恢复默认背景」；行为不变（清空 rear_bg → 默认动图）",
+      "fixed_in": "3.1.16（326，未发布）",
+      "affected": [
+        "app/src/commonMain/kotlin/com/hyperos/xj/pages/LookPage.kt:278"
+      ]
+    },
+    {
+      "id": "bug-064",
+      "title": "折射深度曲线改为“缓慢增大”（ramp t^1.5）+ 用户提示词固化为规范",
+      "reported": "2026-11-09",
+      "type": "feature",
+      "version_seen": "3.1.15 (325)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户提示词：水面以下对背景做逐水平条带位移重绘，每条带按 sin(y*k + t*w) 计算水平偏移，偏移幅度随深度缓慢增大，形成真实折射弯曲感；不要用波纹贴图或画波浪线。原实现 ramp 为线性。",
+      "root_cause": "线性 ramp 使浅层位移偏大，折射过渡不够自然",
+      "fix_plan": "ramp 由线性改为 t^1.5（浅处更弱、深处渐强）",
+      "resolution": "PanelView.updateMesh 与 LiquidStyle.refractDx 的 ramp 改为 t*sqrt(t)；提示词写入 docs/设计规范.md 的“动效”节",
+      "fixed_in": "3.1.15（325，未发布）"
+    },
+    {
+      "id": "bug-063",
+      "title": "内置默认动图开头有缩放、首尾不呼应（循环割裂）",
+      "reported": "2026-11-09",
+      "type": "bug",
+      "version_seen": "3.1.14 (324)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户反馈：GIF 开头有个缩放效果，不要缩放、要直接显示动效，且首尾呼应无割裂感。分析 clover_loop.gif（103帧/800x457/20fps）：与首帧差异单调递增（原首帧 vs 末帧 MSE=1845）→ 首尾不呼应；帧 0~12 有推近拉远（缩放）；相邻帧突变集中在 27~37；最相似帧对集中在间隔 12 帧处（周期≈12 帧），其中 (88,100) 差异最小（MSE=75.9）",
+      "root_cause": "原素材含开头缩放段、且整体为缓慢漂移而非闭环，直接整段循环会跳变",
+      "fix_plan": "取最相似循环点区段（帧 88~99）重制 GIF，避开缩放段；并顺带把体积从 7.63MB 降到 1.74MB",
+      "resolution": "重制 default_bg.gif：取帧 88~99（12 帧）@12fps 无缝循环（循环点 MSE 75.9），无开头缩放段，体积 1.74MB",
+      "fixed_in": "3.1.14（324，未发布）"
+    },
+    {
+      "id": "bug-062",
+      "title": "背屏充电动画按提示词重构：折射扭曲背景 + 断续高光 + 空心气泡 + 极淡吸收色",
+      "reported": "2026-11-09",
+      "type": "feature",
+      "version_seen": "3.1.12 (322)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户给出动效提示词：①满屏垂直上升的高透明度真实水体；②水体几乎不可见，靠逐行位移扭曲背景（绿色）表现折射；③水面极细、断续、明暗不均的高光细线，不要连续亮边；④水下细小上升气泡不填充，只画边缘折射弧+左上高光点；⑤整体近绿，水体只叠极淡吸收色（最深处 alpha≤0.3）保持背景透出；⑦不要漫画风/描边/平涂色块，追求照片级真实高透水感。另：数据显示不动，保持原效果。",
+      "root_cause": "现有实现（bug-047 的 1:1 复刻）是实心绿半透明填充 + 连续白色描边 + 填充气泡，与提示词方向不符",
+      "fix_plan": "背景改 drawBitmapMesh 逐行位移折射；水体改垂直渐变极淡吸收色(≤0.3)；水面改 ~40 段随机短线段高光；气泡改 STROKE 圆环+左上高光点；背屏 PanelView 与预览 RearScreen 同参数同源",
+      "affected": [
+        "androidApp/src/main/java/com/hyperos/xj/rear/PanelView.java",
+        "app/src/commonMain/kotlin/com/hyperos/xj/ui/RearScreen.kt"
+      ],
+      "fixed_in": "3.1.14（324，未发布）",
+      "resolution": "背屏与预览同参数重构：背景改 drawBitmapMesh 逐行水平位移折射（网格 12x24、AMP 8px 设计基准、KY 0.006）；水体改垂直渐变极淡吸收色（顶部 alpha0.04→最深 0.30，色 0x0A4D22）；水面改 ~40 段断续随机高光细线（线宽 max(1.2,width*0.0015)、固定 seed）；气泡改 STROKE 空心圆环(alpha0.35)+左上高光点；删除实心绿填充与连续白描边。数据行/数字未改。Android 用 nativeCanvas.drawBitmapMesh，desktop 用逐行 drawImage 近似（expect/actual）；按用户真机反馈加大折射 REFRACT_AMP 8→72、KY 0.006→0.026、网格行 24→40，高光加粗提亮（线宽 max(2.4,w*0.0032)、alpha 0.45~1.0、段数 56、跳过 0.25），气泡放大（半径约×2.2、描边 2.2px、alpha 0.55）"
+    },
+    {
+      "id": "bug-061",
+      "title": "背屏与预览去掉入场缩放：画面应立即以最终尺寸开始",
+      "reported": "2026-11-09",
+      "type": "feature",
+      "version_seen": "3.1.11 (321)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户反馈：背屏背景先缩放再开始动，应直接开始动；比例不对，应直接放大只显示可显示的部位。核对代码：背景绘制本就是 cover（PanelView Math.max(width/bw,height/bh) + 居中裁剪；预览 ContentScale.Crop）；所谓“先缩放”来自入场动画——PanelView.drawCenter 在 480ms 内 canvas.scale(0.85→1.0)+alpha 淡入（作用于中央闪电+百分比），预览的数字 Row 也有同样的 graphicsLayer 入场缩放。",
+      "root_cause": "入场动画对中央数字做缩放/淡入，被观察到为“先缩放再开始动”",
+      "fix_plan": "去掉 PanelView.drawCenter 的 canvas.scale/alpha 与预览数字 Row 的 graphicsLayer；背景保持 cover",
+      "resolution": "移除两边入场缩放与淡入，画面立即以最终尺寸开始",
+      "fixed_in": "3.1.12（322，未发布）",
+      "affected": [
+        "androidApp/src/main/java/com/hyperos/xj/rear/PanelView.java",
+        "app/src/commonMain/kotlin/com/hyperos/xj/ui/RearScreen.kt"
+      ]
+    },
+    {
+      "id": "bug-060",
+      "title": "daemon.log 刷 mv: bad sysinfo.txt.tmp（并发竞态）",
+      "reported": "2026-11-09",
+      "type": "bug",
+      "version_seen": "3.1.10 (320)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "真机 daemon.log 出现 3 行 `mv: bad '/data/adb/HyperOS_XJ/state/sysinfo.txt.tmp': No such file or directory`。sysinfo 刷新（xjctl.sh:75、thermal.sh:431）用固定临时名 $_st.tmp：daemon 每拍与 App 调的 xjctl status 可能并发进入该分支，一方 mv 成功删除临时文件后另一方 mv 失败刷日志。",
+      "root_cause": "sysinfo 原子写用固定临时名，daemon 与命令行并发时互相踩",
+      "fix_plan": "临时名改为 $_st.$$.tmp（带 pid）+ 事后 rm -f 清理",
+      "resolution": "xjctl.sh 与 lib/thermal.sh 的 sysinfo 刷新改用 $_st.$$.tmp 唯一临时名并事后清理",
+      "fixed_in": "3.1.11（321，未发布）",
+      "affected": [
+        "engine/xjctl.sh:75",
+        "engine/lib/thermal.sh:431"
+      ]
+    },
+    {
+      "id": "bug-059",
+      "title": "无背屏机型预览看不到默认动图：App 侧 GIF 副本未铺设",
+      "reported": "2026-11-09",
+      "type": "bug",
+      "version_seen": "3.1.10 (320)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户反馈：预览背景还是不会动、点“清除卡片背景”后变黑（期望恢复内置默认图）。Shizuku 直读设备（已重启、模块 3.1.10 生效）：引擎侧 /data/local/tmp/xj_rear_bg.gif 已铺（8003381 字节）、两个 rear.conf 的 bg 均为 image:/data/local/tmp/xj_rear_bg.gif；但 App 外部目录只有旧 xj_rear_bg.png、无 xj_rear_bg.gif。App 预览取帧走 rearBgGifPreviewPath()（只认 App 侧副本），副本缺失即返回 null → 预览黑。",
+      "root_cause": "service.sh 往 /storage/emulated/0/... 镜像 App 副本时该 FUSE 目录尚未就绪，写入静默失败（有容错不报错）；App 侧无兜底",
+      "fix_plan": "① service.sh 镜像前等 App files 目录可写（最多 ~60s，超时跳过并记日志）；② App 侧 rearBgGifPreviewPath 在副本缺失时经 su 从 /data/local/tmp/xj_rear_bg.gif 复制自铺（IO/su 不得阻塞主线程）",
+      "affected": [
+        "dist/HyperOS_XJ_New/service.sh",
+        "app/src/androidMain/kotlin/com/hyperos/xj/runtime/BackgroundPicker.android.kt",
+        "app/src/commonMain/kotlin/com/hyperos/xj/pages/LookPage.kt"
+      ],
+      "fixed_in": "3.1.11（321，未发布）",
+      "resolution": "service.sh 镜像 App 副本前先每秒探针等待 $BG_APP_DIR 可写（最多 60s，超时记日志跳过）；App 侧 rearBgGifPreviewPath 改为 suspend，新增 restoreEngineGifCopy：副本缺失且当前背景为默认路径时经 su 从 /data/local/tmp/xj_rear_bg.gif 复制自铺（cp+chmod 0644+chown app uid），LookPage 仅在 bg 为默认路径时触发自铺以免把用户自选 PNG 拉回 GIF"
+    },
     {
       "id": "bug-058",
       "title": "无背屏机型上 App 内背屏预览背景永远为黑（背景读取被能力检测挡住）",
@@ -1036,6 +1224,150 @@
       "fixed_in": "3.1.1（311，未发布）",
       "resolution": "echo x > 只读节点 2>/dev/null 的重定向失败在 2>/dev/null 生效前就报错，且 [ -w ] 对 root 恒真拦不住。xjdaemon.sh 5 处 + power.sh wnode 改为 { echo x > f; } 2>/dev/null，容器对比实验证实静默",
       "detected_on_device": "真机：daemon.log 120 秒涨 46 行"
+    },
+    {
+      "id": "bug-069",
+      "title": "App 温控页档位选项未标注各档温度上限",
+      "reported": "2026-11-09",
+      "type": "feature",
+      "version_seen": "3.1.17 (327)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户要求「加上温控档位温度标注」。bugs.json bug-067 的 user_input 已给定一档30/二档35/三档40/四档45/五档50℃；引擎侧 engine/lib/apl_temp.sh 已落地，但 ThermalPage.kt 的 gearOptions 仍只有「系统默认/无限制/一档…五档」",
+      "root_cause": "UI 档位选项未与 apl_temp.sh 的温度映射同步展示",
+      "fix_plan": "gearOptions 改为带温度后缀（一档 ≤30℃ … 五档 ≤50℃），系统默认/无限制保持原文案；gearIndex/gearMode 仍按索引映射 level_x，不受文案影响",
+      "affected": [
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/pages/ThermalPage.kt:62"
+      ],
+      "fixed_in": "3.1.18（328，未发布）",
+      "resolution": "档位选项改为「系统默认/无限制/一档 ≤30℃/二档 ≤35℃/三档 ≤40℃/四档 ≤45℃/五档 ≤50℃」，并在说明里注明档位温度上限同时作为充电功率降档线；gearMode/gearIndex 仍按索引映射，不受文案影响；时段档位摘要宽度 80→116dp"
+    },
+    {
+      "id": "bug-070",
+      "title": "背屏「恢复默认背景」后仍是黑色背景",
+      "reported": "2026-11-09",
+      "type": "bug",
+      "version_seen": "3.1.17 (327)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户反馈：现在背屏卡片点恢复默认依旧是变成黑色背景（bug-066 只改了文案，行为未修）",
+      "root_cause": "待定（三条候选并列，按代码判定）：①ControlReceiver 收到 bg 空串时 new RearConfig(...,null,null) 落到 bgColor=#000000 且 bgImagePath 空；②LookPage 把 rearCardBg 置 null 后 App 预览不再绘制默认动图；③引擎回落路径 /data/local/tmp/xj_rear_bg.gif 在设备上缺失或 App uid 不可读（service.sh 仅在文件不存在时铺设）",
+      "fix_plan": "先定位实际断点再修：App 预览在 rearCardBg 为空时回落到默认动图副本；ControlReceiver 对空 bg 明确回落默认 gif 路径；引擎侧保证默认图存在且可读。禁止用「不改代码只改文案」结案",
+      "affected": [
+        "dist/HyperOS_XJ_New/service.sh:20",
+        "engine/lib/rear.sh:92",
+        "ToolboxApp/androidApp/src/main/java/com/hyperos/xj/rear/ControlReceiver.java:38",
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/pages/LookPage.kt:110",
+        "ToolboxApp/app/src/androidMain/kotlin/com/hyperos/xj/runtime/BackgroundPicker.android.kt:54"
+      ],
+      "fixed_in": "3.1.18（328，未发布）",
+      "resolution": "根因：默认图与用户自选图共用 xj_rear_bg.gif，用户选图会覆盖默认图（选 PNG 时还会删掉 GIF 副本），恢复默认只能回到被覆盖的文件或空路径。修复：默认图独立为 /data/local/tmp/xj_rear_bg_default.gif 与 App 副本 files/xj_rear_bg_default.gif；service.sh 按 module versionCode 覆盖默认图且不碰用户图、未自选时清理旧同名残留；rear.sh 两处回落路径改 default；ControlReceiver 空 bg/无 extra 回落 default 路径（文件不存在才回黑）；LookPage 默认状态与恢复默认按钮即时回落 rearDefaultBgGifPreviewPath；BackgroundPicker 新增默认副本与补铺接口"
+    },
+    {
+      "id": "bug-071",
+      "title": "卡片背景的 5 个纯色预设没有意义，删掉",
+      "reported": "2026-11-09",
+      "type": "feature",
+      "version_seen": "3.1.17 (327)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户要求「卡片背景里的几个颜色删掉没有意义」。LookPage.kt:76 定义 rearCardBgPalette 五个深色（#101418/#142031/#13261E/#2B1520/#241B31）",
+      "root_cause": "纯色预设与背屏默认动图/相册图片路径重复，实际无人使用",
+      "fix_plan": "移除 SwatchRow 与 rearCardBgPalette，只保留「选择卡片图片」与「恢复默认背景」；历史配置里已有的 color: 值仍能正常显示（PanelView 兼容），用户点恢复默认即可清除",
+      "affected": [
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/pages/LookPage.kt:76"
+      ],
+      "fixed_in": "3.1.18（328，未发布）",
+      "resolution": "LookPage 删除 rearCardBgPalette 五个纯色预设与 SwatchRow 调用块，只保留「选择卡片图片」与「恢复默认背景」；老配置里的 color: 值仍按 parseRearColor 正常显示；SwatchRow 定义保留（底栏仍在用）"
+    },
+    {
+      "id": "bug-072",
+      "title": "背屏扭曲强度仍然太高",
+      "reported": "2026-11-09",
+      "type": "bug",
+      "version_seen": "3.1.17 (327)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户反馈「现在背屏扭曲强度还是太高了」。REFRACT_AMP 已从 72 降到 36（bug-062/065），仍偏高",
+      "root_cause": "REFRACT_AMP=36（设计基准 px）在 976 宽背屏上约 3.7% 宽度位移，视觉仍明显",
+      "fix_plan": "REFRACT_AMP 36 → 24（约 -33%），PanelView.java 与 LiquidRefraction.kt 两侧同步；同时复核 REFRACT_KY 不变（波长感受主要由幅度决定）",
+      "affected": [
+        "ToolboxApp/androidApp/src/main/java/com/hyperos/xj/rear/PanelView.java:46",
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/ui/LiquidRefraction.kt:19"
+      ],
+      "fixed_in": "3.1.18（328，未发布）",
+      "resolution": "REFRACT_AMP 36→24（-33%），PanelView.java 与 LiquidRefraction.kt 同步；REFRACT_KY 不变"
+    },
+    {
+      "id": "bug-073",
+      "title": "背屏字体偏小、缺少设计感，希望随水纹轻微波动",
+      "reported": "2026-11-09",
+      "type": "feature",
+      "version_seen": "3.1.17 (327)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户要求「背屏字体有点小，找一个有设计感的字体配合水纹略微波动」。当前 PanelView 中心百分比 96*scale、数据行 24*scale，字体 sans-serif BOLD / sans-serif-medium",
+      "root_cause": "字号基准偏小；字体族为无衬线常规体，缺乏设计感；文字与水纹无联动",
+      "fix_plan": "字号放大（中心 96→104、数据行 24→27，保持 fontScale 联动）；字体族改 serif（Noto Serif，数字带衬线更有设计感，CJK 由系统回落）；文字按水纹相位做 ±1~1.5px 垂直微位移（逐字符或整段平移），幅度必须极弱、不影响可读性",
+      "affected": [
+        "ToolboxApp/androidApp/src/main/java/com/hyperos/xj/rear/PanelView.java:739",
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/ui/RearScreen.kt:350"
+      ],
+      "fixed_in": "3.1.18（328，未发布）",
+      "resolution": "字体族改 serif（Noto Serif，CJK/℃ 系统回落）；中心百分比 96→104、数据行 24→27，仍乘 scale*fontScale；中心组（闪电+百分比整组）与数据行按水纹相位做 ±1.4/±0.96px 极弱位移，App 预览用 graphicsLayer 同式同步"
+    },
+    {
+      "id": "bug-074",
+      "title": "用原图重新生成四叶草无缝动图（不缩放、略大于背屏）",
+      "reported": "2026-11-09",
+      "type": "feature",
+      "version_seen": "3.1.17 (327)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户要求「找到我上传的四叶草原图重新生成gif动图，要求首尾呼应连续不要有割裂感，不要缩放，图片要略大于背屏尺寸」。原图 output/clover_loop/clover_source.jpg 1076×720；现有 dist/backdrop/default_bg.gif 仅 800×457 / 12 帧（被缩小），背屏 976×596",
+      "root_cause": "上一版为压体积把 gif 缩到 800×457，低于背屏分辨率；且循环首尾未校验连续性",
+      "fix_plan": "以 loop_src.mp4（1344×768, 124 帧, 5.17s）为动画源，输出 1076×720（原图尺寸，宽高均大于背屏）无缝循环 GIF；首尾帧用 ping-pong 或交叉淡化保证无割裂；体积目标 ≤ 8MB",
+      "affected": [
+        "dist/HyperOS_XJ_New/backdrop/default_bg.gif",
+        "output/clover_loop/mk_loop_v2.sh"
+      ],
+      "fixed_in": "3.1.18（328，未发布）",
+      "resolution": "以 loop_src.mp4 源帧 84-123（运动最平稳段）cover 适配 1076×720、8fps、ping-pong 无缝拼接、256 色 palettegen，再用 gifsicle -O3 --lossy=80 重压；成品 1076×720 / 25 帧 / 3.26s / 9,177,878 字节，loop forever，首末帧字节完全相同（PSNR=inf），重压前后 PSNR=42.2dB；旧成品备份 output/clover_loop/old_default_bg.gif，生成脚本 mk_loop_v2.sh"
+    },
+    {
+      "id": "bug-075",
+      "title": "自定义背景下水纹扭曲边缘露出黑色底色",
+      "reported": "2026-11-09",
+      "type": "bug",
+      "version_seen": "3.1.17 (327)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户反馈「自定义背景水纹波动，扭曲的边缘会显示黑色底色，避免这种情况」",
+      "root_cause": "PanelView.prepareCover 把背景按 cover 恰好铺满 width×height，updateMesh 对顶点做 ±REFRACT_AMP 水平位移，位移后左右边缘采样越界，露出 canvas 底色（bgColor 黑）；App 预览 LiquidRefraction 同理",
+      "fix_plan": "①prepareCover 生成背景位图时预留位移余量（按 width+2*amp 扩边后居中裁切）；②mesh 顶点位移在左右各约 8% 宽度内做 smoothstep 渐隐到 0；两侧同步改",
+      "affected": [
+        "ToolboxApp/androidApp/src/main/java/com/hyperos/xj/rear/PanelView.java:532",
+        "ToolboxApp/app/src/androidMain/kotlin/com/hyperos/xj/ui/LiquidRefraction.android.kt:13"
+      ],
+      "fixed_in": "3.1.18（328，未发布）",
+      "resolution": "PanelView 背景位图四边外扩 margin=ceil(REFRACT_AMP*scale)+4，网格顶点按 coverRect 映射而非 view 坐标，左右各 8% 宽度内位移 smoothstep 渐入；App 预览 androidMain 的 drawBitmapMesh 同样外扩+渐隐（common 的 desktop 行带实现同步改）"
+    },
+    {
+      "id": "bug-076",
+      "title": "App 名称改为「WJ工具箱」",
+      "reported": "2026-11-09",
+      "type": "feature",
+      "version_seen": "3.1.17 (327)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户澄清：只改 App 名，模块名称/id 及其他都不改。",
+      "root_cause": "App 启动器显示名仍为「HyperOS XJ 工具箱」",
+      "fix_plan": "仅改 ToolboxApp/androidApp/src/main/AndroidManifest.xml 的 android:label=WJ工具箱；module.prop、customize.sh、App.kt 标题保持原样",
+      "affected": [
+        "ToolboxApp/androidApp/src/main/AndroidManifest.xml:16"
+      ],
+      "fixed_in": "3.1.18（328，未发布）",
+      "resolution": "仅改 App 启动器显示名：AndroidManifest android:label=WJ工具箱；模块名、模块 id、App 内标题、安装提示均保持原样（用户后续澄清）"
     }
   ],
   "cancelled": []

@@ -59,7 +59,10 @@ import com.kyant.backdrop.Backdrop
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-private val gearOptions = listOf("系统默认", "无限制", "一档", "二档", "三档", "四档", "五档")
+private val gearOptions = listOf(
+    "系统默认", "无限制",
+    "一档 ≤30℃", "二档 ≤35℃", "三档 ≤40℃", "四档 ≤45℃", "五档 ≤50℃"
+)
 
 @Composable
 fun ThermalPage(
@@ -222,7 +225,7 @@ fun ThermalPage(
                 GlassCard(backdrop, Modifier.fillMaxWidth()) {
                     SectionLabel("普通场景温控")
                     BasicText(
-                        text = "非充电、非游戏时生效；充电中会被充电档位覆盖",
+                        text = "非充电、非游戏时生效；充电中会被充电档位覆盖。档位温度上限同时作为充电功率降档线",
                         style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp)
                     )
                     Spacer(Modifier.height(8.dp))
@@ -284,7 +287,7 @@ fun ThermalPage(
                         BasicText(
                             text = gearOptions[chargeTimedGear],
                             modifier = Modifier
-                                .width(80.dp)
+                                .width(116.dp)
                                 .padding(vertical = 12.dp),
                             style = TextStyle(color = accent, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                         )
