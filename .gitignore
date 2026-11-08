@@ -1,0 +1,33 @@
+# Gradle / IDE
+ToolboxApp/.gradle/
+ToolboxApp/.kotlin/
+ToolboxApp/**/build/
+ToolboxApp/local.properties
+.gradle/
+.kotlin/
+
+# Generated packages and APKs
+dist/*.zip
+dist/*.apk
+dist/*.bundle
+*.apk
+*.idsig
+
+# Third-party reference material (local only)
+references/
+source_snapshot/
+
+# Temporary inspection / verification
+.inspect/
+.verify_*/
+.check_*/
+.tmp_test/
+.engine_test/
+
+# Logs
+preview.*.log
+*.log
+
+# Root design images (tracked copies live in docs/assets)
+/screenshot_current.jpg
+/ref_preview.png

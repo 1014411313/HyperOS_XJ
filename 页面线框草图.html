@@ -1,0 +1,873 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>动态温控·解容工具箱 页面线框草图</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #f4f4f4;
+      color: #222;
+      font-family: "Microsoft YaHei", system-ui, sans-serif;
+    }
+    header {
+      padding: 20px;
+      background: #fff;
+      border-bottom: 1px solid #666;
+    }
+    header h1 { margin: 0 0 6px; font-size: 20px; }
+    header p { margin: 0; font-size: 12px; color: #555; }
+    .index {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .index a {
+      padding: 6px 10px;
+      border: 1px solid #333;
+      color: #222;
+      text-decoration: none;
+      font-size: 12px;
+      background: #eee;
+    }
+    main {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    .screen-section { margin-bottom: 36px; }
+    .screen-label {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    .screen-label h2 { margin: 0; font-size: 16px; }
+    .screen-label span { font-size: 12px; color: #666; }
+    .phone {
+      width: 390px;
+      min-height: 640px;
+      padding: 12px;
+      background: #fff;
+      border: 2px solid #222;
+    }
+    .topbar {
+      min-height: 64px;
+      padding: 10px;
+      border: 1px dashed #555;
+      margin-bottom: 10px;
+    }
+    .topbar strong { display: block; font-size: 16px; }
+    .topbar small { display: block; margin-top: 4px; color: #666; font-size: 11px; }
+    .card {
+      border: 1px solid #666;
+      padding: 10px;
+      margin-bottom: 10px;
+      background: #fff;
+    }
+    .card-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .card-title { font-size: 13px; font-weight: 700; }
+    .card-desc { font-size: 11px; color: #666; }
+    .section-title {
+      font-size: 11px;
+      color: #555;
+      margin: 14px 0 6px;
+    }
+    .row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      min-height: 36px;
+      padding: 6px 0;
+      border-bottom: 1px dotted #999;
+    }
+    .row:last-child { border-bottom: 0; }
+    .row-main { min-width: 0; }
+    .row-title { font-size: 12px; }
+    .row-desc { font-size: 10px; color: #666; margin-top: 2px; }
+    .box {
+      min-height: 26px;
+      border: 1px dashed #666;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #666;
+      font-size: 10px;
+      padding: 4px 6px;
+      text-align: center;
+    }
+    .chip-row { display: flex; flex-wrap: wrap; gap: 5px; }
+    .chip {
+      min-width: 42px;
+      min-height: 22px;
+      padding: 3px 7px;
+      border: 1px solid #555;
+      font-size: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #f0f0f0;
+    }
+    .chip.on { border-width: 2px; background: #ddd; font-weight: 700; }
+    .btn-row { display: flex; gap: 6px; }
+    .btn {
+      flex: 1;
+      min-height: 30px;
+      border: 1px solid #333;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      background: #eee;
+    }
+    .btn.secondary { border-style: dashed; }
+    .input {
+      flex: 1;
+      min-height: 30px;
+      border: 1px dashed #666;
+      display: flex;
+      align-items: center;
+      padding: 0 8px;
+      color: #777;
+      font-size: 10px;
+    }
+    .toggle {
+      width: 36px;
+      height: 20px;
+      border: 1px solid #333;
+      position: relative;
+      flex: 0 0 auto;
+    }
+    .toggle::after {
+      content: "";
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 14px;
+      height: 14px;
+      border: 1px solid #333;
+      background: #ccc;
+    }
+    .toggle.right::after { left: auto; right: 2px; }
+    .slider { position: relative; height: 22px; border: 1px dashed #666; }
+    .slider::before {
+      content: "";
+      position: absolute;
+      top: 9px;
+      left: 8px;
+      right: 8px;
+      height: 2px;
+      background: #666;
+    }
+    .slider::after {
+      content: "";
+      position: absolute;
+      top: 5px;
+      left: 45%;
+      width: 12px;
+      height: 12px;
+      border: 1px solid #222;
+      background: #ddd;
+    }
+    .slider-label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 10px;
+      color: #555;
+      margin: 8px 0 3px;
+    }
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+    .grid.two { grid-template-columns: repeat(2, 1fr); }
+    .grid.four { grid-template-columns: repeat(4, 1fr); }
+    .metric {
+      min-height: 46px;
+      border: 1px dashed #555;
+      padding: 5px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 3px;
+    }
+    .metric strong { font-size: 13px; }
+    .metric small { font-size: 9px; color: #666; }
+    .ring-area {
+      height: 150px;
+      border: 1px dashed #555;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 8px;
+    }
+    .ring {
+      width: 110px;
+      height: 110px;
+      border: 2px solid #333;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      font-size: 10px;
+      color: #555;
+    }
+    .ring strong { font-size: 16px; color: #222; }
+    .pill {
+      display: inline-flex;
+      min-height: 24px;
+      padding: 3px 10px;
+      border: 1px solid #333;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+    }
+    .center { text-align: center; }
+    .tabbar {
+      margin-top: 10px;
+      border-top: 1px solid #333;
+      padding-top: 8px;
+    }
+    .tabbar .grid { grid-template-columns: repeat(5, 1fr); }
+    .tab {
+      min-height: 42px;
+      border: 1px dashed #666;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 9px;
+      color: #555;
+    }
+    .tab.on { border-style: solid; border-width: 2px; background: #e5e5e5; color: #111; }
+    .annotation {
+      font-size: 10px;
+      color: #666;
+      margin-top: 6px;
+      line-height: 1.5;
+    }
+    .modal-page {
+      border: 2px solid #222;
+      background: #fff;
+    }
+    .modal-top {
+      padding: 8px;
+      border-bottom: 1px dashed #666;
+      font-size: 11px;
+      color: #555;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>动态温控·解容工具箱 页面线框草图</h1>
+    <p>版本：v0.2 线框稿 | 性质：灰阶布局稿，只看结构和控件，不做最终效果</p>
+    <nav class="index">
+      <a href="#home">主页</a>
+      <a href="#thermal">温控</a>
+      <a href="#battery">电池</a>
+      <a href="#appearance">外观</a>
+      <a href="#about">关于</a>
+      <a href="#about-module">关于模块二级页</a>
+    </nav>
+  </header>
+
+  <main>
+    <section id="home" class="screen-section">
+      <div class="screen-label">
+        <h2>1 主页</h2>
+        <span>监控入口 + 充电功率 + 设备信息</span>
+      </div>
+      <div class="phone">
+        <div class="topbar">
+          <strong>HyperOS - 动态温控·解容</strong>
+          <small>顶部标题 / 副标题占位</small>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <span class="card-title">实时运行面板</span>
+            <span class="box">收起/展开</span>
+          </div>
+          <div class="ring-area">
+            <div class="ring">
+              <strong>-- W</strong>
+              <span>能量光环占位</span>
+              <span>液面 = 电量</span>
+            </div>
+          </div>
+          <div class="center"><span class="pill">当前温控档位</span></div>
+
+          <div class="section-title">实时状态</div>
+          <div class="grid">
+            <div class="metric"><strong>--%</strong><small>电量</small></div>
+            <div class="metric"><strong>--</strong><small>状态</small></div>
+            <div class="metric"><strong>--</strong><small>充电协议</small></div>
+            <div class="metric"><strong>--V</strong><small>电压</small></div>
+            <div class="metric"><strong>--A</strong><small>电流</small></div>
+            <div class="metric"><strong>--℃</strong><small>温度</small></div>
+          </div>
+
+          <div class="section-title">容量与寿命</div>
+          <div class="grid">
+            <div class="metric"><strong>--</strong><small>剩余容量</small></div>
+            <div class="metric"><strong>--</strong><small>满充容量</small></div>
+            <div class="metric"><strong>--</strong><small>设计容量</small></div>
+            <div class="metric"><strong>--%</strong><small>健康度</small></div>
+            <div class="metric"><strong>--%</strong><small>电池寿命</small></div>
+            <div class="metric"><strong>--</strong><small>循环次数</small></div>
+            <div class="metric"><strong>--</strong><small>伪装次数</small></div>
+          </div>
+
+          <div class="section-title">温区温度</div>
+          <div class="grid four">
+            <div class="box">温区 1</div>
+            <div class="box">温区 2</div>
+            <div class="box">温区 3</div>
+            <div class="box">温区 4</div>
+            <div class="box">温区 5</div>
+            <div class="box">温区 6</div>
+          </div>
+        </div>
+
+        <div class="section-title">充电功率</div>
+        <div class="card">
+          <div class="slider-label"><span>充电功率</span><span>全速</span></div>
+          <div class="slider"></div>
+          <div class="btn-row">
+            <div class="box">5W</div>
+            <div class="box">全速</div>
+          </div>
+          <div class="annotation">下方保留当前档位说明文字占位。</div>
+          <div class="box">当前功率状态 / 说明文字</div>
+        </div>
+
+        <div class="section-title">设备信息</div>
+        <div class="card">
+          <div class="row"><div class="row-main"><div class="row-title">模块版本</div></div><div class="box">--</div></div>
+          <div class="row"><div class="row-main"><div class="row-title">当前日期</div></div><div class="box">--</div></div>
+          <div class="row"><div class="row-main"><div class="row-title">设备型号</div></div><div class="box">--</div></div>
+          <div class="row"><div class="row-main"><div class="row-title">系统版本</div></div><div class="box">--</div></div>
+          <div class="row"><div class="row-main"><div class="row-title">运行环境</div></div><div class="box">--</div></div>
+        </div>
+
+        <div class="tabbar">
+          <div class="grid">
+            <div class="tab on">主页</div>
+            <div class="tab">温控</div>
+            <div class="tab">电池</div>
+            <div class="tab">外观</div>
+            <div class="tab">关于</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="thermal" class="screen-section">
+      <div class="screen-label">
+        <h2>2 温控</h2>
+        <span>档位 / 充电 / 游戏 / 旁路</span>
+      </div>
+      <div class="phone">
+        <div class="topbar"><strong>温控</strong><small>档位 / 充电 / 游戏 / 旁路</small></div>
+
+        <div class="annotation">高温保护备注：高温自动降充电功率与温度回落恢复默认开启，这里只做说明，不提供独立功能卡片。</div>
+
+        <div class="section-title">温控档位</div>
+        <div class="card">
+          <div class="card-head">
+            <span class="card-title">普通场景温控</span>
+            <span class="box">展开</span>
+          </div>
+          <div class="row-desc">非充电、非游戏时的默认温控档位</div>
+          <div class="chip-row">
+            <div class="chip">系统默认</div>
+            <div class="chip">无限制</div>
+            <div class="chip">一档</div>
+            <div class="chip">二档</div>
+            <div class="chip">三档</div>
+            <div class="chip">四档</div>
+            <div class="chip">五档</div>
+          </div>
+        </div>
+
+        <div class="section-title">场景</div>
+        <div class="card">
+          <div class="card-head">
+            <span class="card-title">充电场景</span>
+            <span class="row"><span class="toggle right"></span><span class="box">展开</span></span>
+          </div>
+          <div class="row-desc">亮屏充电档位</div>
+          <div class="chip-row">
+            <div class="chip">系统默认</div>
+            <div class="chip">无限制</div>
+            <div class="chip">一档</div>
+            <div class="chip">二档</div>
+            <div class="chip">三档</div>
+            <div class="chip">四档</div>
+            <div class="chip">五档</div>
+          </div>
+          <div class="row-desc">息屏充电档位</div>
+          <div class="chip-row">
+            <div class="chip">系统默认</div>
+            <div class="chip">无限制</div>
+            <div class="chip">一档</div>
+            <div class="chip">二档</div>
+            <div class="chip">三档</div>
+            <div class="chip">四档</div>
+            <div class="chip">五档</div>
+          </div>
+          <div class="row-desc">定时切换</div>
+          <div class="btn-row"><div class="input">开始时</div><div class="input">结束时</div><div class="box">档位</div></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <span class="card-title">游戏场景</span>
+            <span class="row"><span class="toggle right"></span><span class="box">展开</span></span>
+          </div>
+          <div class="row-desc">游戏温控档位</div>
+          <div class="chip-row">
+            <div class="chip">系统默认</div>
+            <div class="chip">无限制</div>
+            <div class="chip">一档</div>
+            <div class="chip">二档</div>
+            <div class="chip">三档</div>
+            <div class="chip">四档</div>
+            <div class="chip">五档</div>
+          </div>
+          <div class="row-desc">锁定刷新率，0 表示关闭</div>
+          <div class="input">输入刷新率</div>
+          <div class="section-title">游戏应用列表</div>
+          <div class="chip-row"><div class="chip">应用 1</div><div class="chip">应用 2</div><div class="chip">应用 3</div></div>
+          <div class="btn-row" style="margin-top:8px"><div class="input">输入包名</div><div class="btn">添加</div></div>
+          <div class="btn secondary" style="margin-top:8px">从已安装应用选择</div>
+        </div>
+
+        <div class="section-title">游戏加速</div>
+        <div class="card">
+          <div class="row">
+            <div class="row-main"><div class="row-title">HyperOS 游戏三倍速</div><div class="row-desc">开启后立即生效，开机后自动执行</div></div>
+            <span class="toggle right"></span>
+          </div>
+        </div>
+
+        <div class="section-title">自动任务</div>
+        <div class="card">
+          <div class="row">
+            <div class="row-main"><div class="row-title">定时充电计划</div><div class="row-desc">指定时间段自动切换功率</div></div>
+            <span class="toggle right"></span>
+          </div>
+          <div class="btn-row"><div class="input">开始</div><span class="box">到</span><div class="input">结束</div></div>
+          <div class="slider-label"><span>计划功率</span><span>全速</span></div>
+          <div class="slider"></div>
+          <div class="btn-row">
+            <div class="box">5W</div>
+            <div class="box">全速</div>
+          </div>
+          <div class="annotation">时段内手动改过功率档后不再接管。</div>
+        </div>
+
+        <div class="section-title">旁路供电</div>
+        <div class="card">
+          <div class="row">
+            <div class="row-main"><div class="row-title">手动旁路</div><div class="row-desc">立即生效</div></div>
+            <span class="toggle right"></span>
+          </div>
+          <div class="row">
+            <div class="row-main"><div class="row-title">游戏时旁路供电</div><div class="row-desc">检测到游戏应用时启用</div></div>
+            <span class="toggle right"></span>
+          </div>
+          <div class="row-desc">温度开启阈值</div><div class="input">0 = 关闭</div>
+          <div class="row-desc">温度关闭阈值</div><div class="input">回落温度</div>
+          <div class="row-desc">电量开启阈值</div><div class="input">电量大于等于</div>
+        </div>
+
+        <div class="tabbar">
+          <div class="grid">
+            <div class="tab">主页</div>
+            <div class="tab on">温控</div>
+            <div class="tab">电池</div>
+            <div class="tab">外观</div>
+            <div class="tab">关于</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="battery" class="screen-section">
+      <div class="screen-label">
+        <h2>3 电池</h2>
+        <span>解容 / DTBO / 伪装 / 电压</span>
+      </div>
+      <div class="phone">
+        <div class="topbar"><strong>电池</strong><small>解容 / DTBO / 循环 / 电压</small></div>
+
+        <div class="section-title">电池解容</div>
+        <div class="card">
+          <div class="row">
+            <div class="row-main"><div class="row-title">电池解容</div><div class="row-desc">挂载 BAA，防低电量锁容</div></div>
+            <span class="toggle right"></span>
+          </div>
+          <div class="row">
+            <div class="row-main"><div class="row-title">公版 PPS 解锁</div><div class="row-desc">第三方充电头功率兼容</div></div>
+            <span class="toggle right"></span>
+          </div>
+          <div class="row">
+            <div class="row-main"><div class="row-title">云控屏蔽</div><div class="row-desc">拦截云端下发与巡检隔离</div></div>
+            <span class="toggle right"></span>
+          </div>
+          <div class="row">
+            <div class="row-main"><div class="row-title">自适应功率爬坡 APL</div><div class="row-desc">全速档下动态上探</div></div>
+            <span class="toggle right"></span>
+          </div>
+        </div>
+
+        <div class="section-title">DTBO</div>
+        <div class="card">
+          <div class="row">
+            <div class="row-main"><div class="row-title">DTBO 刷入</div><div class="row-desc">识别 / 流程 / 确认状态</div></div>
+            <div class="box">状态</div>
+          </div>
+          <div class="btn-row">
+            <div class="btn">在线下载当前手机 DTBO</div>
+          </div>
+          <div class="box" style="margin-top:8px">本机 DTBO 信息 / 刷入流程占位</div>
+          <div class="btn secondary" style="margin-top:8px">确认刷入，重启生效</div>
+        </div>
+
+        <div class="section-title">循环次数伪装</div>
+        <div class="card">
+          <div class="row">
+            <div class="row-main"><div class="row-title">伪装循环次数</div><div class="row-desc">重启后仍生效</div></div>
+            <div class="box">当前值</div>
+          </div>
+          <div class="btn-row">
+            <div class="input">输入目标次数</div>
+            <div class="btn">应用</div>
+          </div>
+          <div class="btn secondary" style="margin-top:6px">清除伪装</div>
+        </div>
+
+        <div class="section-title">电池电压</div>
+        <div class="card">
+          <div class="row">
+            <div class="row-main"><div class="row-title">满电电压</div><div class="row-desc">4300~4700 mV</div></div>
+            <div class="box">当前值</div>
+          </div>
+          <div class="input">输入满电电压 mV</div>
+          <div class="row" style="margin-top:8px">
+            <div class="row-main"><div class="row-title">强制覆盖原厂上限</div><div class="row-desc">目标值超过原厂上限时开启</div></div>
+            <span class="toggle right"></span>
+          </div>
+          <div class="row">
+            <div class="row-main"><div class="row-title">关机电压</div><div class="row-desc">2800~3500 mV</div></div>
+            <div class="box">当前值</div>
+          </div>
+          <div class="input">输入关机电压 mV</div>
+          <div class="btn-row" style="margin-top:10px">
+            <div class="btn">应用电压</div>
+            <div class="btn secondary">关闭电压</div>
+          </div>
+          <div class="annotation">风险提示占位：电池老化 / 硬件保护 / 生效条件 / 还原说明。</div>
+        </div>
+
+        <div class="tabbar">
+          <div class="grid">
+            <div class="tab">主页</div>
+            <div class="tab">温控</div>
+            <div class="tab on">电池</div>
+            <div class="tab">外观</div>
+            <div class="tab">关于</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="appearance" class="screen-section">
+      <div class="screen-label">
+        <h2>4 外观</h2>
+        <span>主题 / 背屏 / 玻璃 / 缩放 / 底栏 / 背景 / DIY</span>
+      </div>
+      <div class="phone">
+        <div class="topbar"><strong>显示外观</strong><small>主题 / 玻璃材质 / 缩放 / 背景 / DIY</small></div>
+
+        <div class="section-title">主题</div>
+        <div class="card">
+          <div class="card-head"><span class="card-title">主题预设</span><span class="box">展开</span></div>
+          <div class="chip-row">
+            <div class="chip on">极光浅色</div><div class="chip">全息流体</div><div class="chip">暗黑霓虹</div><div class="chip">幻彩极光</div>
+            <div class="chip">赛博霓虹</div><div class="chip">熔岩鎏金</div><div class="chip">冰川琉璃</div><div class="chip">月海流银</div>
+          </div>
+          <div class="btn secondary" style="margin-top:8px">全局恢复默认</div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <span class="card-title">背屏电池卡片</span>
+            <span class="toggle right"></span>
+          </div>
+          <div class="box" style="min-height:120px">背屏卡片预览区 / 976×596 / 左侧挖孔避让</div>
+          <div class="row-desc">四角显示项，最多选 4 项</div>
+          <div class="chip-row">
+            <div class="chip on">温度</div><div class="chip on">电量</div><div class="chip on">电压</div><div class="chip on">电流</div>
+            <div class="chip">功率</div><div class="chip">状态</div><div class="chip">容量</div><div class="chip">健康度</div>
+          </div>
+          <div class="row-desc">字号</div>
+          <div class="chip-row"><div class="chip">小</div><div class="chip on">中</div><div class="chip">大</div></div>
+        </div>
+
+        <div class="section-title">玻璃与动效</div>
+        <div class="card">
+          <div class="row"><div class="row-main"><div class="row-title">液态玻璃</div></div><span class="toggle right"></span></div>
+          <div class="row"><div class="row-main"><div class="row-title">流畅模式</div><div class="row-desc">减少模糊、波浪和动效</div></div><span class="toggle right"></span></div>
+          <div class="row-desc">页面切换曲线</div>
+          <div class="chip-row"><div class="chip on">标准</div><div class="chip">轻柔</div><div class="chip">快速</div></div>
+          <div class="row-desc">淡入淡出强度</div>
+          <div class="chip-row"><div class="chip">弱</div><div class="chip on">中</div><div class="chip">强</div></div>
+          <div class="slider-label"><span>标题过渡模糊度</span><span>10</span></div>
+          <div class="slider"></div>
+        </div>
+
+        <div class="section-title">缩放</div>
+        <div class="card">
+          <div class="slider-label"><span>界面字体缩放</span><span>1.00</span></div>
+          <div class="slider"></div>
+          <div class="slider-label"><span>常规卡片缩放</span><span>1.00</span></div>
+          <div class="slider"></div>
+          <div class="slider-label"><span>卡片圆角</span><span>25px</span></div>
+          <div class="slider"></div>
+        </div>
+
+        <div class="section-title">质感</div>
+        <div class="card">
+          <div class="row"><div class="row-main"><div class="row-title">玻璃卡片质感</div></div><span class="toggle right"></span></div>
+          <div class="slider-label"><span>卡片透明度</span><span>0.20</span></div>
+          <div class="slider"></div>
+          <div class="row"><div class="row-main"><div class="row-title">悬浮底栏</div><div class="row-desc">底栏改为悬浮胶囊</div></div><span class="toggle right"></span></div>
+          <div class="row"><div class="row-main"><div class="row-title">隐藏底栏文字</div></div><span class="toggle right"></span></div>
+          <div class="row"><div class="row-main"><div class="row-title">跟随卡片透明度</div></div><span class="toggle right"></span></div>
+          <div class="row"><div class="row-main"><div class="row-title">底栏背景扭曲</div></div><span class="toggle right"></span></div>
+          <div class="row"><div class="row-main"><div class="row-title">底栏背景模糊</div></div><span class="toggle right"></span></div>
+          <div class="slider-label"><span>底栏宽度</span><span>84%</span></div><div class="slider"></div>
+          <div class="slider-label"><span>底栏高度</span><span>60px</span></div><div class="slider"></div>
+          <div class="slider-label"><span>底栏透明度</span><span>0.25</span></div><div class="slider"></div>
+          <div class="slider-label"><span>底栏纯色背景度</span><span>0.00</span></div><div class="slider"></div>
+          <div class="row-desc">底栏纯色背景颜色</div>
+          <div class="chip-row"><div class="chip">色 1</div><div class="chip">色 2</div><div class="chip">色 3</div><div class="chip">色 4</div></div>
+          <div class="slider-label"><span>底栏背景模糊度</span><span>3</span></div><div class="slider"></div>
+        </div>
+
+        <div class="section-title">背景</div>
+        <div class="card">
+          <div class="row"><div class="row-main"><div class="row-title">自定义背景</div></div><span class="toggle right"></span></div>
+          <div class="row"><div class="row-main"><div class="row-title">卡片毛玻璃</div></div><span class="toggle right"></span></div>
+          <div class="grid two">
+            <div class="box">青柠凝露</div>
+            <div class="box">冰蓝凝露</div>
+            <div class="box">紫晶凝露</div>
+            <div class="box">琥珀凝露</div>
+          </div>
+          <div class="btn-row" style="margin-top:8px">
+            <div class="btn secondary">默认壁纸</div>
+            <div class="btn">选择本地图片</div>
+            <div class="btn secondary">清除壁纸</div>
+          </div>
+          <div class="slider-label"><span>背景模糊度</span><span>2</span></div>
+          <div class="slider"></div>
+        </div>
+
+        <div class="section-title">颜色与字体</div>
+        <div class="card">
+          <div class="row-desc">分类字体颜色 / 透明度</div>
+          <div class="btn-row"><div class="box">色板</div><div class="box">透明度</div></div>
+          <div class="row-desc">卡片字体颜色 / 透明度</div>
+          <div class="btn-row"><div class="box">色板</div><div class="box">透明度</div></div>
+          <div class="row-desc">说明字体颜色 / 透明度</div>
+          <div class="btn-row"><div class="box">色板</div><div class="box">透明度</div></div>
+          <div class="row"><div class="row-main"><div class="row-title">全局字体族</div><div class="row-desc">更换界面字体</div></div><div class="box">选择</div></div>
+          <div class="row"><div class="row-main"><div class="row-title">分割线颜色 / 透明度</div></div><div class="box">设置</div></div>
+          <div class="row"><div class="row-main"><div class="row-title">显示卡片分类 / 注释 / 顶部注释</div></div><span class="box">显隐</span></div>
+        </div>
+
+        <div class="section-title">DIY 美化</div>
+        <div class="card">
+          <div class="card-head"><span class="card-title">背景光斑与噪点</span><span class="box">展开</span></div>
+          <div class="chip-row"><div class="chip">关闭</div><div class="chip">1 个</div><div class="chip">2 个</div><div class="chip on">3 个</div></div>
+          <div class="slider-label"><span>大小 / 模糊 / 透明度 / 漂移 / 速度</span><span>批量占位</span></div>
+          <div class="slider"></div>
+          <div class="row-desc">光斑颜色</div>
+          <div class="chip-row"><div class="chip">色 1</div><div class="chip">色 2</div><div class="chip">色 3</div></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><span class="card-title">能量光环</span><span class="box">展开</span></div>
+          <div class="grid two">
+            <div class="box">环宽 / 轨道 / 发光</div>
+            <div class="box">数字尺寸 / 液面波浪</div>
+            <div class="box">液面高度模式</div>
+            <div class="box">进度弧发光颜色</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><span class="card-title">卡片 / 底栏 / 主页布局</span><span class="box">展开</span></div>
+          <div class="grid two">
+            <div class="box">卡片与文字尺寸</div>
+            <div class="box">底栏尺寸</div>
+            <div class="box">主页数据格列数</div>
+            <div class="box">主页字段显隐</div>
+            <div class="box">面板默认状态</div>
+            <div class="box">卡片显隐</div>
+          </div>
+          <div class="btn secondary" style="margin-top:8px">恢复默认布局</div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><span class="card-title">外观方案</span><span class="box">0 套</span></div>
+          <div class="btn">保存当前外观为方案</div>
+          <div class="btn secondary" style="margin-top:6px">方案列表 / 切换 / 删除</div>
+          <div class="btn-row" style="margin-top:6px">
+            <div class="btn secondary">导出</div>
+            <div class="btn secondary">导入</div>
+          </div>
+        </div>
+
+        <div class="tabbar">
+          <div class="grid">
+            <div class="tab">主页</div>
+            <div class="tab">温控</div>
+            <div class="tab">电池</div>
+            <div class="tab on">外观</div>
+            <div class="tab">关于</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="about" class="screen-section">
+      <div class="screen-label">
+        <h2>5 关于</h2>
+        <span>作者 / 版本 / 帮助 / 维护</span>
+      </div>
+      <div class="phone">
+        <div class="topbar"><strong>关于</strong><small>HyperOS - 动态温控·解容</small></div>
+
+        <div class="card">
+          <div class="row"><div class="row-main"><div class="row-title">小米热炸了</div><div class="row-desc">整合维护者</div></div><span class="box">入口</span></div>
+          <div class="row"><div class="row-main"><div class="row-title">AxiaojiuY</div><div class="row-desc">动态温控作者</div></div><span class="box">入口</span></div>
+          <div class="row"><div class="row-main"><div class="row-title">听夜风1337</div><div class="row-desc">解容工具箱作者</div></div><span class="box">入口</span></div>
+          <div class="annotation">二改声明占位：整合来源和维护者。</div>
+        </div>
+
+        <div class="card">
+          <div class="row"><div class="row-main"><div class="row-title">动态温控 QQ 群</div></div><span class="box">打开</span></div>
+          <div class="row"><div class="row-main"><div class="row-title">电池解容 QQ 群</div></div><span class="box">打开</span></div>
+        </div>
+
+        <div class="card">
+          <div class="row"><div class="row-main"><div class="row-title">设备型号</div></div><div class="box">--</div></div>
+          <div class="row"><div class="row-main"><div class="row-title">系统版本</div></div><div class="box">--</div></div>
+          <div class="row"><div class="row-main"><div class="row-title">运行环境</div></div><div class="box">检测中</div></div>
+        </div>
+
+        <div class="card">
+          <div class="row"><div class="row-main"><div class="row-title">更新日志</div><div class="row-desc">查看历次更新内容</div></div><span class="box">查看</span></div>
+          <div class="row"><div class="row-main"><div class="row-title">检查更新</div><div class="row-desc">检查最新版本</div></div><div class="box">当前版本</div></div>
+          <div class="annotation">更新来源占位：GitHub / 作者酷安 / Telegram。</div>
+        </div>
+
+        <div class="card">
+          <div class="row"><div class="row-main"><div class="row-title">使用说明</div><div class="row-desc">按页面分组</div></div><span class="box">查看</span></div>
+          <div class="row"><div class="row-main"><div class="row-title">特别鸣谢 / 注意事项 / 档位说明</div></div><span class="box">展开</span></div>
+          <div class="row"><div class="row-main"><div class="row-title">场景功能 / 判断优先级</div></div><span class="box">展开</span></div>
+        </div>
+
+        <div class="section-title">日志</div>
+        <div class="card">
+          <div class="row"><div class="row-main"><div class="row-title">查看日志文件</div><div class="row-desc">运行日志</div></div><span class="box">打开</span></div>
+        </div>
+
+        <div class="section-title">工具</div>
+        <div class="card">
+          <div class="row"><div class="row-main"><div class="row-title">诊断与日志打包</div><div class="row-desc">反馈问题用</div></div><span class="box">生成</span></div>
+          <div class="row"><div class="row-main"><div class="row-title">卸载模块</div><div class="row-desc">还原系统配置，需二次确认</div></div><span class="box">危险</span></div>
+        </div>
+
+        <div class="tabbar">
+          <div class="grid">
+            <div class="tab">主页</div>
+            <div class="tab">温控</div>
+            <div class="tab">电池</div>
+            <div class="tab">外观</div>
+            <div class="tab on">关于</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="about-module" class="screen-section">
+      <div class="screen-label">
+        <h2>6 关于模块二级页</h2>
+        <span>帮助 / 备份 / 更新入口</span>
+      </div>
+      <div class="phone modal-page">
+        <div class="modal-top">顶部返回 / 关闭占位</div>
+        <div style="padding:12px">
+          <div class="card">
+            <div class="card-head"><span class="card-title">特别鸣谢</span><span class="box">展开</span></div>
+            <div class="box">贡献者列表占位</div>
+          </div>
+          <div class="card">
+            <div class="card-head"><span class="card-title">注意事项</span><span class="box">展开</span></div>
+            <div class="box">高温 / 包名 / 刷新率 / 旁路风险提示</div>
+          </div>
+          <div class="card">
+            <div class="card-head"><span class="card-title">使用帮助与指南</span><span class="box">展开</span></div>
+            <div class="grid two">
+              <div class="box">温控档位说明</div>
+              <div class="box">场景功能说明</div>
+              <div class="box">场景判断优先级</div>
+              <div class="box">常见问题占位</div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head"><span class="card-title">备份与恢复</span><span class="box">展开</span></div>
+            <div class="grid two">
+              <div class="box">已保存设置</div>
+              <div class="box">数据大小</div>
+            </div>
+            <div class="btn secondary" style="margin-top:8px">立即备份当前设置</div>
+            <div class="input" style="margin-top:8px">保存路径</div>
+            <div class="grid two" style="margin-top:8px">
+              <div class="box">复制到剪贴板</div>
+              <div class="box">保存到路径</div>
+              <div class="box">浏览器下载</div>
+              <div class="box">完整备份</div>
+              <div class="box">粘贴 JSON 恢复</div>
+              <div class="box">从文件恢复</div>
+            </div>
+            <div class="btn secondary" style="margin-top:8px">完整恢复全部数据</div>
+            <div class="btn secondary" style="margin-top:6px">恢复默认配置</div>
+          </div>
+          <div class="card">
+            <div class="card-head"><span class="card-title">获取更新</span><span class="box">展开</span></div>
+            <div class="grid three">
+              <div class="box">GitHub</div>
+              <div class="box">作者酷安</div>
+              <div class="box">Telegram</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
