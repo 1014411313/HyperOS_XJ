@@ -24,9 +24,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
@@ -125,46 +129,44 @@ fun App() {
                 }
             }
 
-            // 状态栏无痕渐变模糊：两层不同半径叠加，覆盖高度大于状态栏，靠 alpha 渐变淡出；
-            // 不在状态栏下沿切断模糊，所以不会出现「一道线 + 直接模糊」的硬边。
+            // 状态栏渐变模糊：模糊必须自己按 alpha 遮罩淡出（DstIn），不能靠叠颜色——
+            // drawBackdrop 的模糊在矩形内均匀，矩形边界会把模糊硬切断（就是之前看到的那道线）。
             Box(
                 Modifier
                     .align(Alignment.TopCenter)
                     .fillMaxWidth()
-                    .height(statusTop + 44.dp)
+                    .height(statusTop + 48.dp)
+                    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
                     .drawBackdrop(
                         backdrop = backdrop,
                         shape = { RoundedRectangle(0.dp) },
-                        effects = { blur(16.dp.toPx()) },
-                        onDrawSurface = {
-                            drawRect(
-                                Brush.verticalGradient(
-                                    0f to Color.Black.copy(alpha = 0.26f),
-                                    0.55f to Color.Black.copy(alpha = 0.10f),
-                                    1f to Color.Transparent
-                                )
-                            )
-                        }
+                        effects = { blur(26.dp.toPx()) }
                     )
+                    .drawWithContent {
+                        drawContent()
+                        drawRect(
+                            brush = Brush.verticalGradient(
+                                0f to Color.White,
+                                0.45f to Color.White.copy(alpha = 0.55f),
+                                0.78f to Color.White.copy(alpha = 0.18f),
+                                1f to Color.White.copy(alpha = 0f)
+                            ),
+                            blendMode = BlendMode.DstIn
+                        )
+                    }
             )
+            // 单独的暗化渐变（不带模糊，所以无边界）：抬高状态栏图标与下方文字的对比度
             Box(
                 Modifier
                     .align(Alignment.TopCenter)
                     .fillMaxWidth()
-                    .height(statusTop + 10.dp)
-                    .drawBackdrop(
-                        backdrop = backdrop,
-                        shape = { RoundedRectangle(0.dp) },
-                        effects = { blur(28.dp.toPx()) },
-                        onDrawSurface = {
-                            drawRect(
-                                Brush.verticalGradient(
-                                    0f to Color.Black.copy(alpha = 0.34f),
-                                    0.7f to Color.Black.copy(alpha = 0.12f),
-                                    1f to Color.Transparent
-                                )
-                            )
-                        }
+                    .height(statusTop + 22.dp)
+                    .background(
+                        Brush.verticalGradient(
+                            0f to Color.Black.copy(alpha = 0.30f),
+                            0.6f to Color.Black.copy(alpha = 0.10f),
+                            1f to Color.Transparent
+                        )
                     )
             )
 

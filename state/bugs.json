@@ -1612,6 +1612,21 @@
       "affected": [
         "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/App.kt"
       ]
+    },
+    {
+      "id": "bug-093",
+      "title": "顶部渐变模糊仍有硬边（两道线）",
+      "reported": "2026-11-09",
+      "type": "bug",
+      "version_seen": "3.1.29 (339)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "fixed_in": "3.1.30（340，未发布）",
+      "root_cause": "drawBackdrop 的模糊在整个矩形内均匀，onDrawSurface 只是在该层上叠加颜色/渐变，不会让模糊强度递减；矩形边界处仍是「模糊突然变清晰」，所以每一层都露出一个硬边。上一版叠了两层，于是出现两道线",
+      "resolution": "改为单层模糊 + 真正的 alpha 遮罩：graphicsLayer{compositingStrategy=Offscreen} 隔离图层，drawBackdrop 做 26dp 模糊，再用 drawWithContent + BlendMode.DstIn 画垂直渐变（白 1.0 → 0.55 → 0.18 → 0）把模糊结果本身按 alpha 淡出，边界处模糊强度为 0 因此无痕；暗化用另一层纯色渐变（无模糊、无边界）。覆盖高度改为状态栏+48dp，PageInsets.top 保持状态栏+44dp，标题落在模糊已基本淡出的位置",
+      "affected": [
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/App.kt"
+      ]
     }
   ],
   "cancelled": []
