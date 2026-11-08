@@ -1581,6 +1581,23 @@
       "affected": [
         "engine/lib/apl.sh"
       ]
+    },
+    {
+      "id": "bug-091",
+      "title": "视频背景被过度放大只剩局部（旋转元数据未处理）",
+      "reported": "2026-11-09",
+      "type": "bug",
+      "version_seen": "3.1.27 (337)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户提供原视频截图（竖屏人像）与设置后的截图：背景只剩一只眼睛，画面被放大约 2 倍。手机拍摄的竖屏视频通常编码为横屏帧 + rotation 元数据（90/270），MediaPlayer.videoWidth/Height 返回编码尺寸，而 TextureView 不自动应用旋转，按横屏尺寸做 center-crop 会放大 2 倍以上",
+      "root_cause": "AppMediaBackground 用 mediaPlayer.videoWidth/Height 直接算 center-crop 矩阵，未读取 METADATA_KEY_VIDEO_ROTATION，也未在矩阵里应用旋转",
+      "fix_plan": "用 MediaMetadataRetriever 读取视频宽高与旋转角；矩阵先按旋转角围绕 view 中心旋转，再按「旋转后显示尺寸」计算 center-crop 缩放，同样围绕中心，保证画面居中不偏移",
+      "affected": [
+        "ToolboxApp/app/src/androidMain/kotlin/com/hyperos/xj/ui/AppMediaBackground.android.kt"
+      ],
+      "fixed_in": "3.1.28（338，未发布）",
+      "resolution": "新增 VideoMeta 与 readVideoMeta（MediaMetadataRetriever 读 METADATA_KEY_VIDEO_WIDTH/HEIGHT/ROTATION）；applyVideoTransform 先围绕视图中心按 rotation 旋转，再按「旋转后的显示尺寸」等比 center-crop 缩放，两者都以视图中心为轴保证不偏；布局变化与 SurfaceTexture 尺寸变化时都按真实元数据重算；读不到元数据时回退 MediaPlayer 上报尺寸（rotation=0）"
     }
   ],
   "cancelled": []
