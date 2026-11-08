@@ -5,22 +5,6 @@
   "note": "唯一台账。收到反馈只记录不动代码；用户明确说「修复」后才按 fix_plan 逐条改。",
   "collecting": [
     {
-      "id": "bug-002",
-      "title": "充电时每 6~15 秒重复切档并重启 mi_thermald",
-      "reported": "2026-11-08",
-      "type": "bug",
-      "version_seen": "3.1.0 (310)",
-      "device": "haotian",
-      "status": "待修",
-      "evidence": "完整 engine.log：12:41:52~12:43:47 的档位变化（无限制/一档/五档）对应用户在 App 改档；12:43:47 起目标稳定为五档却仍每 6~25 秒重复「切换 → 五档 ｜ map=2」，其间仅夹 2 次「系统默认」。排除实验：①手动连续调用 apply_conf_mode level_5 三次，仅第 1 次打印切换（幂等正常）；②手写 level_5 场景到 thermal-normal.conf，静置 15 秒与重启 mi_thermald 后 md5 都不变（守护不回写）；③MiWKJR 的 core/thermal_core.sh 全文不含 thermal-normal/THERMAL_PATH/mi_thermald",
-      "root_cause": "未定。两个候选假设（守护回写、MiWKJR 抢写）均被证伪；剩可能：其他模块（elite_freq_cap/scene 等）改同一文件，或 current_mode 与 normal.conf 之间存在竞态。需在充电状态下打印 _tmd5/_curmd5/_curname 才能定位",
-      "fix_plan": "在 apply_conf_mode 幂等分支加临时日志（打印 _mode/_tmd5/_curmd5/_curname），设备充电时复现并比对；定位后再改，不盲加标记",
-      "affected": [
-        "engine/lib/thermal.sh:214",
-        "engine/xjdaemon.sh:245"
-      ]
-    },
-    {
       "id": "bug-021",
       "title": "待验证：LSPosed 是否启用本模块及 scope",
       "reported": "2026-11-08",
@@ -34,6 +18,12 @@
       "affected": [
         "ToolboxApp/androidApp/src/main/java/com/hyperos/xj/rear/RearHook.java:41"
       ]
+    },
+    {
+      "id": "bug-027",
+      "title": "fv_v 直接写 sysfs 在 haotian 上无效",
+      "status": "待决策",
+      "resolution": "battery/voltage_max 只读、constant_charge_voltage 不存在；正确路径是 BAA 的 smart_fv/fv_force。需决定 App 提示还是改链路"
     }
   ],
   "fixed": [
@@ -418,6 +408,39 @@
       ],
       "fixed_in": "3.1.1（311，未发布）",
       "resolution": "新增 engine/lib/dtbo.sh（status/backup/flash，严格校验+自动备份）与 diag/log 命令"
+    },
+    {
+      "id": "bug-002",
+      "title": "充电时每 6~15 秒重复切档并重启 mi_thermald",
+      "reported": "2026-11-08",
+      "type": "bug",
+      "version_seen": "3.1.0 (310)",
+      "device": "haotian",
+      "status": "已修复并真机验证",
+      "evidence": "完整 engine.log：12:41:52~12:43:47 的档位变化（无限制/一档/五档）对应用户在 App 改档；12:43:47 起目标稳定为五档却仍每 6~25 秒重复「切换 → 五档 ｜ map=2」，其间仅夹 2 次「系统默认」。排除实验：①手动连续调用 apply_conf_mode level_5 三次，仅第 1 次打印切换（幂等正常）；②手写 level_5 场景到 thermal-normal.conf，静置 15 秒与重启 mi_thermald 后 md5 都不变（守护不回写）；③MiWKJR 的 core/thermal_core.sh 全文不含 thermal-normal/THERMAL_PATH/mi_thermald",
+      "root_cause": "未定。两个候选假设（守护回写、MiWKJR 抢写）均被证伪；剩可能：其他模块（elite_freq_cap/scene 等）改同一文件，或 current_mode 与 normal.conf 之间存在竞态。需在充电状态下打印 _tmd5/_curmd5/_curname 才能定位",
+      "fix_plan": "在 apply_conf_mode 幂等分支加临时日志（打印 _mode/_tmd5/_curmd5/_curname），设备充电时复现并比对；定位后再改，不盲加标记",
+      "affected": [
+        "engine/lib/thermal.sh:214",
+        "engine/xjdaemon.sh:245"
+      ],
+      "fixed_in": "3.1.1（311，未发布）",
+      "resolution": "根因：data.sh 仅按 battery/status==Charging 判充电；涓流/温控暂停时 status 抖动，场景在充电/非充电间反复切（实测 default_mode<->charge_level 每数分钟切一次）。改为非放电状态一律以 usb/online 判定。真机热修后 120 秒内零次切换。",
+      "fixed_note": "热修备份在设备 /data/local/tmp/data.sh.bak；长时稳定性待观察"
+    },
+    {
+      "id": "bug-025",
+      "title": "添加目录无法拉起系统文件管理器",
+      "status": "已修待复测",
+      "fixed_in": "3.1.1（311，未发布）",
+      "resolution": "新增 DirectoryPicker expect/actual（ACTION_OPEN_DOCUMENT_TREE + tree uri 转绝对路径）；BatteryPage 改为优先调系统选择器，保留手输兜底"
+    },
+    {
+      "id": "bug-026",
+      "title": "已安装应用读取不全 + 选择器太小",
+      "status": "已修待复测",
+      "fixed_in": "3.1.1（311，未发布）",
+      "resolution": "AndroidManifest 加 QUERY_ALL_PACKAGES（已核实进 APK）；InstalledApps 合并 launchable+全量已安装；ThermalPage 改为弹出式面板（搜索/滚动/选中态）"
     }
   ],
   "cancelled": []

@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.sp
 import com.hyperos.xj.runtime.DeviceStatus
 import com.hyperos.xj.runtime.Engine
 import com.hyperos.xj.runtime.ToolboxRuntimeBridge
+import com.hyperos.xj.runtime.pickDirectoryPath
 import com.hyperos.xj.ui.ActionButton
 import com.hyperos.xj.ui.GlassCard
 import com.hyperos.xj.ui.GlassInput
@@ -189,7 +190,7 @@ fun BatteryPage(
             SectionLabel("DTBO 镜像库")
 
             Row(verticalAlignment = Alignment.CenterVertically) {
-                GlassInput(dtboDir, { dtboDir = it }, "输入扫描目录绝对路径", Modifier.weight(1f))
+                GlassInput(dtboDir, { dtboDir = it }, "留空点「添加目录」选目录，或输入绝对路径", Modifier.weight(1f))
                 Spacer(Modifier.width(8.dp))
                 ActionButton(
                     backdrop,
@@ -197,12 +198,20 @@ fun BatteryPage(
                     {
                         val dir = dtboDir.trim()
                         when {
-                            dir.isEmpty() -> dtboLibraryMsg = "请先输入扫描目录的绝对路径。"
-                            !dir.startsWith("/") -> dtboLibraryMsg = "扫描目录必须是绝对路径。"
-                            else -> scope.launch {
+                            dir.isNotEmpty() && !dir.startsWith("/") -> dtboLibraryMsg = "扫描目录必须是绝对路径。"
+                            dir.isNotEmpty() -> scope.launch {
                                 dtboLibraryMsg = bridge.exec(Engine.dtboAddDir(dir))
                                 dtboDir = ""
                                 refreshDtboLibrary()
+                            }
+                            else -> scope.launch {
+                                val picked = pickDirectoryPath()
+                                if (picked == null) {
+                                    dtboLibraryMsg = "未选择目录"
+                                } else {
+                                    dtboLibraryMsg = bridge.exec(Engine.dtboAddDir(picked))
+                                    refreshDtboLibrary()
+                                }
                             }
                         }
                     }

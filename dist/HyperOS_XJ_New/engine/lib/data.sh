@@ -28,8 +28,18 @@ sample() {
   case "$BAT_VOLT" in ''|*[!0-9]*) BAT_VOLT=0 ;; esac
   BAT_STATUS=$(cat "$_b/status" 2>/dev/null)
   [ -n "$BAT_STATUS" ] || BAT_STATUS="Unknown"
-  IS_CHARGING=0
-  case "$BAT_STATUS" in Charging|Full) IS_CHARGING=1 ;; esac
+  # 涓流/温控暂停时 status 会短暂变 Not charging，只看它会让场景判定在
+  # 「默认档位/充电档位」之间反复跳；因此非放电状态一律以充电器在线为准。
+  case "$BAT_STATUS" in
+    Charging|Full) IS_CHARGING=1 ;;
+    Discharging)   IS_CHARGING=0 ;;
+    *)
+      case "$(cat /sys/class/power_supply/usb/online 2>/dev/null)" in
+        1) IS_CHARGING=1 ;;
+        *) IS_CHARGING=0 ;;
+      esac
+      ;;
+  esac
 }
 
 # 一次性扫描详情节点，写 detail.list + ps.cache（原 base.apk detect.sh）。

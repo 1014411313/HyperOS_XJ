@@ -337,20 +337,48 @@ private fun AboutSubPage(
         )
 
         CollapsibleCard(backdrop, "特别鸣谢", initiallyExpanded = false, modifier = Modifier.fillMaxWidth()) {
-            BasicText("贡献者列表占位", style = TextStyle(color = XJ.TextSecondary, fontSize = 12.sp))
+            HelpBullet("感谢整合维护者「小米热炸了」。")
+            HelpBullet("感谢动态温控作者「AxiaojiuY」与电池解容工具箱作者「听夜风1337」，本模块的温控场景与电池解容能力整理自上述上游方案。")
+            HelpBullet("引擎脚本在本仓库内重写维护，模块包只包含本仓库的引擎、温控场景与电池载荷，不打包其他第三方模块。")
+            HelpBullet("相关 QQ 群与作者主页暂未收录公开链接。")
         }
         CollapsibleCard(backdrop, "注意事项", initiallyExpanded = false, modifier = Modifier.fillMaxWidth()) {
-            BasicText("高温 / 包名 / 刷新率 / 旁路风险提示", style = TextStyle(color = XJ.TextSecondary, fontSize = 12.sp))
+            HelpBullet("高温：引擎内置高温守卫，电池温度达到 48℃ 时会把「无限制 / 一档 / 二档 / 系统默认」强制压到三档；模块默认保留系统的高温停充保护，手动关闭后高温也会继续充电，长期高温充电会加速电池老化。")
+            HelpBullet("包名：游戏识别按完整包名精确匹配，多个包名用「|」分隔；包名填错时游戏档位、锁定刷新率与游戏联动旁路都不会生效。")
+            HelpBullet("刷新率：锁定刷新率通过系统设置写入，退出游戏后自动还原；长时间锁定高刷新率会增加耗电与发热。")
+            HelpBullet("旁路：旁路供电是把充电电流压低（默认 500mA，可调且不超过记录的原始电流），并非真正断开充电；低电量时长时间旁路会让电池持续放电。")
+            HelpBullet("DTBO：刷写 DTBO 镜像属高危操作，刷错会导致设备无法开机（变砖）；本版本 App 未开放刷入入口，如需操作必须先备份并自行确认。")
         }
         CollapsibleCard(backdrop, "使用帮助与指南", initiallyExpanded = true, modifier = Modifier.fillMaxWidth()) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SubBox("温控档位说明", Modifier.weight(1f))
-                SubBox("场景功能说明", Modifier.weight(1f))
+            CollapsibleCard(backdrop, "温控档位说明", initiallyExpanded = false, modifier = Modifier.fillMaxWidth()) {
+                HelpBullet("系统默认（default）：还原原厂温控配置并重启系统温控守护，交还系统自行调度。")
+                HelpBullet("无限制（unlimited）：写入空白温控配置，解除系统温控限制，性能优先，发热与功耗自负。")
+                HelpBullet("一档～五档（level_1..level_5）：模块内置的五套温控场景配置，数字越大越保守。")
+                HelpBullet("开启充电温控联动时，档位决定充电降功率的电池温度线：一档 45℃、二档 40℃、三档 35℃、四档 31℃、五档 26℃；超过温度线先降为中功率，再升高 4℃ 降为低功率。")
+                HelpBullet("「默认档位」在不充电或关闭充电温控时生效；页面切换档位只写入配置，由引擎每 3 秒轮询应用。")
             }
-            Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SubBox("场景判断优先级", Modifier.weight(1f))
-                SubBox("常见问题", Modifier.weight(1f))
+            CollapsibleCard(backdrop, "场景功能说明", initiallyExpanded = false, modifier = Modifier.fillMaxWidth()) {
+                HelpBullet("亮屏充电：充电且亮屏时应用的档位，默认「无限制」。")
+                HelpBullet("息屏充电：充电且息屏时应用的档位，未设置时沿用亮屏充电档位。")
+                HelpBullet("时段：每天「开始～结束」小时内充电时应用的档位，支持跨零点（如 23 → 7）；时段外沿用亮屏充电档位。")
+                HelpBullet("游戏：亮屏且前台应用命中游戏包名时应用游戏档位，可同时锁定刷新率、联动旁路。")
+                HelpBullet("旁路：充电时把充电电流压到很低（默认 500mA），接近「边玩边不充电」；支持手动开关、电量触发、温度触发（带迟滞回落）与游戏联动，仅充电且非联发科机型时生效。")
+                HelpBullet("默认档位：不充电时应用的温控档位。")
+            }
+            CollapsibleCard(backdrop, "场景判断优先级", initiallyExpanded = false, modifier = Modifier.fillMaxWidth()) {
+                HelpBullet("引擎每 3 秒判定一轮，先命中先生效：")
+                HelpBullet("① 模块禁用或总开关关闭：还原充电与温控，所有场景不生效。")
+                HelpBullet("② 旁路（仅充电时）：手动旁路 > 温度触发（带迟滞）> 电量触发 > 游戏联动；命中后直接接管充电，当轮不再应用温控场景。")
+                HelpBullet("③ 温控场景（充电时）：游戏 > 息屏 > 时段 > 亮屏充电；不充电时使用「默认档位」。")
+                HelpBullet("④ 高温守卫兜底：电池 ≥48℃ 时，「无限制 / 一档 / 二档 / 系统默认」强制压到三档。")
+                HelpBullet("⑤ 充电功率联动：充电计划时段内取用户档与计划档中更严的一档；充电温控联动按当前档位的温度线自动降功率。")
+            }
+            CollapsibleCard(backdrop, "常见问题", initiallyExpanded = false, modifier = Modifier.fillMaxWidth()) {
+                HelpBullet("改了档位不生效？切换只写入配置，引擎最多 3 秒后应用，且应用档位需重启系统温控守护（约 1～2 秒）；请确认模块未被禁用、总开关已打开；充电时实际档位由场景判定决定，可能被时段 / 息屏 / 游戏覆盖。")
+                HelpBullet("为什么需要 Root？引擎直接改写系统温控配置目录、充电电流节点与系统属性，全部通过 su 调用完成，没有 Root 无法实现。")
+                HelpBullet("DTBO 有什么风险？DTBO 是设备树分区镜像，刷错会导致设备无法开机；刷写前必须先备份原厂镜像。")
+                HelpBullet("日志在哪里？模块日志在 /data/adb/modules/HyperOS_XJ/log/，可在主页「日志」入口查看；反馈问题前先用「诊断与日志打包」生成日志包。")
+                HelpBullet("温控配置会被系统改回去吗？引擎应用档位后会把配置文件加锁防止系统覆盖，恢复「系统默认」时解锁并还原首次运行时备份的原厂配置。")
             }
         }
         CollapsibleCard(backdrop, "备份与恢复", initiallyExpanded = true, modifier = Modifier.fillMaxWidth()) {
@@ -381,11 +409,14 @@ private fun AboutSubPage(
             AboutRow("恢复默认配置", null, "恢复") { }
         }
         CollapsibleCard(backdrop, "获取更新", initiallyExpanded = false, modifier = Modifier.fillMaxWidth()) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SubBox("GitHub", Modifier.weight(1f))
-                SubBox("作者酷安", Modifier.weight(1f))
-                SubBox("Telegram", Modifier.weight(1f))
-            }
+            AboutRow("GitHub", "暂未提供", null)
+            AboutRow("作者酷安", "暂未提供", null)
+            AboutRow("Telegram", "暂未提供", null)
+            Spacer(Modifier.height(6.dp))
+            BasicText(
+                text = "以上渠道暂未收录公开链接。",
+                style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp)
+            )
         }
     }
 }
@@ -444,6 +475,15 @@ private fun AboutRow(
             )
         }
     }
+}
+
+@Composable
+private fun HelpBullet(text: String) {
+    BasicText(
+        text = "· $text",
+        modifier = Modifier.padding(vertical = 3.dp),
+        style = TextStyle(color = XJ.TextSecondary, fontSize = 12.sp)
+    )
 }
 
 @Composable
