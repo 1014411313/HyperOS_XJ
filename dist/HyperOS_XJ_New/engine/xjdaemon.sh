@@ -265,6 +265,29 @@ run_tick() {
     _target=$(json_get game_level unlimited)
   fi
 
+  # 场景标记：normal（非充电非游戏）/ charge / game
+  _scene="normal"
+  [ "$IS_CHARGING" = "1" ] && [ "$MTK_MODE" != "1" ] && _scene="charge"
+  [ "$_gaming" = "1" ] && _scene="game"
+
+  # 普通/游戏场景：电池温度 ≥ 档位上限 → 交回官方温控（解除档位对温度的接管）；
+  # 回落到「上限-2℃」再恢复档位；带滞回防抖动。充电场景不交回，功率由 APL 温度线处理。
+  if [ "$_scene" = "normal" ] || [ "$_scene" = "game" ]; then
+    _t_limit=$(apl_level_temp_c "$_target")
+    if [ -n "$_t_limit" ]; then
+      _tb=$(( BAT_TEMP / 10 ))
+      if [ "$_tb" -ge "$_t_limit" ]; then
+        printf '%s' "$_target" > "$CONFDIR/.thermal_handback_mode" 2>/dev/null
+        : > "$CONFDIR/.thermal_handback" 2>/dev/null
+      elif [ -f "$CONFDIR/.thermal_handback" ] && [ "$_tb" -le $(( _t_limit - 2 )) ]; then
+        rm -f "$CONFDIR/.thermal_handback" 2>/dev/null
+      fi
+      [ -f "$CONFDIR/.thermal_handback" ] && _target="default"
+    fi
+  else
+    rm -f "$CONFDIR/.thermal_handback" "$CONFDIR/.thermal_handback_mode" 2>/dev/null
+  fi
+
   valid_mode "$_target" || { _target=$(cat "$CONFDIR/current_mode" 2>/dev/null); valid_mode "$_target" || _target="default"; }
   _target=$(guard_apply "$_target")
 

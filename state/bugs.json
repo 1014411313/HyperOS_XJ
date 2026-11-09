@@ -1763,6 +1763,20 @@
       ],
       "fixed_in": "3.1.35（345，未发布）",
       "resolution": "可见性改为 cfg.enabled && 当前在充电（BatteryReader 的 BATTERY_STATUS_CHARGING/FULL）；tick 每 2 秒刷新，拔线后自动隐藏"
+    },
+    {
+      "id": "bug-103",
+      "title": "普通/游戏场景超档位温度交回官方温控",
+      "reported": "2026-11-09",
+      "type": "feature",
+      "version_seen": "3.1.35 (345)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "fixed_in": "3.1.36（346，未发布）",
+      "resolution": "xjdaemon 增加场景标记（normal/charge/game）与超温交回：普通或游戏场景下电池温度 ≥ 档位上限时 _target 置为 default（走 apply_default 还原原厂温控配置，解除档位对温度的接管），并写 CONFDIR/.thermal_handback 标记；回落到「上限-2℃」清标记恢复正常档位；无限制/系统默认无温度线不触发；充电场景不交回（功率仍由 APL 温度线处理）；交回后 current_mode=default，APL 温度线随之失效，温度完全交回系统",
+      "affected": [
+        "engine/xjdaemon.sh"
+      ]
     }
   ],
   "cancelled": [
