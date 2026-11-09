@@ -29,6 +29,11 @@ export default {
     if (request.method !== "POST") {
       return new Response("method not allowed", { status: 405 });
     }
+    // GH_REPO 有内置默认值，只配 GH_TOKEN 也能跑
+    const repo = env.GH_REPO || "1014411313/HyperOS_XJ";
+    if (!env.GH_TOKEN) {
+      return new Response("missing GH_TOKEN secret", { status: 500 });
+    }
     const maxBytes = Number(env.MAX_BYTES || 8 * 1024 * 1024);
 
     let form;
@@ -57,7 +62,7 @@ export default {
     const meta = `机型: ${device}\n上传: ${stamp}\n\n问题描述:\n${note || "（未填写）"}\n`;
 
     const put = async (p, content) => {
-      const res = await fetch(`https://api.github.com/repos/${env.GH_REPO}/contents/${p}`, {
+      const res = await fetch(`https://api.github.com/repos/${repo}/contents/${p}`, {
         method: "PUT",
         headers: {
           Authorization: `Bearer ${env.GH_TOKEN}`,
