@@ -1900,8 +1900,8 @@
       "version_seen": "3.1.38 (348)",
       "device": "haotian",
       "status": "已修待复测",
-      "fixed_in": "3.1.40（350，未发布）",
-      "resolution": "App 生成诊断包后读仓库 feedback_endpoint.json 取上传地址 → POST multipart 到 Cloudflare Worker → Worker 用 Contents API 写 feedback/<时间戳>_xxx.tar.gz 与同名 .txt（机型/时间/问题描述）。流程定稿：不需要 GitHub Issue 通知，也不需要工作流——作者（AI）下次对话时直接 git pull 读 feedback/ 里的包，修完自行 git rm 删除。token 只需 Contents: Read and write。相关文件：tools/feedback-worker/（worker.js + wrangler.toml + README）、feedback_endpoint.json、App 的 Feedback.kt/Feedback.android.kt/AboutPage.kt",
+      "fixed_in": "3.1.41（351，未发布）",
+      "resolution": "定稿为「App 内填 token 直传」：用户在『关于 → 诊断与日志打包』首次使用时粘贴 GitHub fine-grained token（仅本仓库 Contents 读写），存 SharedPreferences（不随包上传）；App 直接调 GitHub Contents API 写 feedback/<时间戳>_xxx.tar.gz 与同名 .txt（机型/时间/问题描述）。作者（AI）下次对话 git pull 读包、修完 git rm 删包。Cloudflare Worker（tools/feedback-worker）与 feedback_endpoint.json 保留为可选中转方案，未配 token 时才回退使用",
       "affected": [
         "tools/feedback-worker/worker.js",
         "tools/feedback-worker/wrangler.toml",

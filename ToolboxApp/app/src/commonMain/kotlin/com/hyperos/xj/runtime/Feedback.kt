@@ -8,3 +8,8 @@ expect suspend fun feedbackEndpoint(): String?
  * note 是用户在 App 里写的问题描述，device 是机型，都会随包带过去。
  */
 expect suspend fun uploadDiagnosticPackage(filePath: String, note: String, device: String): String?
+
+/** App 内保存的 GitHub token（fine-grained，仅本仓库 Contents 读写）；空串表示未配置。 */
+expect fun loadFeedbackToken(): String
+
+expect fun saveFeedbackToken(token: String)

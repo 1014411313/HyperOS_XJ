@@ -38,7 +38,9 @@ import com.hyperos.xj.runtime.DeviceStatus
 import com.hyperos.xj.runtime.Engine
 import com.hyperos.xj.runtime.ToolboxRuntimeBridge
 import com.hyperos.xj.runtime.feedbackEndpoint
+import com.hyperos.xj.runtime.loadFeedbackToken
 import com.hyperos.xj.runtime.openUrl
+import com.hyperos.xj.runtime.saveFeedbackToken
 import com.hyperos.xj.runtime.uploadDiagnosticPackage
 import com.hyperos.xj.runtime.writeDiagNote
 import com.hyperos.xj.ui.ActionButton
@@ -294,9 +296,13 @@ private fun FeedbackPage(
     onBack: () -> Unit
 ) {
     val accent = LocalAccentColor.current
-    var lines by remember { mutableStateOf(listOf("正在生成诊断包…")) }
+    var needToken by remember { mutableStateOf(loadFeedbackToken().isBlank()) }
+    var tokenInput by remember { mutableStateOf("") }
+    var lines by remember { mutableStateOf<List<String>>(emptyList()) }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(needToken) {
+        if (needToken) return@LaunchedEffect
+        lines = listOf("正在生成诊断包…")
         val out = runCatching { bridge.exec(Engine.build("diag", "pack")) }.getOrElse { "" }
         lines = out.lines().filter { it.isNotBlank() }.ifEmpty { listOf("(命令无输出)") }
         val path = Regex("已导出:\\s*(\\S+)").find(out)?.groupValues?.get(1)
@@ -304,13 +310,13 @@ private fun FeedbackPage(
             lines = lines + "未能解析诊断包路径，未上传"
             return@LaunchedEffect
         }
-        if (feedbackEndpoint().isNullOrBlank()) {
-            lines = lines + "未配置上传地址（feedback_endpoint.json），包在本地：$path"
-            return@LaunchedEffect
+        lines = lines + "正在上传…"
+        val uploaded = uploadDiagnosticPackage(path, note, device)
+        lines = lines + if (uploaded != null) {
+            "已上传：$uploaded（下次对话我直接读）"
+        } else {
+            "上传失败，包在本地：$path"
         }
-        lines = lines + "正在上传诊断包…"
-        val link = uploadDiagnosticPackage(path, note, device)
-        lines = lines + if (link != null) "已上传到反馈目录：$link（下次对话我直接读）" else "上传失败，包在本地：$path"
     }
 
     Column(
@@ -331,21 +337,58 @@ private fun FeedbackPage(
             style = TextStyle(color = accent, fontSize = 14.sp, fontWeight = FontWeight.Medium)
         )
         GlassCard(backdrop, Modifier.fillMaxWidth()) {
-            SectionLabel("反馈诊断包")
-            BasicText(
-                text = "生成后会传到仓库反馈目录，下次对话我直接读",
-                style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp)
-            )
-            Spacer(Modifier.height(10.dp))
-            lines.forEach { line ->
+            if (needToken) {
+                SectionLabel("反馈上传设置")
                 BasicText(
-                    text = line,
-                    style = TextStyle(
-                        color = XJ.TextPrimary,
-                        fontSize = 12.sp,
-                        fontFamily = FontFamily.Monospace
-                    )
+                    text = "粘贴 GitHub token（fine-grained，仅本仓库 Contents 读写）。只需设置一次，存在本机，不随包上传。",
+                    style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp)
                 )
+                Spacer(Modifier.height(10.dp))
+                BasicTextField(
+                    value = tokenInput,
+                    onValueChange = { tokenInput = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(64.dp)
+                        .background(Color(0x14FFFFFF), RoundedCornerShape(12.dp))
+                        .padding(10.dp),
+                    textStyle = TextStyle(color = XJ.TextPrimary, fontSize = 12.sp, fontFamily = FontFamily.Monospace),
+                    cursorBrush = SolidColor(XJ.Accent)
+                )
+                Spacer(Modifier.height(12.dp))
+                Box(
+                    Modifier
+                        .background(XJ.Accent, RoundedCornerShape(12.dp))
+                        .clickable {
+                            saveFeedbackToken(tokenInput)
+                            if (loadFeedbackToken().isNotBlank()) needToken = false
+                        }
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                ) {
+                    BasicText("保存并上传", style = TextStyle(color = Color.White, fontSize = 13.sp))
+                }
+                Spacer(Modifier.height(8.dp))
+                BasicText(
+                    text = "已经在 feedback_endpoint.json 配了中转地址的可以跳过这步（留空也能走中转）。",
+                    style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp)
+                )
+            } else {
+                SectionLabel("反馈诊断包")
+                BasicText(
+                    text = "生成后传到仓库 feedback/，下次对话我直接读",
+                    style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp)
+                )
+                Spacer(Modifier.height(10.dp))
+                lines.forEach { line ->
+                    BasicText(
+                        text = line,
+                        style = TextStyle(
+                            color = XJ.TextPrimary,
+                            fontSize = 12.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    )
+                }
             }
         }
     }

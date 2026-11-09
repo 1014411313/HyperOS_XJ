@@ -1,7 +1,11 @@
-# 诊断包接收 Worker
+# 诊断包接收 Worker（可选，推荐用更简单的做法）
 
-App 侧「诊断与日志打包」把包 POST 到这里，Worker 用 GitHub Contents API 写进仓库 `feedback/`。
-作者（AI 助手）下次对话时直接读 `feedback/` 里的包，处理完自行删除——不需要通知或工作流。
+**推荐**：在 App「关于 → 诊断与日志打包」里直接粘贴 GitHub token（fine-grained，仅本仓库 Contents 读写），
+App 会直接调 GitHub Contents API 上传，不需要部署下面这套 Worker。
+
+只有在不想把 token 放进手机、希望用中转转发时才需要部署这个 Worker。
+
+---
 
 ## 部署（约 3 分钟，手机也能做）
 
