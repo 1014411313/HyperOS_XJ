@@ -1,6 +1,10 @@
 package com.hyperos.xj.rear;
 
 import android.app.Activity;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.os.Handler;
 import android.os.Looper;
 import de.robv.android.xposed.IXposedHookLoadPackage;
@@ -44,6 +48,19 @@ public class RearHook implements IXposedHookLoadPackage {
             XposedHelpers.findAndHookMethod(appClass, "onCreate", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) {
+                    try {
+                        Context ctx = (Context) param.thisObject;
+                        IntentFilter filter = new IntentFilter(Intent.ACTION_POWER_CONNECTED);
+                        ctx.registerReceiver(new BroadcastReceiver() {
+                            @Override
+                            public void onReceive(Context c, Intent intent) {
+                                if (Intent.ACTION_POWER_CONNECTED.equals(intent.getAction())) {
+                                    Overlay.onPowerConnected();
+                                }
+                            }
+                        }, filter);
+                    } catch (Throwable ignored) {
+                    }
                     new Handler(Looper.getMainLooper()).postDelayed(Find::attach, 800L);
                 }
             });

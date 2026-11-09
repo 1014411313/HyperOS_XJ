@@ -1728,6 +1728,41 @@
       ],
       "fixed_in": "3.1.34（344，未发布）",
       "resolution": "模块 id 改为 rezhale_toolbox、name 改为「热炸了工具箱」；App android:label 改为「热炸了工具箱」；引擎模块目录 /data/adb/modules/rezhale_toolbox、数据目录 /data/adb/rezhale_toolbox、modules_update 路径、诊断包前缀、APK 文件名 rezhale_toolbox.apk 全部同步；customize.sh 增加旧 id 迁移（数据目录 mv + 清理旧模块目录 /data/adb/modules/HyperOS_XJ），避免两个模块并存；打包文件名改为「热炸了工具箱_vX.zip」；update.sh 的仓库 URL 保持不变（GitHub/Gitee 仓库未改名）"
+    },
+    {
+      "id": "bug-101",
+      "title": "背屏卡片上滑退出后不再出现，需重启",
+      "reported": "2026-11-09",
+      "type": "bug",
+      "version_seen": "3.1.34 (344)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户反馈：卡片上滑退出以后回不来了，重启才恢复；期望插上充电器后重新出现",
+      "root_cause": "背面 Overlay 的 dismiss() 把 Activity 记入 DISMISSED 并 detach，同一背屏界面不再叠加，只有 Activity 重建（重启）才恢复",
+      "fix_plan": "待查 PanelView 手势退出路径与 Overlay/RearService 的显隐判定，改为插枪即重新显示",
+      "affected": [
+        "ToolboxApp/androidApp/src/main/java/com/hyperos/xj/rear/"
+      ],
+      "fixed_in": "3.1.35（345，未发布）",
+      "resolution": "dismiss 改为只隐藏并记标记、保留 tick；attach 时若已 DISMISSED 且未充电才拒绝叠加；tick 每 2 秒读充电状态，检测到「非充电 → 充电」时清除 DISMISSED；RearHook 在 subscreencenter 进程注册 ACTION_POWER_CONNECTED 广播，插枪直接调 Overlay.onPowerConnected() 清标记并重新叠加（不等 onResume）"
+    },
+    {
+      "id": "bug-102",
+      "title": "拔掉数据线后充电卡片不自动退出",
+      "reported": "2026-11-09",
+      "type": "bug",
+      "version_seen": "3.1.34 (344)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "evidence": "用户反馈：拔掉数据线卡片应自动退出，但实际拔线后仍显示充电卡片",
+      "root_cause": "Overlay tick 的可见性只看 cfg.enabled，没有接充电状态，所以开关开着就一直显示",
+      "fix_plan": "待查 rear_tick 的充电判定与显隐规则",
+      "affected": [
+        "ToolboxApp/androidApp/src/main/java/com/hyperos/xj/rear/",
+        "engine/lib/rear.sh"
+      ],
+      "fixed_in": "3.1.35（345，未发布）",
+      "resolution": "可见性改为 cfg.enabled && 当前在充电（BatteryReader 的 BATTERY_STATUS_CHARGING/FULL）；tick 每 2 秒刷新，拔线后自动隐藏"
     }
   ],
   "cancelled": [

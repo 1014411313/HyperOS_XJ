@@ -6,6 +6,7 @@ import android.os.Looper;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
+import java.lang.ref.WeakReference;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Set;
@@ -14,17 +15,21 @@ import java.util.WeakHashMap;
 public final class Overlay {
     private static final Map<Activity, FrameLayout> OVERLAYS = new WeakHashMap<>();
     private static final Map<Activity, Runnable> TICKS = new WeakHashMap<>();
-    // 上滑退出后按 Activity 记忆，防止同一会话内重复叠加；Activity 销毁后弱引用自动释放。
+    // 上滑退出后按 Activity 记忆；重新插枪会清掉，让卡片回来。
     private static final Set<Activity> DISMISSED =
             Collections.newSetFromMap(new WeakHashMap<Activity, Boolean>());
     private static final Handler HANDLER = new Handler(Looper.getMainLooper());
+    private static WeakReference<Activity> lastActivity = new WeakReference<>(null);
+    private static boolean lastCharging = false;
 
     private Overlay() {
     }
 
     public static synchronized void attach(Activity activity) {
-        if (DISMISSED.contains(activity)) return;
+        lastActivity = new WeakReference<>(activity);
         if (OVERLAYS.containsKey(activity)) return;
+        // 上滑退出过且当前没在充电就不叠加；插枪后由 onPowerConnected() 清标记再进来。
+        if (DISMISSED.contains(activity) && !BatteryReader.read(activity).charging) return;
         try {
             View decor = activity.getWindow().getDecorView();
             if (!(decor instanceof ViewGroup)) return;
@@ -51,10 +56,14 @@ public final class Overlay {
                 public void run() {
                     try {
                         RearConfig cfg = Prefs.readConfig();
-                        container.setVisibility(cfg.enabled ? View.VISIBLE : View.GONE);
-                        if (cfg.enabled) {
-                            panel.update(BatteryReader.read(activity), cfg);
-                        }
+                        ChargeState state = BatteryReader.read(activity);
+                        boolean charging = state.charging;
+                        // 重新插枪：清掉上滑退出的记忆，卡片重新出现
+                        if (charging && !lastCharging) DISMISSED.remove(activity);
+                        lastCharging = charging;
+                        boolean show = cfg.enabled && charging;
+                        container.setVisibility(show ? View.VISIBLE : View.GONE);
+                        if (show) panel.update(state, cfg);
                     } catch (Throwable ignored) {
                     }
                     if (OVERLAYS.containsKey(activity)) {
@@ -68,9 +77,25 @@ public final class Overlay {
         }
     }
 
+    /** 充电器插入：清掉上滑退出的记忆并立即重新叠加，卡片不用等重启就会回来。 */
+    public static void onPowerConnected() {
+        HANDLER.post(new Runnable() {
+            @Override
+            public void run() {
+                synchronized (Overlay.class) {
+                    DISMISSED.clear();
+                    Activity activity = lastActivity.get();
+                    if (activity != null) attach(activity);
+                }
+            }
+        });
+    }
+
+    /** 上滑退出：只隐藏并记标记，保留 tick 以便插枪后自动恢复。 */
     public static synchronized void dismiss(Activity activity) {
         DISMISSED.add(activity);
-        detach(activity);
+        FrameLayout container = OVERLAYS.get(activity);
+        if (container != null) container.setVisibility(View.GONE);
     }
 
     public static synchronized void detach(Activity activity) {
