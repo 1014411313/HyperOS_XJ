@@ -58,7 +58,9 @@ export default {
 
     const bytes = new Uint8Array(await file.arrayBuffer());
     // 问题描述与机型写进同名 .txt，作者读包时先看这个
-    const metaPath = path.replace(/\.[^.]+$/, "") + ".txt";
+    let metaPath = path.replace(/\.[^.]+$/, "") + ".txt";
+    // 上传的文件本身若以 .txt 结尾，meta 会撞同名（GitHub 更新已有文件要 sha）
+    if (metaPath === path) metaPath = path + ".meta.txt";
     const meta = `机型: ${device}\n上传: ${stamp}\n\n问题描述:\n${note || "（未填写）"}\n`;
 
     const put = async (p, content) => {

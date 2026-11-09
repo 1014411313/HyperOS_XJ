@@ -50,7 +50,9 @@ export default {
     const device = String(form.get("device") || "未知机型").slice(0, 200);
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     const path = `feedback/${stamp}_${safeName(file.name)}`;
-    const metaPath = path.replace(/\.[^.]+$/, "") + ".txt";
+    let metaPath = path.replace(/\.[^.]+$/, "") + ".txt";
+    // 上传的文件本身若以 .txt 结尾，meta 会撞同名（GitHub 更新已有文件要 sha）
+    if (metaPath === path) metaPath = path + ".meta.txt";
     const meta = `机型: ${device}\n上传: ${stamp}\n\n问题描述:\n${note || "（未填写）"}\n`;
 
     const put = async (p, content) => {
