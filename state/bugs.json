@@ -1983,6 +1983,24 @@
       "affected": [
         "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/pages/AboutPage.kt"
       ]
+    },
+    {
+      "id": "bug-116",
+      "title": "反馈流程改为分享为主，移除不通的 token 直传",
+      "reported": "2026-11-09",
+      "type": "feature",
+      "version_seen": "3.1.45 (355)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "fixed_in": "3.1.46（356，未发布）",
+      "root_cause": "实测 workers.dev 在国内被 DNS 污染（解析到 69.171.247.32、连接 15000ms 超时），api.github.com 同样不可达，自动上传对国内网络不可用",
+      "resolution": "反馈页以「分享诊断包给作者」为主出口：上传失败时给出显式指引（微信/QQ 发送，或直接在 AiCode 对话里点附件选该文件并显示完整路径）；移除 App 内 token 输入与 GitHub 直传逻辑（国内不通、已无意义）；Worker 中转通道保留（海外网络仍可用）",
+      "affected": [
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/pages/AboutPage.kt",
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/runtime/Feedback.kt",
+        "ToolboxApp/app/src/androidMain/kotlin/com/hyperos/xj/runtime/Feedback.android.kt",
+        "ToolboxApp/app/src/desktopMain/kotlin/com/hyperos/xj/runtime/Feedback.desktop.kt"
+      ]
     }
   ],
   "cancelled": [

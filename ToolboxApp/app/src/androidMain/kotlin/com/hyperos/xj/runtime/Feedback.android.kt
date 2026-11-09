@@ -1,7 +1,6 @@
 package com.hyperos.xj.runtime
 
 import android.content.Context
-import android.util.Base64
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -9,7 +8,6 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 private const val FEEDBACK_REPO = "1014411313/HyperOS_XJ"
-private const val FEEDBACK_PREFS = "xj_feedback"
 
 // 内置默认中转地址：即使读不到 feedback_endpoint.json（缓存未刷新/网络受限）也能上传
 private const val DEFAULT_ENDPOINT = "https://xj-feedback.1014411313.workers.dev"
@@ -28,15 +26,6 @@ private val appContext: Context? by lazy {
     }.getOrNull()
 }
 
-actual fun loadFeedbackToken(): String =
-    appContext?.getSharedPreferences(FEEDBACK_PREFS, Context.MODE_PRIVATE)
-        ?.getString("token", "").orEmpty()
-
-actual fun saveFeedbackToken(token: String) {
-    appContext?.getSharedPreferences(FEEDBACK_PREFS, Context.MODE_PRIVATE)
-        ?.edit()?.putString("token", token.trim())?.apply()
-}
-
 actual suspend fun feedbackEndpoint(): String? = withContext(Dispatchers.IO) {
     for (src in ENDPOINT_SOURCES) {
         val body = runCatching { httpGet(src, 8000, 12000) }.getOrNull() ?: continue
@@ -53,26 +42,11 @@ actual suspend fun uploadDiagnosticPackage(
 ): FeedbackUpload = withContext(Dispatchers.IO) {
     val file = File(filePath)
     if (!file.isFile) return@withContext FeedbackUpload.Failed("找不到诊断包：$filePath")
-
-    // 公开通道优先：任何用户都不需要 token
     val endpoint = feedbackEndpoint()
-    if (!endpoint.isNullOrBlank()) {
-        when (val r = postToWorker(endpoint, file, note, device)) {
-            is WorkerResult.Ok -> return@withContext FeedbackUpload.Ok(r.path)
-            is WorkerResult.Fail -> {
-                val token = loadFeedbackToken()
-                if (token.isBlank()) {
-                    return@withContext FeedbackUpload.Failed("中转上传失败：${r.reason}")
-                }
-            }
-        }
-    }
-
-    val token = loadFeedbackToken()
-    if (token.isBlank()) return@withContext FeedbackUpload.Failed("未配置上传通道")
-    when (val r = putToGithub(file, note, device, token)) {
+        ?: return@withContext FeedbackUpload.Failed("未配置上传地址")
+    when (val r = postToWorker(endpoint, file, note, device)) {
         is WorkerResult.Ok -> FeedbackUpload.Ok(r.path)
-        is WorkerResult.Fail -> FeedbackUpload.Failed("直传失败：${r.reason}")
+        is WorkerResult.Fail -> FeedbackUpload.Failed(r.reason)
     }
 }
 
@@ -117,43 +91,6 @@ private fun postToWorker(endpoint: String, file: File, note: String, device: Str
     } catch (t: Throwable) {
         WorkerResult.Fail(t.javaClass.simpleName + " " + (t.message ?: ""))
     }
-}
-
-/** 兜底：本地配了 token 就直接调 GitHub Contents API。 */
-private fun putToGithub(file: File, note: String, device: String, token: String): WorkerResult {
-    val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(java.util.Date())
-    val safe = file.name.replace(Regex("[^\\w.\\-]"), "_")
-    val path = "feedback/${stamp}_$safe"
-    val meta = "机型: $device\n上传: $stamp\n\n问题描述:\n${note.ifBlank { "（未填写）" }}\n"
-
-    fun put(p: String, bytes: ByteArray): String? {
-        val conn = URL("https://api.github.com/repos/$FEEDBACK_REPO/contents/$p").openConnection() as HttpURLConnection
-        return try {
-            conn.requestMethod = "PUT"
-            conn.doOutput = true
-            conn.connectTimeout = 15000
-            conn.readTimeout = 90000
-            conn.setRequestProperty("Authorization", "Bearer $token")
-            conn.setRequestProperty("Accept", "application/vnd.github+json")
-            conn.setRequestProperty("User-Agent", "xj-app-feedback")
-            conn.setRequestProperty("Content-Type", "application/json")
-            val payload = """{"message":"feedback: $p","content":"${Base64.encodeToString(bytes, Base64.NO_WRAP)}"}"""
-            conn.outputStream.use { it.write(payload.toByteArray()) }
-            val code = conn.responseCode
-            val body = (if (code in 200..299) conn.inputStream else conn.errorStream)
-                ?.bufferedReader()?.use { it.readText() }.orEmpty()
-            if (code in 200..299) null else "HTTP $code ${body.take(120)}"
-        } catch (t: Throwable) {
-            t.javaClass.simpleName + " " + (t.message ?: "")
-        } finally {
-            conn.disconnect()
-        }
-    }
-
-    put(path, file.readBytes())?.let { return WorkerResult.Fail(it) }
-    put(path.replace(Regex("\\.[^.]+$"), "") + ".txt", meta.toByteArray())
-        ?.let { return WorkerResult.Fail("描述文件：$it") }
-    return WorkerResult.Ok(path)
 }
 
 private fun httpGet(url: String, connectTimeoutMs: Int, readTimeoutMs: Int): String {

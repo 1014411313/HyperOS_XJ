@@ -38,11 +38,8 @@ import com.hyperos.xj.runtime.DeviceStatus
 import com.hyperos.xj.runtime.Engine
 import com.hyperos.xj.runtime.ToolboxRuntimeBridge
 import com.hyperos.xj.runtime.FeedbackUpload
-import com.hyperos.xj.runtime.feedbackEndpoint
-import com.hyperos.xj.runtime.loadFeedbackToken
 import com.hyperos.xj.runtime.openUrl
 import com.hyperos.xj.ui.PlatformBackHandler
-import com.hyperos.xj.runtime.saveFeedbackToken
 import com.hyperos.xj.runtime.shareDiagnosticPackage
 import com.hyperos.xj.runtime.uploadDiagnosticPackage
 import com.hyperos.xj.runtime.writeDiagNote
@@ -306,32 +303,34 @@ private fun FeedbackPage(
     device: String,
     onBack: () -> Unit
 ) {
-    PlatformBackHandler { onBack() }
     val accent = LocalAccentColor.current
     var lines by remember { mutableStateOf<List<String>>(emptyList()) }
-    var showTokenInput by remember { mutableStateOf(false) }
-    var tokenInput by remember { mutableStateOf("") }
     var localPath by remember { mutableStateOf("") }
-    var runKey by remember { mutableStateOf(0) }
+    var failed by remember { mutableStateOf(false) }
 
-    LaunchedEffect(runKey) {
-        showTokenInput = false
+    PlatformBackHandler { onBack() }
+
+    LaunchedEffect(Unit) {
         lines = listOf("正在生成诊断包…")
         val out = runCatching { bridge.exec(Engine.build("diag", "pack")) }.getOrElse { "" }
         lines = out.lines().filter { it.isNotBlank() }.ifEmpty { listOf("(命令无输出)") }
         val path = Regex("已导出:\\s*(\\S+)").find(out)?.groupValues?.get(1)
         if (path == null) {
-            lines = lines + "未能解析诊断包路径，未上传"
+            lines = lines + "未能解析诊断包路径"
+            failed = true
             return@LaunchedEffect
         }
+        localPath = path
         lines = lines + "正在上传…"
         when (val r = uploadDiagnosticPackage(path, note, device)) {
             is FeedbackUpload.Ok -> lines = lines + "已上传：${r.path}（下次对话我直接读）"
             is FeedbackUpload.Failed -> {
-                lines = lines + "上传失败（${r.reason}）"
-                lines = lines + "包在本地：$path"
-                localPath = path
-                showTokenInput = true
+                failed = true
+                lines = lines + "自动上传不可用（${r.reason}）"
+                lines = lines + ""
+                lines = lines + "请点下面的「分享诊断包」，用微信 / QQ 发给作者；"
+                lines = lines + "或者直接在 AiCode 对话里点附件，选这个文件："
+                lines = lines + path
             }
         }
     }
@@ -356,7 +355,7 @@ private fun FeedbackPage(
         GlassCard(backdrop, Modifier.fillMaxWidth()) {
             SectionLabel("反馈诊断包")
             BasicText(
-                text = "生成后传到仓库 feedback/，下次对话我直接读",
+                text = "诊断包会先尝试自动上传；国内网络常常传不出去，直接分享同样有效",
                 style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp)
             )
             Spacer(Modifier.height(10.dp))
@@ -370,46 +369,24 @@ private fun FeedbackPage(
                     )
                 )
             }
-            if (showTokenInput && localPath.isNotEmpty()) {
-                Spacer(Modifier.height(12.dp))
+            if (failed && localPath.isNotEmpty()) {
+                Spacer(Modifier.height(14.dp))
                 Box(
                     Modifier
-                        .background(XJ.AccentSoft, RoundedCornerShape(12.dp))
-                        .clickable { shareDiagnosticPackage(localPath) }
-                        .padding(horizontal = 16.dp, vertical = 8.dp)
-                ) {
-                    BasicText("分享诊断包给作者", style = TextStyle(color = Color(0xFF10231F), fontSize = 13.sp))
-                }
-            }
-            if (showTokenInput) {
-                Spacer(Modifier.height(12.dp))
-                BasicText(
-                    text = "上传通道不可用时可填自己的 GitHub token（仅本仓库 Contents 读写），包会直传仓库：",
-                    style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp)
-                )
-                Spacer(Modifier.height(8.dp))
-                BasicTextField(
-                    value = tokenInput,
-                    onValueChange = { tokenInput = it },
-                    modifier = Modifier
                         .fillMaxWidth()
-                        .height(64.dp)
-                        .background(Color(0x14FFFFFF), RoundedCornerShape(12.dp))
-                        .padding(10.dp),
-                    textStyle = TextStyle(color = XJ.TextPrimary, fontSize = 12.sp, fontFamily = FontFamily.Monospace),
-                    cursorBrush = SolidColor(XJ.Accent)
-                )
-                Spacer(Modifier.height(10.dp))
-                Box(
-                    Modifier
-                        .background(XJ.Accent, RoundedCornerShape(12.dp))
-                        .clickable {
-                            saveFeedbackToken(tokenInput)
-                            runKey += 1
-                        }
-                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                        .background(XJ.AccentSoft, RoundedCornerShape(14.dp))
+                        .clickable { shareDiagnosticPackage(localPath) }
+                        .padding(vertical = 12.dp),
+                    contentAlignment = Alignment.Center
                 ) {
-                    BasicText("保存并重试", style = TextStyle(color = Color.White, fontSize = 13.sp))
+                    BasicText(
+                        text = "分享诊断包给作者",
+                        style = TextStyle(
+                            color = Color(0xFF10231F),
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    )
                 }
             }
         }
