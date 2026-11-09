@@ -11,6 +11,7 @@ import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -121,6 +122,8 @@ object AndroidBackgroundPicker {
     /** 读 APK assets 里的内置图片（默认 App 背景）。 */
     fun loadAssetBitmap(name: String): android.graphics.Bitmap? =
         appContext?.assets?.open(name)?.use { BitmapFactory.decodeStream(it) }
+
+    fun appFilesDir(): java.io.File? = appContext?.filesDir
 
     private fun readBytes(context: Context, uri: android.net.Uri): ByteArray? =
         context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
@@ -316,4 +319,15 @@ actual suspend fun loadAppBackgroundImage(path: String): ImageBitmap? = withCont
 
 actual suspend fun loadBuiltinAppBackground(): ImageBitmap? = withContext(Dispatchers.IO) {
     runCatching { AndroidBackgroundPicker.loadAssetBitmap("app_bg_default.jpg")?.asImageBitmap() }.getOrNull()
+}
+
+actual suspend fun saveAppBackgroundImage(bitmap: ImageBitmap): String? = withContext(Dispatchers.IO) {
+    runCatching {
+        val dir = AndroidBackgroundPicker.appFilesDir() ?: return@runCatching null
+        val file = java.io.File(dir, "app_bg_user.jpg")
+        file.outputStream().use { out ->
+            bitmap.asAndroidBitmap().compress(android.graphics.Bitmap.CompressFormat.JPEG, 92, out)
+        }
+        file.absolutePath
+    }.getOrNull()
 }

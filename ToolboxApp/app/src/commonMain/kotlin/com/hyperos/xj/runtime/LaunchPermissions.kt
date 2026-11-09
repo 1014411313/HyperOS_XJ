@@ -27,3 +27,6 @@ expect fun openLsposedManager(): Boolean
 expect fun loadLaunchFlags(): LaunchFlags
 
 expect fun saveLaunchFlags(flags: LaunchFlags)
+
+/** 诊断包里的问题描述（生成诊断包时随包带走）；传空串表示清除。 */
+expect suspend fun writeDiagNote(text: String)

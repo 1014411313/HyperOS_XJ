@@ -9,6 +9,14 @@ print() { ui_print "$@"; }
 print " - 热炸了工具箱（新架构）"
 
 # 旧模块 id（HyperOS_XJ）迁移：数据目录搬过来并清掉旧模块目录，避免两个模块并存
+# 旧模块 id（HyperOS_XJ）迁移：先杀掉旧进程再搬数据/删目录——
+# 旧 daemon 读不到新路径的配置、还会和新 daemon 抢充电节点（反复断充）。
+for _p in /proc/[0-9]*/cmdline; do
+    [ -r "$_p" ] || continue
+    case "$(tr '\0' ' ' < "$_p" 2>/dev/null)" in
+        *HyperOS_XJ/engine/*) kill "${_p#/proc/}" 2>/dev/null ;;
+    esac
+done
 if [ -d /data/adb/HyperOS_XJ ] && [ ! -d "$DATA_DIR" ]; then
     mv /data/adb/HyperOS_XJ "$DATA_DIR" 2>/dev/null && print " - 已迁移旧数据目录（HyperOS_XJ → rezhale_toolbox）"
 fi

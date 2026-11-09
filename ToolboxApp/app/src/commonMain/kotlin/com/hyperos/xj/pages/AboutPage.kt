@@ -3,14 +3,18 @@ package com.hyperos.xj.pages
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -20,17 +24,21 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hyperos.xj.runtime.DeviceStatus
 import com.hyperos.xj.runtime.Engine
 import com.hyperos.xj.runtime.ToolboxRuntimeBridge
 import com.hyperos.xj.runtime.openUrl
+import com.hyperos.xj.runtime.writeDiagNote
 import com.hyperos.xj.ui.ActionButton
 import com.hyperos.xj.ui.CollapsibleCard
 import com.hyperos.xj.ui.GlassCard
@@ -80,6 +88,71 @@ fun AboutPage(
     var toolPage by remember { mutableStateOf(logPage) }
     var showUninstallConfirm by remember { mutableStateOf(false) }
     var showUninstallTip by remember { mutableStateOf(false) }
+    var showDiagNote by remember { mutableStateOf(false) }
+    var diagNote by remember { mutableStateOf("") }
+    val diagScope = rememberCoroutineScope()
+
+    if (showDiagNote) {
+        Dialog(onDismissRequest = { showDiagNote = false }) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xF21B1E24), RoundedCornerShape(20.dp))
+                    .padding(18.dp)
+            ) {
+                BasicText(
+                    text = "反馈问题描述",
+                    style = TextStyle(color = XJ.TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                )
+                Spacer(Modifier.height(4.dp))
+                BasicText(
+                    text = "会随诊断包一起打包，写清现象与复现步骤",
+                    style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp)
+                )
+                Spacer(Modifier.height(12.dp))
+                BasicTextField(
+                    value = diagNote,
+                    onValueChange = { diagNote = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(110.dp)
+                        .background(Color(0x14FFFFFF), RoundedCornerShape(12.dp))
+                        .padding(10.dp),
+                    textStyle = TextStyle(color = XJ.TextPrimary, fontSize = 13.sp),
+                    cursorBrush = SolidColor(XJ.Accent)
+                )
+                Spacer(Modifier.height(14.dp))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    Box(
+                        Modifier
+                            .clickable { showDiagNote = false }
+                            .padding(horizontal = 14.dp, vertical = 8.dp)
+                    ) {
+                        BasicText("取消", style = TextStyle(color = XJ.TextSecondary, fontSize = 13.sp))
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Box(
+                        Modifier
+                            .background(XJ.Accent, RoundedCornerShape(12.dp))
+                            .clickable {
+                                showDiagNote = false
+                                diagScope.launch {
+                                    writeDiagNote(diagNote)
+                                    toolPage = diagPage
+                                    showToolPage = true
+                                }
+                            }
+                            .padding(horizontal = 16.dp, vertical = 8.dp)
+                    ) {
+                        BasicText("生成诊断包", style = TextStyle(color = Color.White, fontSize = 13.sp))
+                    }
+                }
+            }
+        }
+    }
 
     when {
         showUninstallTip -> UninstallTipPage(backdrop, onBack = { showUninstallTip = false })
@@ -102,10 +175,7 @@ fun AboutPage(
                 toolPage = logPage
                 showToolPage = true
             },
-            onShowDiag = {
-                toolPage = diagPage
-                showToolPage = true
-            },
+            onShowDiag = { showDiagNote = true },
             onUninstall = { showUninstallConfirm = true }
         )
     }

@@ -47,6 +47,7 @@ import com.hyperos.xj.runtime.pickBackgroundVideo
 import com.hyperos.xj.runtime.readRearCardBgImageBytes
 import com.hyperos.xj.runtime.rearBgGifPreviewPath
 import com.hyperos.xj.runtime.rearDefaultBgGifPreviewPath
+import com.hyperos.xj.runtime.saveAppBackgroundImage
 import com.hyperos.xj.runtime.writeRearBackgroundImage
 import com.hyperos.xj.ui.AccentPalette
 import com.hyperos.xj.ui.ActionButton
@@ -361,6 +362,11 @@ fun LookPage(
                             pickBackgroundImageBytes()?.let { bytes ->
                                 decodeBackgroundImage(bytes)?.let { bitmap ->
                                     onAppearanceChange(currentAppearance.copy(bgImage = bitmap, bgKind = "image", bgPath = ""))
+                                    // 落盘：重启后 bgImage（内存位图）消失，靠 bgPath 继续显示用户图
+                                    val saved = saveAppBackgroundImage(bitmap)
+                                        if (saved != null) {
+                                            onAppearanceChange(currentAppearance.copy(bgImage = bitmap, bgKind = "image", bgPath = saved))
+                                        }
                                 }
                             }
                         }

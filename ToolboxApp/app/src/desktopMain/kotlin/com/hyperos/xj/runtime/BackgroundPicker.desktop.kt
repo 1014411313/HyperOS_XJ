@@ -32,3 +32,5 @@ actual suspend fun pickBackgroundVideo(): String? = null
 actual suspend fun loadAppBackgroundImage(path: String): ImageBitmap? = null
 
 actual suspend fun loadBuiltinAppBackground(): ImageBitmap? = null
+
+actual suspend fun saveAppBackgroundImage(bitmap: ImageBitmap): String? = null

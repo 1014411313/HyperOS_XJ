@@ -255,6 +255,13 @@ diag_pack() {
     _dm=无权限
   fi
 
+  # ---- problem.txt：用户在 App 里填写的问题描述，随包一起带给作者 ----
+  for _pn in "$DATA_DIR/state/diag_note.txt" /data/user/0/com.hyperos.xj/files/diag_note.txt; do
+    if [ -f "$_pn" ] && [ -s "$_pn" ]; then
+      cp -f "$_pn" "$_stage/problem.txt" 2>/dev/null && break
+    fi
+  done
+
   mkdir -p /sdcard/Download 2>/dev/null
   _zip="/sdcard/Download/rezhale_toolbox_diag_$_stamp.zip"
   _how=$(diag_do_zip "$_stage" "$_zip") || _how=""

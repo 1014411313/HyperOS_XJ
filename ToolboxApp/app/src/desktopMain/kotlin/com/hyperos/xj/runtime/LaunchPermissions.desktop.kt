@@ -15,3 +15,5 @@ actual fun openLsposedManager(): Boolean = false
 actual fun loadLaunchFlags(): LaunchFlags = LaunchFlags()
 
 actual fun saveLaunchFlags(flags: LaunchFlags) = Unit
+
+actual suspend fun writeDiagNote(text: String) = Unit

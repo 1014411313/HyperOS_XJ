@@ -1797,6 +1797,100 @@
         "ToolboxApp/androidApp/src/main/java/com/hyperos/xj/MainActivity.kt",
         "ToolboxApp/androidApp/src/main/AndroidManifest.xml"
       ]
+    },
+    {
+      "id": "bug-105",
+      "title": "设置自定义背景后仍显示默认背景",
+      "reported": "2026-11-09",
+      "type": "bug",
+      "version_seen": "3.1.37 (347)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "fixed_in": "3.1.38（348，未发布）",
+      "root_cause": "选图后写成 bgKind=image + bgPath 空，而 AppBackground 的 image 分支在 bgPath 为空时会回落到内置插画，用户刚选的 bgImage（内存位图）被跳过后面的 customBg 分支",
+      "resolution": "把 customBg && bgImage 分支提到 image 分支之前；选图后同时落盘到 App 私有目录 app_bg_user.jpg 并写上 bgPath，重启后仍显示用户图",
+      "affected": [
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/App.kt",
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/pages/LookPage.kt",
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/runtime/BackgroundPicker.kt",
+        "ToolboxApp/app/src/androidMain/kotlin/com/hyperos/xj/runtime/BackgroundPicker.android.kt"
+      ]
+    },
+    {
+      "id": "bug-106",
+      "title": "循环次数/伪装次数不生效",
+      "reported": "2026-11-09",
+      "type": "bug",
+      "version_seen": "3.1.37 (347)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "fixed_in": "3.1.38（348，未发布）",
+      "root_cause": "诊断包 runtime.txt 显示唯一在跑的 daemon 是旧路径 /data/adb/modules/HyperOS_XJ/engine/xjdaemon.sh；改模块 id 后旧进程未退出，读不到新路径配置（cycle_fake 恒为空），battery_guard_tick 无从生效",
+      "resolution": "boot.sh 的 daemon_alive 改为只认本模块目录的进程，start_daemon 前 kill_stale_daemons() 清掉其它路径的 xjdaemon；customize.sh 迁移旧数据前先 kill 旧路径进程",
+      "affected": [
+        "engine/boot.sh",
+        "dist/HyperOS_XJ_New/customize.sh"
+      ]
+    },
+    {
+      "id": "bug-107",
+      "title": "界面字体缩放滑块拉不动",
+      "reported": "2026-11-09",
+      "type": "bug",
+      "version_seen": "3.1.37 (347)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "fixed_in": "3.1.38（348，未发布）",
+      "root_cause": "fontScale 每帧写入 LocalDensity，整页反复重排导致滑块失去跟手",
+      "resolution": "fontScale 用本地 appliedFontScale，LaunchedEffect 延迟 320ms 应用，拖动期间 density 不变",
+      "affected": [
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/App.kt"
+      ]
+    },
+    {
+      "id": "bug-108",
+      "title": "拖动卡片圆角/扭曲预览不实时（需真机确认）",
+      "reported": "2026-11-09",
+      "type": "bug",
+      "version_seen": "3.1.37 (347)",
+      "device": "haotian",
+      "status": "待确认",
+      "evidence": "用户：拖动卡片圆角，渲染扭曲的效果不会实时同步，切换页面后就好了",
+      "root_cause": "待确认：drawBackdrop 的 update() 已对 shape 变化调用 invalidateMeasurement + invalidateDrawCache，逻辑上应实时；怀疑是外观每帧更新导致整页重组+backdrop 全量重绘而掉帧",
+      "fix_plan": "若确认是掉帧：把外观类参数（圆角/扭曲/模糊/字体）改为拖动结束才提交；或拆分外观 state 减少重组范围"
+    },
+    {
+      "id": "bug-109",
+      "title": "反复断充",
+      "reported": "2026-11-09",
+      "type": "bug",
+      "version_seen": "3.1.37 (347)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "fixed_in": "3.1.38（348，未发布）",
+      "root_cause": "旧 id 的 daemon 进程残留，与新 daemon 同时写充电节点互相覆盖（诊断包 daemon.log 全是旧路径写入失败）",
+      "resolution": "同 bug-106：启动时清理非本模块路径的 xjdaemon，避免双 daemon 抢节点",
+      "affected": [
+        "engine/boot.sh",
+        "dist/HyperOS_XJ_New/customize.sh"
+      ]
+    },
+    {
+      "id": "bug-110",
+      "title": "诊断包内附问题描述",
+      "reported": "2026-11-09",
+      "type": "feature",
+      "version_seen": "3.1.37 (347)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "fixed_in": "3.1.38（348，未发布）",
+      "resolution": "「诊断与日志打包」先弹输入框收集问题描述，写入 App 私有目录 diag_note.txt；diag.sh 打包前拷贝为包内 problem.txt（另支持 DATA_DIR/state/diag_note.txt）。在线自动上传待用户提供接收地址后再做",
+      "affected": [
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/pages/AboutPage.kt",
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/runtime/LaunchPermissions.kt",
+        "ToolboxApp/app/src/androidMain/kotlin/com/hyperos/xj/runtime/LaunchPermissions.android.kt",
+        "engine/lib/diag.sh"
+      ]
     }
   ],
   "cancelled": [

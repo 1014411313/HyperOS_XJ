@@ -89,9 +89,15 @@ fun App() {
     }
 
     val baseDensity = LocalDensity.current
+    // 字体缩放拖动时若每帧改 LocalDensity，整页会不断重排、滑块失去跟手（表现为拉不动）；停下来再应用
+    var appliedFontScale by remember { mutableStateOf(appearance.fontScale) }
+    LaunchedEffect(appearance.fontScale) {
+        delay(320L)
+        appliedFontScale = appearance.fontScale
+    }
     val scaledDensity = Density(
         density = baseDensity.density,
-        fontScale = baseDensity.fontScale * appearance.fontScale.coerceIn(0.7f, 1.6f)
+        fontScale = baseDensity.fontScale * appliedFontScale.coerceIn(0.7f, 1.6f)
     )
 
     CompositionLocalProvider(
@@ -222,6 +228,24 @@ private fun AppBackground(modifier: Modifier = Modifier) {
         return
     }
 
+    // 刚选完的相册图（内存位图）优先：bgKind=image + bgPath 为空时不能回落到内置插画，否则用户选完看不到自己的图
+    if (appearance.customBg && bgImage != null) {
+        Box(modifier.blur(appearance.bgBlur.coerceIn(0f, 20f).dp)) {
+            Image(
+                bitmap = bgImage,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.22f))
+            )
+        }
+        return
+    }
+
     // 内置/文件图片背景：bgPath 为空用 APK 内置插画（首次安装即生效），否则读文件
     if (appearance.bgKind == "image") {
         val imagePath = appearance.bgPath
@@ -250,23 +274,6 @@ private fun AppBackground(modifier: Modifier = Modifier) {
             }
             return
         }
-    }
-
-    if (appearance.customBg && bgImage != null) {
-        Box(modifier.blur(appearance.bgBlur.coerceIn(0f, 20f).dp)) {
-            Image(
-                bitmap = bgImage,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize()
-            )
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.22f))
-            )
-        }
-        return
     }
 
     val base = wallpaperPalette[appearance.wallpaperIndex.coerceIn(0, wallpaperPalette.size - 1)]

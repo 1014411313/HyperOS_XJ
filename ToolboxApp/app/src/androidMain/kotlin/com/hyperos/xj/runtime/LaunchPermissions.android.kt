@@ -101,3 +101,11 @@ actual fun saveLaunchFlags(flags: LaunchFlags) {
         .putBoolean("lsposed_confirmed", flags.lsposedConfirmed)
         .apply()
 }
+
+actual suspend fun writeDiagNote(text: String) {
+    val ctx = appContext ?: return
+    runCatching {
+        val file = java.io.File(ctx.filesDir, "diag_note.txt")
+        if (text.isBlank()) file.delete() else file.writeText(text)
+    }
+}

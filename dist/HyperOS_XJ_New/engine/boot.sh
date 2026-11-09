@@ -33,10 +33,36 @@ daemon_pid() {
 }
 
 daemon_alive() {
-  [ -n "$(daemon_pid)" ]
+  # 只认「本模块目录」下的 daemon：升级改过模块 id（HyperOS_XJ → rezhale_toolbox）后，
+  # 旧进程还在跑、却读不到新配置，还会和新 daemon 抢充电节点（表现为反复断充）。
+  for _d in /proc/[0-9]*; do
+    [ -r "$_d/cmdline" ] || continue
+    case "$(tr '\0' ' ' < "$_d/cmdline" 2>/dev/null)" in
+      *"$DIR/xjdaemon.sh"*) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+kill_stale_daemons() {
+  for _d in /proc/[0-9]*; do
+    [ -r "$_d/cmdline" ] || continue
+    _cl=$(tr '\0' ' ' < "$_d/cmdline" 2>/dev/null)
+    case "$_cl" in
+      *xjdaemon.sh*) ;;
+      *) continue ;;
+    esac
+    case "$_cl" in
+      *"$DIR/xjdaemon.sh"*) continue ;;
+    esac
+    if kill "${_d#/proc/}" 2>/dev/null; then
+      log "killed stale xjdaemon (${_d#/proc/}): $_cl"
+    fi
+  done
 }
 
 start_daemon() {
+  kill_stale_daemons
   daemon_alive && return 0
   setsid sh "$DIR/xjdaemon.sh" >> "$LOGDIR/daemon.log" 2>&1 &
   sleep 1

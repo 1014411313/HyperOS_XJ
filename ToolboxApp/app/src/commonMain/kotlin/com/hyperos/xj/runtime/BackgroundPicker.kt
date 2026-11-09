@@ -51,3 +51,6 @@ expect suspend fun loadAppBackgroundImage(path: String): ImageBitmap?
 
 /** 内置默认 App 背景（打包在 APK assets，首次安装即生效）；桌面端返回 null。 */
 expect suspend fun loadBuiltinAppBackground(): ImageBitmap?
+
+/** 用户选的相册图落盘到 App 私有目录，返回绝对路径；失败返回 null。 */
+expect suspend fun saveAppBackgroundImage(bitmap: ImageBitmap): String?
