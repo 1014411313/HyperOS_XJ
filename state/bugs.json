@@ -1891,6 +1891,27 @@
         "ToolboxApp/app/src/androidMain/kotlin/com/hyperos/xj/runtime/LaunchPermissions.android.kt",
         "engine/lib/diag.sh"
       ]
+    },
+    {
+      "id": "bug-111",
+      "title": "诊断包在线反馈（Cloudflare Worker 中转 + GitHub Issue 通知 + 关闭自动清理）",
+      "reported": "2026-11-09",
+      "type": "feature",
+      "version_seen": "3.1.38 (348)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "fixed_in": "3.1.39（349，未发布）",
+      "resolution": "仓库侧：tools/feedback-worker（Worker：multipart 上传 → Contents API 写 feedback/ → 建 Issue，token 只存 Worker secret）、.github/workflows/feedback-cleanup.yml（issue 关闭删对应包 + 每天清理 30 天前的包）、feedback_endpoint.json（App 读它拿上传地址，留空则仅本地）。App 侧：生成诊断包后读 feedback_endpoint.json、POST multipart 上传、显示反馈链接或失败原因（runtime/Feedback.kt + Android 实现）",
+      "affected": [
+        "tools/feedback-worker/worker.js",
+        "tools/feedback-worker/wrangler.toml",
+        "tools/feedback-worker/README.md",
+        ".github/workflows/feedback-cleanup.yml",
+        "feedback_endpoint.json",
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/runtime/Feedback.kt",
+        "ToolboxApp/app/src/androidMain/kotlin/com/hyperos/xj/runtime/Feedback.android.kt",
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/pages/AboutPage.kt"
+      ]
     }
   ],
   "cancelled": [

@@ -1,0 +1,4 @@
+{
+  "url": "",
+  "note": "填入 Cloudflare Worker 地址（https://<name>.<subdomain>.workers.dev），App 会读这个文件决定诊断包上传到哪里；留空则只在本地生成不自动上传"
+}

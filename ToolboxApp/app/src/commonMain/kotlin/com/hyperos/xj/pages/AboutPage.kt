@@ -37,7 +37,9 @@ import androidx.compose.ui.unit.sp
 import com.hyperos.xj.runtime.DeviceStatus
 import com.hyperos.xj.runtime.Engine
 import com.hyperos.xj.runtime.ToolboxRuntimeBridge
+import com.hyperos.xj.runtime.feedbackEndpoint
 import com.hyperos.xj.runtime.openUrl
+import com.hyperos.xj.runtime.uploadDiagnosticPackage
 import com.hyperos.xj.runtime.writeDiagNote
 import com.hyperos.xj.ui.ActionButton
 import com.hyperos.xj.ui.CollapsibleCard
@@ -90,6 +92,7 @@ fun AboutPage(
     var showUninstallTip by remember { mutableStateOf(false) }
     var showDiagNote by remember { mutableStateOf(false) }
     var diagNote by remember { mutableStateOf("") }
+    var showFeedback by remember { mutableStateOf(false) }
     val diagScope = rememberCoroutineScope()
 
     if (showDiagNote) {
@@ -141,8 +144,7 @@ fun AboutPage(
                                 showDiagNote = false
                                 diagScope.launch {
                                     writeDiagNote(diagNote)
-                                    toolPage = diagPage
-                                    showToolPage = true
+                                    showFeedback = true
                                 }
                             }
                             .padding(horizontal = 16.dp, vertical = 8.dp)
@@ -155,6 +157,7 @@ fun AboutPage(
     }
 
     when {
+        showFeedback -> FeedbackPage(backdrop, bridge, diagNote, status.model, onBack = { showFeedback = false })
         showUninstallTip -> UninstallTipPage(backdrop, onBack = { showUninstallTip = false })
         showUninstallConfirm -> UninstallConfirmPage(
             backdrop,
@@ -278,6 +281,72 @@ private fun AboutMainPage(
             SectionLabel("工具")
             AboutRow("诊断与日志打包", "反馈问题用", "生成", onClick = onShowDiag)
             AboutRow("卸载模块", "还原系统配置，需二次确认", "危险", danger = true, onClick = onUninstall)
+        }
+    }
+}
+
+@Composable
+private fun FeedbackPage(
+    backdrop: Backdrop,
+    bridge: ToolboxRuntimeBridge,
+    note: String,
+    device: String,
+    onBack: () -> Unit
+) {
+    val accent = LocalAccentColor.current
+    var lines by remember { mutableStateOf(listOf("正在生成诊断包…")) }
+
+    LaunchedEffect(Unit) {
+        val out = runCatching { bridge.exec(Engine.build("diag", "pack")) }.getOrElse { "" }
+        lines = out.lines().filter { it.isNotBlank() }.ifEmpty { listOf("(命令无输出)") }
+        val path = Regex("已导出:\\s*(\\S+)").find(out)?.groupValues?.get(1)
+        if (path == null) {
+            lines = lines + "未能解析诊断包路径，未上传"
+            return@LaunchedEffect
+        }
+        if (feedbackEndpoint().isNullOrBlank()) {
+            lines = lines + "未配置上传地址（feedback_endpoint.json），包在本地：$path"
+            return@LaunchedEffect
+        }
+        lines = lines + "正在上传诊断包…"
+        val link = uploadDiagnosticPackage(path, note, device)
+        lines = lines + if (link != null) "已上传，作者会收到通知：$link" else "上传失败，包在本地：$path"
+    }
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .padding(
+                start = 18.dp,
+                end = 18.dp,
+                top = LocalPageInsets.current.top,
+                bottom = LocalPageInsets.current.bottom
+            ),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        BasicText(
+            text = "‹ 返回",
+            modifier = Modifier.clickable(onClick = onBack).padding(vertical = 4.dp),
+            style = TextStyle(color = accent, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+        )
+        GlassCard(backdrop, Modifier.fillMaxWidth()) {
+            SectionLabel("反馈诊断包")
+            BasicText(
+                text = "生成后自动上传，作者会收到 GitHub 通知",
+                style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp)
+            )
+            Spacer(Modifier.height(10.dp))
+            lines.forEach { line ->
+                BasicText(
+                    text = line,
+                    style = TextStyle(
+                        color = XJ.TextPrimary,
+                        fontSize = 12.sp,
+                        fontFamily = FontFamily.Monospace
+                    )
+                )
+            }
         }
     }
 }

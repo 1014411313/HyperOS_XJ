@@ -1,7 +1,7 @@
 {
-  "version": "3.1.38",
-  "versionCode": 348,
+  "version": "3.1.39",
+  "versionCode": 349,
   "date": "2026-11-09",
   "url": "",
-  "notes": "修复旧 daemon 残留导致的断充与设置不生效；自定义背景、字体缩放、诊断包问题描述"
+  "notes": "诊断包可自动上传反馈（需部署 Worker 并在 feedback_endpoint.json 填地址）；旧 daemon 清理与自定义背景等修复"
 }

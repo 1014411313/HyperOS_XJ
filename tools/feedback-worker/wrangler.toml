@@ -1,0 +1,10 @@
+name = "xj-feedback"
+main = "worker.js"
+compatibility_date = "2026-01-01"
+
+[vars]
+MAX_BYTES = "8388608"
+
+# secrets（用 wrangler secret put 设置，不要写进本文件）：
+#   GH_TOKEN  fine-grained token：Contents 读写 + Issues 读写，仅限本仓库
+#   GH_REPO   1014411313/HyperOS_XJ
