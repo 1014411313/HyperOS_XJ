@@ -2031,6 +2031,22 @@
       "affected": [
         "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/pages/AboutPage.kt"
       ]
+    },
+    {
+      "id": "bug-119",
+      "title": "充电慢：APL 功率恒算 0W 导致每次插枪误判塌陷降档",
+      "reported": "2026-11-10",
+      "type": "bug",
+      "version_seen": "3.1.47 (357)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "fixed_in": "3.1.48（358，未发布）",
+      "root_cause": "apl_num() 的过滤规则 *[!0-9]* 不接受负号，而本机 current_now 充电时为负（-4355000）：apl_num 返回 0 → _apl_ma=0 → _apl_pw 恒为 0W。APL 在插枪 40s 宽限期后每拍判定「功率塌陷(0W < 目标85W)」，把目标砍到 50% 并锁 60s，反复压制充电",
+      "evidence": "诊断包 battery.log：23:59:19 APL 插枪热身、00:00:05 APL 塌陷(0W < 目标85W)：降 10000mA 锁 60s；apl_state 末字段 20000；实测 battery.current_now=-4355000（4.36A≈19W）与「0W」矛盾",
+      "resolution": "apl.sh 先去掉负号再送进 apl_num（${BAT_CUR#-}），功率读数恢复为真实的 ~19W；同时确认 pss_disable 是禁用 PowerSaveService（与 PPS 快充无关），PD 仅协商 9V/3A 属于充电器/协议侧限制",
+      "affected": [
+        "engine/lib/apl.sh"
+      ]
     }
   ],
   "cancelled": [

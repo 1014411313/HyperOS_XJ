@@ -196,8 +196,9 @@ apl_tick() {
   _apl_mv=$(( $(apl_num "${BAT_VOLT:-0}") / 1000 ))
   # 电压读不到时用 4V 估算，避免后续「功率/电压」除零
   [ "$_apl_mv" -lt 1 ] && _apl_mv=4
-  _apl_ma=$(( $(apl_num "${BAT_CUR:-0}") / 1000 ))
-  [ "$_apl_ma" -lt 0 ] && _apl_ma=$(( -_apl_ma ))
+  # current_now 充电时为负值：apl_num 不接受负号（会返回 0），先把符号去掉再送进去，
+  # 否则 _apl_pw 恒为 0W，插枪 40s 后必被判成「功率塌陷」而降档锁 60s。
+  _apl_ma=$(( $(apl_num "${BAT_CUR#-}") / 1000 ))
   _apl_pw=$(( _apl_mv * _apl_ma / 1000 ))
   _apl_tb=$(( $(apl_num "${BAT_TEMP:-0}") / 10 ))
   _apl_uon=$(apl_rd /sys/class/power_supply/usb/online)
