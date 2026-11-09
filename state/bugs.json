@@ -1968,6 +1968,21 @@
         "ToolboxApp/app/src/desktopMain/kotlin/com/hyperos/xj/ui/PlatformBackHandler.desktop.kt",
         "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/App.kt"
       ]
+    },
+    {
+      "id": "bug-115",
+      "title": "反馈问题描述弹窗被页面卡片遮挡",
+      "reported": "2026-11-09",
+      "type": "bug",
+      "version_seen": "3.1.44 (354)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "fixed_in": "3.1.45（355，未发布）",
+      "root_cause": "AboutPage 里描述弹窗写在 when 之前，Compose 同层按声明顺序绘制、后绘制者在上，于是 AboutMainPage 的卡片盖住了弹窗",
+      "resolution": "把描述弹窗移到 when 之后绘制；同时排查其余叠层：权限弹窗在 App 层 BottomBar 之后（最上，正确），5 个二级页是 when 替换式页面、不存在叠层遮挡，且都已接系统返回键与底栏留白",
+      "affected": [
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/pages/AboutPage.kt"
+      ]
     }
   ],
   "cancelled": [

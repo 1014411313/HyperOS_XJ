@@ -100,6 +100,33 @@ fun AboutPage(
     var showFeedback by remember { mutableStateOf(false) }
     val diagScope = rememberCoroutineScope()
 
+    when {
+        showFeedback -> FeedbackPage(backdrop, bridge, diagNote, status.model, onBack = { showFeedback = false })
+        showUninstallTip -> UninstallTipPage(backdrop, onBack = { showUninstallTip = false })
+        showUninstallConfirm -> UninstallConfirmPage(
+            backdrop,
+            onBack = { showUninstallConfirm = false },
+            onConfirmed = {
+                showUninstallConfirm = false
+                showUninstallTip = true
+            }
+        )
+        showToolPage -> ToolOutputPage(backdrop, bridge, toolPage, onBack = { showToolPage = false })
+        showSubPage -> AboutSubPage(backdrop, onBack = { showSubPage = false })
+        else -> AboutMainPage(
+            backdrop,
+            bridge,
+            status,
+            onShowHelp = { showSubPage = true },
+            onShowLog = {
+                toolPage = logPage
+                showToolPage = true
+            },
+            onShowDiag = { showDiagNote = true },
+            onUninstall = { showUninstallConfirm = true }
+        )
+    }
+
     if (showDiagNote) {
         // 用应用内覆盖层而不是 Dialog：Dialog 是独立窗口，采不到主窗口 LayerBackdrop，玻璃卡片会失效
         Box(
@@ -168,32 +195,6 @@ fun AboutPage(
         }
     }
 
-    when {
-        showFeedback -> FeedbackPage(backdrop, bridge, diagNote, status.model, onBack = { showFeedback = false })
-        showUninstallTip -> UninstallTipPage(backdrop, onBack = { showUninstallTip = false })
-        showUninstallConfirm -> UninstallConfirmPage(
-            backdrop,
-            onBack = { showUninstallConfirm = false },
-            onConfirmed = {
-                showUninstallConfirm = false
-                showUninstallTip = true
-            }
-        )
-        showToolPage -> ToolOutputPage(backdrop, bridge, toolPage, onBack = { showToolPage = false })
-        showSubPage -> AboutSubPage(backdrop, onBack = { showSubPage = false })
-        else -> AboutMainPage(
-            backdrop,
-            bridge,
-            status,
-            onShowHelp = { showSubPage = true },
-            onShowLog = {
-                toolPage = logPage
-                showToolPage = true
-            },
-            onShowDiag = { showDiagNote = true },
-            onUninstall = { showUninstallConfirm = true }
-        )
-    }
 }
 
 @Composable
