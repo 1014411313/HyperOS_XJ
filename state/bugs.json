@@ -1900,8 +1900,8 @@
       "version_seen": "3.1.38 (348)",
       "device": "haotian",
       "status": "已修待复测",
-      "fixed_in": "3.1.41（351，未发布）",
-      "resolution": "定稿为「App 内填 token 直传」：用户在『关于 → 诊断与日志打包』首次使用时粘贴 GitHub fine-grained token（仅本仓库 Contents 读写），存 SharedPreferences（不随包上传）；App 直接调 GitHub Contents API 写 feedback/<时间戳>_xxx.tar.gz 与同名 .txt（机型/时间/问题描述）。作者（AI）下次对话 git pull 读包、修完 git rm 删包。Cloudflare Worker（tools/feedback-worker）与 feedback_endpoint.json 保留为可选中转方案，未配 token 时才回退使用",
+      "fixed_in": "3.1.42（352，未发布）",
+      "resolution": "公开通道为主：App 先读 feedback_endpoint.json（Cloudflare Worker 地址）上传，任何用户无需 token 即可反馈；Worker 不可用或未配置时才用 App 内本地 token 直传 GitHub Contents API（作者自用兜底）。两条路都写 feedback/<时间戳>_xxx.tar.gz + 同名 .txt（机型/时间/问题描述）；作者（AI）读包后自行删除",
       "affected": [
         "tools/feedback-worker/worker.js",
         "tools/feedback-worker/wrangler.toml",

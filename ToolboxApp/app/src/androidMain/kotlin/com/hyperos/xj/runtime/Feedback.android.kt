@@ -30,7 +30,6 @@ actual fun saveFeedbackToken(token: String) {
 
 /** 未配置 token 时回退到 feedback_endpoint.json 里的中转地址（可选，普通用法不需要）。 */
 actual suspend fun feedbackEndpoint(): String? = withContext(Dispatchers.IO) {
-    if (loadFeedbackToken().isNotBlank()) return@withContext null
     for (src in listOf(
         "https://cdn.jsdelivr.net/gh/$FEEDBACK_REPO@master/feedback_endpoint.json",
         "https://gitee.com/xiaomirezhale/HyperOS_XJ/raw/master/feedback_endpoint.json",
@@ -51,11 +50,16 @@ actual suspend fun uploadDiagnosticPackage(
     val file = File(filePath)
     if (!file.isFile) return@withContext null
 
+    // 公开通道优先：任何用户都不需要 token，靠 feedback_endpoint.json 里的中转地址
+    val endpoint = feedbackEndpoint()
+    if (endpoint != null) {
+        uploadViaWorker(endpoint, file, note, device)?.let { return@withContext it }
+    }
+
+    // 兜底：本地配了 token 就直传 GitHub（作者自用/中转不可用时）
     val token = loadFeedbackToken()
     if (token.isNotBlank()) return@withContext uploadViaGithub(file, note, device, token)
-
-    val endpoint = feedbackEndpoint() ?: return@withContext null
-    uploadViaWorker(endpoint, file, note, device)
+    null
 }
 
 // 主用法：App 直接调 GitHub Contents API，不需要任何中转服务

@@ -1,7 +1,7 @@
 {
-  "version": "3.1.41",
-  "versionCode": 351,
+  "version": "3.1.42",
+  "versionCode": 352,
   "date": "2026-11-09",
   "url": "",
-  "notes": "诊断包可直接在 App 里填 token 上传（免部署 Worker）"
+  "notes": "任何人可直接反馈：诊断包走公开中转上传（App 内 token 仅作兜底）"
 }
