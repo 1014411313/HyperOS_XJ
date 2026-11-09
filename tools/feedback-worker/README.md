@@ -28,7 +28,10 @@ App 侧「诊断与日志打包」会把诊断包 POST 到这里，Worker 把包
 
    部署成功会打印形如 `https://xj-feedback.<你的子域>.workers.dev` 的地址。
 
-4. 把地址填进仓库根目录的 `feedback_endpoint.json`：
+4. 启用自动清理工作流：把 `tools/feedback-worker/feedback-cleanup.yml` 复制到仓库 `.github/workflows/feedback-cleanup.yml`
+   （用 GitHub 网页 "Add file → Create new file" 粘贴即可；本仓库的推送 token 没有 `workflow` scope，命令行推不了这个目录）
+
+5. 把地址填进仓库根目录的 `feedback_endpoint.json`：
 
    ```json
    { "url": "https://xj-feedback.<你的子域>.workers.dev" }
