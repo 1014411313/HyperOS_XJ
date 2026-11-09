@@ -4,6 +4,6 @@
   "date": "2026-11-09",
   "url": "",
   "notes": "修充电慢（APL 功率 0W 误判）；诊断包新增 PPS/限流/APL 节点",
-  "download": "https://github.com/1014411313/HyperOS_XJ/releases/download/v3.1.48/rezhale_toolbox_v3.1.48.zip",
-  "release": "https://github.com/1014411313/HyperOS_XJ/releases/tag/v3.1.48"
+  "download": "https://github.com/1014411313/HyperOS_XJ/releases/download/v3.1.49/rezhale_toolbox_v3.1.49.zip",
+  "release": "https://github.com/1014411313/HyperOS_XJ/releases/tag/v3.1.49"
 }
