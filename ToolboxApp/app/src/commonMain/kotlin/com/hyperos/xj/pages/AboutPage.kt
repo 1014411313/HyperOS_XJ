@@ -37,10 +37,12 @@ import androidx.compose.ui.unit.sp
 import com.hyperos.xj.runtime.DeviceStatus
 import com.hyperos.xj.runtime.Engine
 import com.hyperos.xj.runtime.ToolboxRuntimeBridge
+import com.hyperos.xj.runtime.FeedbackUpload
 import com.hyperos.xj.runtime.feedbackEndpoint
 import com.hyperos.xj.runtime.loadFeedbackToken
 import com.hyperos.xj.runtime.openUrl
 import com.hyperos.xj.runtime.saveFeedbackToken
+import com.hyperos.xj.runtime.shareDiagnosticPackage
 import com.hyperos.xj.runtime.uploadDiagnosticPackage
 import com.hyperos.xj.runtime.writeDiagNote
 import com.hyperos.xj.ui.ActionButton
@@ -299,6 +301,7 @@ private fun FeedbackPage(
     var lines by remember { mutableStateOf<List<String>>(emptyList()) }
     var showTokenInput by remember { mutableStateOf(false) }
     var tokenInput by remember { mutableStateOf("") }
+    var localPath by remember { mutableStateOf("") }
     var runKey by remember { mutableStateOf(0) }
 
     LaunchedEffect(runKey) {
@@ -312,12 +315,14 @@ private fun FeedbackPage(
             return@LaunchedEffect
         }
         lines = lines + "正在上传…"
-        val uploaded = uploadDiagnosticPackage(path, note, device)
-        if (uploaded != null) {
-            lines = lines + "已上传：$uploaded（下次对话我直接读）"
-        } else {
-            lines = lines + "上传失败，包在本地：$path"
-            showTokenInput = true
+        when (val r = uploadDiagnosticPackage(path, note, device)) {
+            is FeedbackUpload.Ok -> lines = lines + "已上传：${r.path}（下次对话我直接读）"
+            is FeedbackUpload.Failed -> {
+                lines = lines + "上传失败（${r.reason}）"
+                lines = lines + "包在本地：$path"
+                localPath = path
+                showTokenInput = true
+            }
         }
     }
 
@@ -354,6 +359,17 @@ private fun FeedbackPage(
                         fontFamily = FontFamily.Monospace
                     )
                 )
+            }
+            if (showTokenInput && localPath.isNotEmpty()) {
+                Spacer(Modifier.height(12.dp))
+                Box(
+                    Modifier
+                        .background(XJ.AccentSoft, RoundedCornerShape(12.dp))
+                        .clickable { shareDiagnosticPackage(localPath) }
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                ) {
+                    BasicText("分享诊断包给作者", style = TextStyle(color = Color(0xFF10231F), fontSize = 13.sp))
+                }
             }
             if (showTokenInput) {
                 Spacer(Modifier.height(12.dp))

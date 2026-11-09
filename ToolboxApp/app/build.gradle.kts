@@ -36,6 +36,7 @@ kotlin {
         val androidMain by getting {
             dependencies {
                 implementation(libs.androidx.activity.compose)
+                implementation(libs.androidx.core.ktx)
             }
         }
         val desktopMain by getting {

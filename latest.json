@@ -1,7 +1,7 @@
 {
-  "version": "3.1.42",
-  "versionCode": 352,
+  "version": "3.1.43",
+  "versionCode": 353,
   "date": "2026-11-09",
   "url": "",
-  "notes": "任何人可直接反馈：诊断包走公开中转上传（App 内 token 仅作兜底）"
+  "notes": "修复诊断包上传（补 INTERNET 权限），上传失败可一键分享给作者"
 }

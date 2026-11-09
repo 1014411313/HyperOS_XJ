@@ -125,6 +125,8 @@ object AndroidBackgroundPicker {
 
     fun appFilesDir(): java.io.File? = appContext?.filesDir
 
+    fun appContextOrNull(): Context? = appContext
+
     private fun readBytes(context: Context, uri: android.net.Uri): ByteArray? =
         context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
 }
