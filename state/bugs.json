@@ -1884,7 +1884,7 @@
       "device": "haotian",
       "status": "已修待复测",
       "fixed_in": "3.1.38（348，未发布）",
-      "resolution": "「诊断与日志打包」先弹输入框收集问题描述，写入 App 私有目录 diag_note.txt；diag.sh 打包前拷贝为包内 problem.txt（另支持 DATA_DIR/state/diag_note.txt）。在线自动上传待用户提供接收地址后再做",
+      "resolution": "「诊断与日志打包」先弹输入框收集问题描述，写入 App 私有目录 diag_note.txt；diag.sh 打包前拷贝为包内 problem.txt（另支持 DATA_DIR/state/diag_note.txt）。在线自动上传已实现（见 bug-111）",
       "affected": [
         "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/pages/AboutPage.kt",
         "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/runtime/LaunchPermissions.kt",
@@ -1900,8 +1900,8 @@
       "version_seen": "3.1.38 (348)",
       "device": "haotian",
       "status": "已修待复测",
-      "fixed_in": "3.1.39（349，未发布）",
-      "resolution": "仓库侧：tools/feedback-worker（Worker：multipart 上传 → Contents API 写 feedback/ → 建 Issue，token 只存 Worker secret）、.github/workflows/feedback-cleanup.yml（issue 关闭删对应包 + 每天清理 30 天前的包）、feedback_endpoint.json（App 读它拿上传地址，留空则仅本地）。App 侧：生成诊断包后读 feedback_endpoint.json、POST multipart 上传、显示反馈链接或失败原因（runtime/Feedback.kt + Android 实现）",
+      "fixed_in": "3.1.40（350，未发布）",
+      "resolution": "App 生成诊断包后读仓库 feedback_endpoint.json 取上传地址 → POST multipart 到 Cloudflare Worker → Worker 用 Contents API 写 feedback/<时间戳>_xxx.tar.gz 与同名 .txt（机型/时间/问题描述）。流程定稿：不需要 GitHub Issue 通知，也不需要工作流——作者（AI）下次对话时直接 git pull 读 feedback/ 里的包，修完自行 git rm 删除。token 只需 Contents: Read and write。相关文件：tools/feedback-worker/（worker.js + wrangler.toml + README）、feedback_endpoint.json、App 的 Feedback.kt/Feedback.android.kt/AboutPage.kt",
       "affected": [
         "tools/feedback-worker/worker.js",
         "tools/feedback-worker/wrangler.toml",

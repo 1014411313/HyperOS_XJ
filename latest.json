@@ -1,7 +1,7 @@
 {
-  "version": "3.1.39",
-  "versionCode": 349,
+  "version": "3.1.40",
+  "versionCode": 350,
   "date": "2026-11-09",
   "url": "",
-  "notes": "诊断包可自动上传反馈（需部署 Worker 并在 feedback_endpoint.json 填地址）；旧 daemon 清理与自定义背景等修复"
+  "notes": "诊断包上传后由 AI 直接读取并删除（去掉 Issue/工作流）；旧 daemon 清理、自定义背景、字体缩放修复"
 }

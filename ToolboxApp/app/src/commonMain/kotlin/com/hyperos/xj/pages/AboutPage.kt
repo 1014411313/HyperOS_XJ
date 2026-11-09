@@ -310,7 +310,7 @@ private fun FeedbackPage(
         }
         lines = lines + "正在上传诊断包…"
         val link = uploadDiagnosticPackage(path, note, device)
-        lines = lines + if (link != null) "已上传，作者会收到通知：$link" else "上传失败，包在本地：$path"
+        lines = lines + if (link != null) "已上传到反馈目录：$link（下次对话我直接读）" else "上传失败，包在本地：$path"
     }
 
     Column(
@@ -333,7 +333,7 @@ private fun FeedbackPage(
         GlassCard(backdrop, Modifier.fillMaxWidth()) {
             SectionLabel("反馈诊断包")
             BasicText(
-                text = "生成后自动上传，作者会收到 GitHub 通知",
+                text = "生成后会传到仓库反馈目录，下次对话我直接读",
                 style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp)
             )
             Spacer(Modifier.height(10.dp))

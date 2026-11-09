@@ -57,7 +57,7 @@ actual suspend fun uploadDiagnosticPackage(
             ?.bufferedReader()?.use { it.readText() }.orEmpty()
         conn.disconnect()
         if (code !in 200..299) null
-        else Regex("\"url\"\\s*:\\s*\"([^\"]+)\"").find(body)?.groupValues?.get(1) ?: "已上传"
+        else Regex("\"file\"\\s*:\\s*\"([^\"]+)\"").find(body)?.groupValues?.get(1) ?: "feedback/"
     }.getOrNull()
 }
 
