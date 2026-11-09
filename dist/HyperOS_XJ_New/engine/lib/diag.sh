@@ -64,6 +64,20 @@ diag_log() {
   tail -n "$_n" "$_f" 2>/dev/null
 }
 
+# App 没有 /sdcard 读权限：分享与上传都要用 App 私有目录里的副本。
+diag_copy_to_app() {
+  _src="$1"
+  [ -f "$_src" ] || return 1
+  _appfiles=/data/user/0/com.hyperos.xj/files
+  _dir="$_appfiles/diag"
+  mkdir -p "$_dir" 2>/dev/null || return 1
+  cp -f "$_src" "$_dir/" 2>/dev/null || return 1
+  _uid=$(stat -c %u "$_appfiles" 2>/dev/null)
+  case "$_uid" in ''|*[!0-9]*|0) ;; *) chown -R "$_uid:$_uid" "$_dir" 2>/dev/null ;; esac
+  chmod 0644 "$_dir"/* 2>/dev/null
+  return 0
+}
+
 # 打包：优先 zip（$.zip），设备无 zip 工具时回退 tar.gz（如实告知扩展名）。
 diag_do_zip() {
   _stage="$1"; _out="$2"
@@ -269,6 +283,7 @@ diag_pack() {
     _sz=$(stat -c %s "$_zip" 2>/dev/null)
     rm -rf "$_stage" 2>/dev/null
     echo "已导出: $_zip"
+    diag_copy_to_app "$_zip"
     echo "大小: ${_sz:-?} 字节   打包: $_how"
     echo "内容: 日志 $_n 个，配置 $_cn 个（settings.json 已脱敏）"
     echo "采集: state $_sn / runtime ${_rt} / sysfs ${_sysfs_n} 项 / thermal ${_th} / module ${_mr} / settings ${_sc} / dmesg ${_dm}"
@@ -282,6 +297,7 @@ diag_pack() {
     _sz=$(stat -c %s "$_tgz" 2>/dev/null)
     rm -rf "$_stage" 2>/dev/null
     echo "已导出: $_tgz"
+    diag_copy_to_app "$_tgz"
     echo "说明: 设备无 zip 工具，已用 $_how 打包（扩展名 .tar.gz）"
     echo "大小: ${_sz:-?} 字节"
     echo "内容: 日志 $_n 个，配置 $_cn 个（settings.json 已脱敏）"

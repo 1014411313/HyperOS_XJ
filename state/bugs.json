@@ -2001,6 +2001,36 @@
         "ToolboxApp/app/src/androidMain/kotlin/com/hyperos/xj/runtime/Feedback.android.kt",
         "ToolboxApp/app/src/desktopMain/kotlin/com/hyperos/xj/runtime/Feedback.desktop.kt"
       ]
+    },
+    {
+      "id": "bug-117",
+      "title": "点「分享诊断包」无反应（不弹分享面板）",
+      "reported": "2026-11-09",
+      "type": "bug",
+      "version_seen": "3.1.46 (356)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "fixed_in": "3.1.47（357，未发布）",
+      "root_cause": "诊断包在 /sdcard/Download，App 没有任何存储权限，File.isFile 判定失败导致分享直接返回 false（上传的读取同样受影响）",
+      "resolution": "diag.sh 打包后把包复制到 App 私有目录 /data/user/0/com.hyperos.xj/files/diag 并 chown 给 App uid；App 侧 resolvePackage() 优先用私有副本（上传与分享都走它），无需任何存储权限",
+      "affected": [
+        "engine/lib/diag.sh",
+        "ToolboxApp/app/src/androidMain/kotlin/com/hyperos/xj/runtime/Feedback.android.kt"
+      ]
+    },
+    {
+      "id": "bug-118",
+      "title": "上传失败引导：先提示挂代理重试，分享为最后一步",
+      "reported": "2026-11-09",
+      "type": "feature",
+      "version_seen": "3.1.47 (357)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "fixed_in": "3.1.47（357，未发布）",
+      "resolution": "失败文案改为「先开启代理（梯子）后点重试上传；实在传不出去再分享」；新增「重试上传」按钮（runKey 重跑生成+上传）与「分享给作者」并排，底部附完整文件路径便于在 AiCode 对话里点附件",
+      "affected": [
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/pages/AboutPage.kt"
+      ]
     }
   ],
   "cancelled": [

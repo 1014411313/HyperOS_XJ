@@ -40,7 +40,7 @@ actual suspend fun uploadDiagnosticPackage(
     note: String,
     device: String,
 ): FeedbackUpload = withContext(Dispatchers.IO) {
-    val file = File(filePath)
+    val file = resolvePackage(filePath)
     if (!file.isFile) return@withContext FeedbackUpload.Failed("找不到诊断包：$filePath")
     val endpoint = feedbackEndpoint()
         ?: return@withContext FeedbackUpload.Failed("未配置上传地址")
@@ -48,6 +48,15 @@ actual suspend fun uploadDiagnosticPackage(
         is WorkerResult.Ok -> FeedbackUpload.Ok(r.path)
         is WorkerResult.Fail -> FeedbackUpload.Failed(r.reason)
     }
+}
+
+
+/** App 无 /sdcard 读权限：diag.sh 会在 App 私有目录放一份副本，优先用它。 */
+private fun resolvePackage(path: String): File {
+    val ctx = AndroidBackgroundPicker.appContextOrNull()
+    val name = path.substringAfterLast('/')
+    val copy = ctx?.let { File(it.filesDir, "diag/$name") }
+    return if (copy != null && copy.isFile) copy else File(path)
 }
 
 private sealed interface WorkerResult {
@@ -110,7 +119,7 @@ private fun httpGet(url: String, connectTimeoutMs: Int, readTimeoutMs: Int): Str
 actual fun shareDiagnosticPackage(filePath: String): Boolean {
     val ctx = AndroidBackgroundPicker.appContextOrNull() ?: return false
     return runCatching {
-        val src = File(filePath)
+        val src = resolvePackage(filePath)
         if (!src.isFile) return false
         val dir = File(ctx.filesDir, "share").apply { mkdirs() }
         val dst = File(dir, src.name)

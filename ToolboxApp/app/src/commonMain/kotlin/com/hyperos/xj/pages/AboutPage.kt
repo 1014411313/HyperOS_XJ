@@ -307,10 +307,11 @@ private fun FeedbackPage(
     var lines by remember { mutableStateOf<List<String>>(emptyList()) }
     var localPath by remember { mutableStateOf("") }
     var failed by remember { mutableStateOf(false) }
+    var runKey by remember { mutableStateOf(0) }
 
     PlatformBackHandler { onBack() }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(runKey) {
         lines = listOf("正在生成诊断包…")
         val out = runCatching { bridge.exec(Engine.build("diag", "pack")) }.getOrElse { "" }
         lines = out.lines().filter { it.isNotBlank() }.ifEmpty { listOf("(命令无输出)") }
@@ -328,9 +329,8 @@ private fun FeedbackPage(
                 failed = true
                 lines = lines + "自动上传不可用（${r.reason}）"
                 lines = lines + ""
-                lines = lines + "请点下面的「分享诊断包」，用微信 / QQ 发给作者；"
-                lines = lines + "或者直接在 AiCode 对话里点附件，选这个文件："
-                lines = lines + path
+                lines = lines + "先试试开启代理（梯子）后点「重试上传」；"
+                lines = lines + "实在传不出去，再点「分享诊断包」用微信 / QQ 发给作者。"
             }
         }
     }
@@ -371,23 +371,39 @@ private fun FeedbackPage(
             }
             if (failed && localPath.isNotEmpty()) {
                 Spacer(Modifier.height(14.dp))
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .background(XJ.AccentSoft, RoundedCornerShape(14.dp))
-                        .clickable { shareDiagnosticPackage(localPath) }
-                        .padding(vertical = 12.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    BasicText(
-                        text = "分享诊断包给作者",
-                        style = TextStyle(
-                            color = Color(0xFF10231F),
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.SemiBold
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Box(
+                        Modifier
+                            .weight(1f)
+                            .background(XJ.Accent, RoundedCornerShape(14.dp))
+                            .clickable { runKey += 1 }
+                            .padding(vertical = 12.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        BasicText(
+                            text = "重试上传",
+                            style = TextStyle(color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                         )
-                    )
+                    }
+                    Box(
+                        Modifier
+                            .weight(1f)
+                            .background(XJ.AccentSoft, RoundedCornerShape(14.dp))
+                            .clickable { shareDiagnosticPackage(localPath) }
+                            .padding(vertical = 12.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        BasicText(
+                            text = "分享给作者",
+                            style = TextStyle(color = Color(0xFF10231F), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                        )
+                    }
                 }
+                Spacer(Modifier.height(8.dp))
+                BasicText(
+                    text = "也在 AiCode 对话里点附件，选这个文件：$localPath",
+                    style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp)
+                )
             }
         }
     }
