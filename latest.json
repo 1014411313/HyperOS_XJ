@@ -3,5 +3,7 @@
   "versionCode": 357,
   "date": "2026-11-09",
   "url": "",
-  "notes": "修分享诊断包无反应；上传失败先提示挂代理重试"
+  "notes": "修分享诊断包无反应；上传失败先提示挂代理重试",
+  "download": "https://github.com/1014411313/HyperOS_XJ/releases/download/v3.1.47/rezhale_toolbox_v3.1.47.zip",
+  "release": "https://github.com/1014411313/HyperOS_XJ/releases/tag/v3.1.47"
 }
