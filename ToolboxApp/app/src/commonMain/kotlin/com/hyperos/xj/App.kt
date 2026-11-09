@@ -192,7 +192,7 @@ fun App() {
             )
 
             if (showLaunchPerms) {
-                LaunchPermissionDialog(onDismiss = { noMore ->
+                LaunchPermissionDialog(backdrop = backdrop, onDismiss = { noMore ->
                     if (noMore) saveLaunchFlags(loadLaunchFlags().copy(dismissed = true))
                     showLaunchPerms = false
                 })

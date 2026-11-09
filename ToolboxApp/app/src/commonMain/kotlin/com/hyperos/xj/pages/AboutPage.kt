@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -31,7 +32,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hyperos.xj.runtime.DeviceStatus
@@ -41,6 +41,7 @@ import com.hyperos.xj.runtime.FeedbackUpload
 import com.hyperos.xj.runtime.feedbackEndpoint
 import com.hyperos.xj.runtime.loadFeedbackToken
 import com.hyperos.xj.runtime.openUrl
+import com.hyperos.xj.ui.PlatformBackHandler
 import com.hyperos.xj.runtime.saveFeedbackToken
 import com.hyperos.xj.runtime.shareDiagnosticPackage
 import com.hyperos.xj.runtime.uploadDiagnosticPackage
@@ -100,12 +101,19 @@ fun AboutPage(
     val diagScope = rememberCoroutineScope()
 
     if (showDiagNote) {
-        Dialog(onDismissRequest = { showDiagNote = false }) {
-            Column(
-                Modifier
+        // 用应用内覆盖层而不是 Dialog：Dialog 是独立窗口，采不到主窗口 LayerBackdrop，玻璃卡片会失效
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.45f)),
+            contentAlignment = Alignment.Center
+        ) {
+            PlatformBackHandler { showDiagNote = false }
+            GlassCard(
+                backdrop = backdrop,
+                modifier = Modifier
                     .fillMaxWidth()
-                    .background(Color(0xF21B1E24), RoundedCornerShape(20.dp))
-                    .padding(18.dp)
+                    .padding(horizontal = 22.dp)
             ) {
                 BasicText(
                     text = "反馈问题描述",
@@ -297,6 +305,7 @@ private fun FeedbackPage(
     device: String,
     onBack: () -> Unit
 ) {
+    PlatformBackHandler { onBack() }
     val accent = LocalAccentColor.current
     var lines by remember { mutableStateOf<List<String>>(emptyList()) }
     var showTokenInput by remember { mutableStateOf(false) }
@@ -413,6 +422,7 @@ private fun ToolOutputPage(
     page: ToolPage,
     onBack: () -> Unit
 ) {
+    PlatformBackHandler { onBack() }
     val accent = LocalAccentColor.current
     val scope = rememberCoroutineScope()
     var output by remember(page) { mutableStateOf<String?>(null) }
@@ -493,6 +503,7 @@ private fun UninstallConfirmPage(
     onBack: () -> Unit,
     onConfirmed: () -> Unit
 ) {
+    PlatformBackHandler { onBack() }
     val accent = LocalAccentColor.current
     Column(
         Modifier
@@ -541,6 +552,7 @@ private fun UninstallConfirmPage(
 
 @Composable
 private fun UninstallTipPage(backdrop: Backdrop, onBack: () -> Unit) {
+    PlatformBackHandler { onBack() }
     val accent = LocalAccentColor.current
     Column(
         Modifier
@@ -582,6 +594,7 @@ private fun AboutSubPage(
     backdrop: Backdrop,
     onBack: () -> Unit
 ) {
+    PlatformBackHandler { onBack() }
     val accent = LocalAccentColor.current
     Column(
         Modifier

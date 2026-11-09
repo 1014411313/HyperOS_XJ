@@ -1,7 +1,7 @@
 {
-  "version": "3.1.43",
-  "versionCode": 353,
+  "version": "3.1.44",
+  "versionCode": 354,
   "date": "2026-11-09",
   "url": "",
-  "notes": "修复诊断包上传（补 INTERNET 权限），上传失败可一键分享给作者"
+  "notes": "权限/反馈卡片改玻璃质感；二级页支持系统返回键；诊断包上传修 INTERNET 权限"
 }

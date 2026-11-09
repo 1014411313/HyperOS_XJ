@@ -1948,6 +1948,26 @@
         "ToolboxApp/androidApp/src/main/res/xml/file_paths.xml",
         "ToolboxApp/app/build.gradle.kts"
       ]
+    },
+    {
+      "id": "bug-114",
+      "title": "权限检测/反馈卡片改玻璃质感，二级页支持系统返回键",
+      "reported": "2026-11-09",
+      "type": "feature",
+      "version_seen": "3.1.43 (353)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "fixed_in": "3.1.44（354，未发布）",
+      "root_cause": "两类卡片此前是纯色 Dialog（Color 0xF21B1E24），不跟随液态/磨砂外观；Dialog 是独立窗口，采不到主窗口 LayerBackdrop，即使套 GlassCard 也会失效；二级页只有『‹ 返回』按钮，系统返回键无效",
+      "resolution": "权限检查弹窗与诊断描述输入改为应用内覆盖层（半透明遮罩 + GlassCard），玻璃模式跟随 LocalGlassMode（液态/磨砂自动切换）；新增 expect/actual PlatformBackHandler（Android 用 activity-compose 的 BackHandler，桌面空实现），AboutPage 的 FeedbackPage/ToolOutputPage/UninstallConfirmPage/UninstallTipPage/AboutSubPage 与权限弹窗均接入",
+      "affected": [
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/ui/LaunchPermissionDialog.kt",
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/pages/AboutPage.kt",
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/ui/PlatformBackHandler.kt",
+        "ToolboxApp/app/src/androidMain/kotlin/com/hyperos/xj/ui/PlatformBackHandler.android.kt",
+        "ToolboxApp/app/src/desktopMain/kotlin/com/hyperos/xj/ui/PlatformBackHandler.desktop.kt",
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/App.kt"
+      ]
     }
   ],
   "cancelled": [

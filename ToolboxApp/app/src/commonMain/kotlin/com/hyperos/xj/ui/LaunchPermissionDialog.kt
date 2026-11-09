@@ -7,11 +7,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -21,29 +23,27 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.foundation.text.BasicText
-import androidx.compose.ui.text.TextStyle
 import com.hyperos.xj.runtime.batteryOptimizationIgnored
 import com.hyperos.xj.runtime.createToolboxBridge
 import com.hyperos.xj.runtime.isLsposedInstalled
-import com.hyperos.xj.runtime.loadLaunchFlags
 import com.hyperos.xj.runtime.notificationsGranted
 import com.hyperos.xj.runtime.openLsposedManager
 import com.hyperos.xj.runtime.requestIgnoreBatteryOptimizations
 import com.hyperos.xj.runtime.requestNotifications
-import com.hyperos.xj.runtime.saveLaunchFlags
+import com.kyant.backdrop.Backdrop
 import kotlinx.coroutines.delay
 
 /**
- * 开屏权限与配置检查。通知/电池优化状态在弹窗打开期间轮询刷新（授权返回后自动更新），
- * Root 与 LSPosed 由用户点按钮触发检查。
+ * 开屏权限与配置检查。用应用内覆盖层而不是 Dialog：Dialog 是独立窗口，采不到主窗口的
+ * LayerBackdrop，玻璃卡片会失效；覆盖层还能顺带接系统返回键。
+ * 通知/电池优化状态在打开期间轮询刷新，Root 与 LSPosed 由按钮触发。
  */
 @Composable
-fun LaunchPermissionDialog(onDismiss: (noMore: Boolean) -> Unit) {
+fun LaunchPermissionDialog(backdrop: Backdrop, onDismiss: (noMore: Boolean) -> Unit) {
     val bridge = remember { createToolboxBridge() }
     var notifyGranted by remember { mutableStateOf(notificationsGranted()) }
     var batteryOk by remember { mutableStateOf(batteryOptimizationIgnored()) }
@@ -51,6 +51,8 @@ fun LaunchPermissionDialog(onDismiss: (noMore: Boolean) -> Unit) {
     var rootCheckKey by remember { mutableStateOf(0) }
     var noMore by remember { mutableStateOf(false) }
     val lsposedInstalled = remember { isLsposedInstalled() }
+
+    PlatformBackHandler { onDismiss(noMore) }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -65,12 +67,17 @@ fun LaunchPermissionDialog(onDismiss: (noMore: Boolean) -> Unit) {
         rootOk = result != null && result.success && result.output.trim() == "0"
     }
 
-    Dialog(onDismissRequest = { onDismiss(noMore) }) {
-        Column(
-            Modifier
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.45f)),
+        contentAlignment = Alignment.Center
+    ) {
+        GlassCard(
+            backdrop = backdrop,
+            modifier = Modifier
                 .fillMaxWidth()
-                .background(Color(0xF21B1E24), RoundedCornerShape(20.dp))
-                .padding(18.dp)
+                .padding(horizontal = 22.dp)
         ) {
             BasicText(
                 text = "权限与配置检查",
