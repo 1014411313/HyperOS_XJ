@@ -2047,6 +2047,20 @@
       "affected": [
         "engine/lib/apl.sh"
       ]
+    },
+    {
+      "id": "bug-120",
+      "title": "诊断包增加充电关键节点采集",
+      "reported": "2026-11-10",
+      "type": "feature",
+      "version_seen": "3.1.48 (358)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "fixed_in": "3.1.49（359，未发布）",
+      "resolution": "sysfs.txt 采集新增：qcom-battery 的 pd_verifed / quick_charge_type / real_type / authentic / power_max / cid_status（公版 PPS 与快充协议是否生效）、wired_chg_curr（充电限流节点）、smart_fv，以及 APL 的 apl_state / apl_target_ma。以后判断充电慢是被模块压制还是充电器上限，用诊断包即可",
+      "affected": [
+        "engine/lib/diag.sh"
+      ]
     }
   ],
   "cancelled": [

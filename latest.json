@@ -1,9 +1,9 @@
 {
-  "version": "3.1.48",
-  "versionCode": 358,
+  "version": "3.1.49",
+  "versionCode": 359,
   "date": "2026-11-09",
   "url": "",
-  "notes": "修充电慢：APL 功率误算 0W 导致反复降档",
+  "notes": "修充电慢（APL 功率 0W 误判）；诊断包新增 PPS/限流/APL 节点",
   "download": "https://github.com/1014411313/HyperOS_XJ/releases/download/v3.1.48/rezhale_toolbox_v3.1.48.zip",
   "release": "https://github.com/1014411313/HyperOS_XJ/releases/tag/v3.1.48"
 }

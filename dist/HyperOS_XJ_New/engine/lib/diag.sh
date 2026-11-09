@@ -198,6 +198,16 @@ diag_pack() {
     done
     echo "== 充电器功率 =="
     diag_node_line "charger_common.power_max" "/sys/class/xm_power/charger/charger_common/power_max"
+    echo "== qcom-battery（PD 验证/快充类型/认证）=="
+    for _pn in pd_verifed quick_charge_type real_type authentic power_max cid_status; do
+      diag_node_line "qcom.$_pn" "/sys/class/qcom-battery/$_pn"
+    done
+    echo "== 充电限流与温控接线 =="
+    diag_node_line "wired_chg_curr" "/sys/class/xm_power/charger/charger_thermal/wired_chg_curr"
+    diag_node_line "smart_fv" "/sys/class/xm_power/charger/smart_charge/smart_fv"
+    echo "== APL 状态 =="
+    diag_node_line "apl_state" "$STATE/apl_state"
+    diag_node_line "apl_target_ma" "$STATE/apl_target_ma"
     echo "== thermal_zone（type/temp 配对）=="
     for _tz in /sys/class/thermal/thermal_zone*; do
       [ -d "$_tz" ] || continue
