@@ -47,8 +47,12 @@ import com.hyperos.xj.runtime.DeviceStatus
 import com.hyperos.xj.runtime.createToolboxBridge
 import com.hyperos.xj.runtime.loadAppBackgroundImage
 import com.hyperos.xj.runtime.loadBuiltinAppBackground
+import com.hyperos.xj.runtime.loadLaunchFlags
+import com.hyperos.xj.runtime.saveLaunchFlags
 import com.hyperos.xj.ui.AppMediaBackground
 import com.hyperos.xj.ui.BottomBar
+import com.hyperos.xj.ui.LaunchPermissionDialog
+import com.hyperos.xj.ui.LaunchPermissionDialog
 import com.hyperos.xj.ui.LocalAccentColor
 import com.hyperos.xj.ui.LocalAppearance
 import com.hyperos.xj.ui.LocalGlassMode
@@ -71,6 +75,7 @@ fun App() {
     var selectedTab by remember { mutableIntStateOf(0) }
     var status by remember { mutableStateOf(DeviceStatus()) }
     var appearance by remember { mutableStateOf(AppearanceStore.load()) }
+    var showLaunchPerms by remember { mutableStateOf(!loadLaunchFlags().dismissed) }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -179,6 +184,13 @@ fun App() {
                     .onSizeChanged { bottomHostPx = it.height }
                     .padding(horizontal = 18.dp, vertical = 12.dp)
             )
+
+            if (showLaunchPerms) {
+                LaunchPermissionDialog(onDismiss = { noMore ->
+                    if (noMore) saveLaunchFlags(loadLaunchFlags().copy(dismissed = true))
+                    showLaunchPerms = false
+                })
+            }
         }
     }
 }

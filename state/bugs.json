@@ -1777,6 +1777,26 @@
       "affected": [
         "engine/xjdaemon.sh"
       ]
+    },
+    {
+      "id": "bug-104",
+      "title": "开屏权限与配置检查弹窗",
+      "reported": "2026-11-09",
+      "type": "feature",
+      "version_seen": "3.1.36 (346)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "fixed_in": "3.1.37（347，未发布）",
+      "resolution": "新增开屏弹窗（ui/LaunchPermissionDialog.kt）：通知权限（POST_NOTIFICATIONS，按钮走系统授权框）、Root 权限（bridge execResult(\"id -u\") 检测，可重新检测）、电池优化白名单（跳 ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS，Manifest 新增该权限）、背屏模块 LSPosed（检测 org.lsposed.manager 是否安装，可打开管理器，只提示勾选 com.xiaomi.subscreencenter）；通知与电池状态在弹窗内每 700ms 轮询刷新；底部「以后不再提示」写入 SharedPreferences(xj_launch)，App.kt 仅在未 dismissed 时显示；MainActivity 注册 AndroidLaunchPermissions 提供权限 launcher 与 Activity 上下文",
+      "affected": [
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/runtime/LaunchPermissions.kt",
+        "ToolboxApp/app/src/androidMain/kotlin/com/hyperos/xj/runtime/LaunchPermissions.android.kt",
+        "ToolboxApp/app/src/desktopMain/kotlin/com/hyperos/xj/runtime/LaunchPermissions.desktop.kt",
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/ui/LaunchPermissionDialog.kt",
+        "ToolboxApp/app/src/commonMain/kotlin/com/hyperos/xj/App.kt",
+        "ToolboxApp/androidApp/src/main/java/com/hyperos/xj/MainActivity.kt",
+        "ToolboxApp/androidApp/src/main/AndroidManifest.xml"
+      ]
     }
   ],
   "cancelled": [

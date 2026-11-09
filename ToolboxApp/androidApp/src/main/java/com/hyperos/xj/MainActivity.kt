@@ -8,6 +8,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import com.hyperos.xj.runtime.AndroidBackgroundPicker
 import com.hyperos.xj.runtime.AndroidDirectoryPicker
+import com.hyperos.xj.runtime.AndroidLaunchPermissions
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -19,6 +20,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         AndroidBackgroundPicker.register(this)
         AndroidDirectoryPicker.register(this)
+        AndroidLaunchPermissions.register(this)
         setContent {
             App()
         }
