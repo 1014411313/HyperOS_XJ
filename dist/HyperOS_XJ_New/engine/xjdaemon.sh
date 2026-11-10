@@ -324,6 +324,16 @@ if [ "$1" = "--once" ]; then
   exit 0
 fi
 
+# 单实例：拿不到锁说明已有 daemon 在跑，直接退出。
+# 用锁文件而不是遍历 /proc 找同名进程：读 cmdline 要访问目标进程内存，
+# 目标正在退出时那个读会阻塞，曾把 tr 卡在 R 状态吃满一个核（bug-121）。
+mkdir -p "$STATE" 2>/dev/null
+if command -v flock >/dev/null 2>&1; then
+  exec 9>"$STATE/daemon.lock" 2>/dev/null
+  flock -n 9 2>/dev/null || { log "已有 daemon 实例，退出"; exit 0; }
+fi
+printf '%s\n' "$$" > "$STATE/daemon.pid" 2>/dev/null
+
 # 开机先恢复原生背屏时钟，防止上次卡片投屏失败后重启仍黑屏。
 rear_boot_recover
 

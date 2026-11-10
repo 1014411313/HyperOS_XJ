@@ -17,62 +17,50 @@ wait_boot() {
 }
 
 # 存活判定只认真实进程，不认 pidfile：旧 pidfile 的 pid 重启后可能被系统进程复用
-# （bug-056：/proc/<旧pid> 指向 system_server，导致误判 daemon 存活而永不拉起）。
-daemon_pid() {
-  if command -v pgrep >/dev/null 2>&1; then
-    pgrep -f 'xjdaemon\.sh' 2>/dev/null | head -n 1
-    return
-  fi
-  # 兜底扫 /proc cmdline：无 pgrep 时不可依赖 ps（各实现输出列名不一，procps 只显示进程名）
-  for _d in /proc/[0-9]*; do
-    [ -r "$_d/cmdline" ] || continue
-    case "$(tr '\0' ' ' < "$_d/cmdline" 2>/dev/null)" in
-      *xjdaemon.sh*) echo "${_d#/proc/}" && return ;;
-    esac
-  done
-}
 
+# 存活判定：读 pidfile + kill -0 + comm 校验。
+# 不遍历 /proc 读 cmdline——读 cmdline 要访问目标进程内存，目标正在退出时该读会阻塞，
+# 曾把 tr 卡在 R 状态吃满一个核（bug-121）；comm 读的是内核结构，不会卡。
 daemon_alive() {
-  # 只认「本模块目录」下的 daemon：升级改过模块 id（HyperOS_XJ → rezhale_toolbox）后，
-  # 旧进程还在跑、却读不到新配置，还会和新 daemon 抢充电节点（表现为反复断充）。
-  for _d in /proc/[0-9]*; do
-    [ -r "$_d/cmdline" ] || continue
-    case "$(tr '\0' ' ' < "$_d/cmdline" 2>/dev/null)" in
-      *"$DIR/xjdaemon.sh"*) return 0 ;;
-    esac
-  done
-  return 1
+  _p=$(cat "$PIDFILE" 2>/dev/null)
+  case "$_p" in ''|*[!0-9]*) return 1 ;; esac
+  kill -0 "$_p" 2>/dev/null || return 1
+  [ "$(cat "/proc/$_p/comm" 2>/dev/null)" = "sh" ] || return 1
+  return 0
 }
 
+# 旧模块 id 的残留进程：只在拉起 daemon 前清一次，且整个扫描套 timeout。
+# cmdline 读取可能被正在退出的进程卡住，不能让看护循环陪着一起死。
 kill_stale_daemons() {
-  for _d in /proc/[0-9]*; do
-    [ -r "$_d/cmdline" ] || continue
-    _cl=$(tr '\0' ' ' < "$_d/cmdline" 2>/dev/null)
-    case "$_cl" in
-      *xjdaemon.sh*) ;;
-      *) continue ;;
-    esac
-    case "$_cl" in
-      *"$DIR/xjdaemon.sh"*) continue ;;
-    esac
-    if kill "${_d#/proc/}" 2>/dev/null; then
-      log "killed stale xjdaemon (${_d#/proc/}): $_cl"
-    fi
-  done
+  timeout 5 sh -c '
+    DIR="'"$DIR"'"
+    for d in /proc/[0-9]*; do
+      [ -r "$d/cmdline" ] || continue
+      cl=$(tr "\0" " " < "$d/cmdline" 2>/dev/null) || continue
+      case "$cl" in
+        *xjdaemon.sh*) ;;
+        *) continue ;;
+      esac
+      case "$cl" in
+        *"$DIR/xjdaemon.sh"*) continue ;;
+      esac
+      kill "${d#/proc/}" 2>/dev/null && echo "killed ${d#/proc/}"
+    done
+  ' 2>/dev/null | while read -r _l; do log "stale daemon: $_l"; done
 }
 
 start_daemon() {
   kill_stale_daemons
   daemon_alive && return 0
-  setsid sh "$DIR/xjdaemon.sh" >> "$LOGDIR/daemon.log" 2>&1 &
-  sleep 1
-  _p=$(daemon_pid)
-  if [ -n "$_p" ]; then
-    echo "$_p" > "$PIDFILE"
-    log "xjdaemon started pid=$_p"
+  rm -f "$PIDFILE" 2>/dev/null
+  setsid sh "$DIR/xjdaemon.sh" >> "$LOGDIR/daemon.log" 2>&1 < /dev/null &
+  sleep 2
+  # pid 由 daemon 自己写进 pidfile（setsid 可能 fork，$! 不可靠）
+  if daemon_alive; then
+    log "xjdaemon started pid=$(cat "$PIDFILE" 2>/dev/null)"
   else
     rm -f "$PIDFILE" 2>/dev/null
-    log "xjdaemon started, real pid unknown (pidfile cleared)"
+    log "xjdaemon started, pidfile 未就绪"
   fi
 }
 

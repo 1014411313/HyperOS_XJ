@@ -2061,6 +2061,39 @@
       "affected": [
         "engine/lib/diag.sh"
       ]
+    },
+    {
+      "id": "bug-121",
+      "title": "tr 进程卡死吃满一个核（boot.sh 遍历 /proc 读 cmdline）",
+      "reported": "2026-11-10",
+      "type": "bug",
+      "version_seen": "3.1.47 (357)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "fixed_in": "3.1.50（360，未发布）",
+      "evidence": "用户进程管理截图：tr(PID 15412) CPU 98.75%，R 状态；Shizuku 抓现场显示其父进程是 sh /data/adb/modules/rezhale_toolbox/engine/boot.sh，fd0 指向 /proc/25782/cmdline，而 25782 已不存在",
+      "root_cause": "boot.sh 的 daemon_alive/kill_stale_daemons 遍历 /proc/*/cmdline 判断 daemon 存活；读 cmdline 需要访问目标进程内存（mm），目标进程正好退出时该读会阻塞，tr 就永久卡在 R 状态空转",
+      "resolution": "daemon_alive 改为读 pidfile + kill -0 + /proc/<pid>/comm 校验（comm 读内核结构，不碰目标进程内存，不会卡）；daemon.pid 由 xjdaemon 启动时自写并在拿到 flock 单实例锁后写；删除 boot.sh 的 daemon_pid()（cmdline 扫描）；kill_stale_daemons 与 diag.sh 的 /proc 扫描、customize.sh 的旧进程清理全部套 timeout；xjdaemon 增加 flock 单实例",
+      "affected": [
+        "engine/boot.sh",
+        "engine/xjdaemon.sh",
+        "engine/lib/diag.sh",
+        "dist/HyperOS_XJ_New/customize.sh"
+      ]
+    },
+    {
+      "id": "bug-122",
+      "title": "诊断包增加进程采集（高 CPU/卡死进程）",
+      "reported": "2026-11-10",
+      "type": "feature",
+      "version_seen": "3.1.49 (359)",
+      "device": "haotian",
+      "status": "已修待复测",
+      "fixed_in": "3.1.50（360，未发布）",
+      "resolution": "新增 procs.txt：top 与 ps 头部、tr/sh/timeout/xjdaemon 相关进程（含 state/ppid/fd0 指向）、R/D 状态进程清单；采集本身套 timeout 防止被卡死的读拖住；统计行新增 procs 项",
+      "affected": [
+        "engine/lib/diag.sh"
+      ]
     }
   ],
   "cancelled": [

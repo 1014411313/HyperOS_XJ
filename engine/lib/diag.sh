@@ -162,17 +162,18 @@ diag_pack() {
   # ---- runtime.txt：daemon 存活证据（/proc cmdline 扫描 + pid 核验）与时间基准 ----
   {
     echo "== xjdaemon 进程（/proc cmdline 扫描）=="
-    for _d in /proc/[0-9]*; do
-      _cl=$(tr '\0' ' ' < "$_d/cmdline" 2>/dev/null) || continue
-      case "$_cl" in *xjdaemon.sh*) echo "${_d#/proc/}: $_cl" ;; esac
-    done
+    # 读 cmdline 要访问目标进程内存，目标正在退出时可能阻塞；整体套 timeout（bug-121）
+    timeout 8 sh -c 'for d in /proc/[0-9]*; do
+      cl=$(tr "\0" " " < "$d/cmdline" 2>/dev/null) || continue
+      case "$cl" in *xjdaemon.sh*) echo "${d#/proc/}: $cl" ;; esac
+    done' 2>/dev/null
     echo "== daemon.pid 核验 =="
     _dp=$(cat "$STATE/daemon.pid" 2>/dev/null)
     case "$_dp" in
       ''|*[!0-9]*) echo "pid: ${_dp:-无}（缺失或非数字，不核验）"; _dp= ;;
     esac
     if [ -n "$_dp" ]; then
-      _dpc=$(tr '\0' ' ' < "/proc/$_dp/cmdline" 2>/dev/null)
+      _dpc=$(timeout 3 sh -c 'tr "\0" " " < "/proc/'"$_dp"'/cmdline"' 2>/dev/null)
       [ -n "$_dpc" ] && echo "pid: $_dp 存活 cmdline: $_dpc" \
         || echo "pid: $_dp 无 /proc/$_dp/cmdline（进程已退出）"
     fi
@@ -252,6 +253,30 @@ diag_pack() {
   } > "$_stage/module_state.txt" 2>/dev/null
   [ -s "$_stage/module_state.txt" ] && _mr=ok || _mr=失败
 
+  # ---- procs.txt：高 CPU / 卡死进程（tr、sh 卡在 cmdline 读取之类的问题靠它定位）----
+  {
+    echo "== top（按 CPU 排序，取头部）=="
+    timeout 8 top -b -n 1 2>/dev/null | head -25
+    echo "== ps（PID/PPID/STAT/%CPU/ARGS）=="
+    timeout 8 ps -A -o PID,PPID,STAT,%CPU,ARGS 2>/dev/null | head -25
+    echo "== tr / sh / timeout / xjdaemon 相关进程（含 fd0 指向）=="
+    timeout 8 sh -c 'for d in /proc/[0-9]*; do
+      [ -r "$d/comm" ] || continue
+      c=$(cat "$d/comm" 2>/dev/null) || continue
+      case "$c" in tr|sh|timeout|xjdaemon*|busybox) ;; *) continue ;; esac
+      st=$(cat "$d/stat" 2>/dev/null)
+      stt=$(echo "$st" | awk "{print \$3}")
+      pp=$(echo "$st" | awk "{print \$4}")
+      echo "${d#/proc/} comm=$c state=$stt ppid=$pp fd0=$(readlink "$d/fd/0" 2>/dev/null)"
+    done' 2>/dev/null
+    echo "== R/D 状态进程（可能卡住）=="
+    timeout 8 sh -c 'for d in /proc/[0-9]*; do
+      st=$(cat "$d/stat" 2>/dev/null) || continue
+      case "$(echo "$st" | awk "{print \$3}")" in R|D) echo "${d#/proc/} $(cat "$d/comm" 2>/dev/null)" ;; esac
+    done' 2>/dev/null | head -30
+  } > "$_stage/procs.txt" 2>/dev/null
+  [ -s "$_stage/procs.txt" ] && _pr=ok || _pr=失败
+
   # ---- settings_conf.txt：引擎功能配置（CONFDIR/settings.conf 优先，回退电池 settings.conf；均非密钥） ----
   _sc_src=""
   if [ -f "$CONFDIR/settings.conf" ]; then
@@ -296,7 +321,7 @@ diag_pack() {
     diag_copy_to_app "$_zip"
     echo "大小: ${_sz:-?} 字节   打包: $_how"
     echo "内容: 日志 $_n 个，配置 $_cn 个（settings.json 已脱敏）"
-    echo "采集: state $_sn / runtime ${_rt} / sysfs ${_sysfs_n} 项 / thermal ${_th} / module ${_mr} / settings ${_sc} / dmesg ${_dm}"
+    echo "采集: state $_sn / runtime ${_rt} / sysfs ${_sysfs_n} 项 / thermal ${_th} / module ${_mr} / settings ${_sc} / dmesg ${_dm} / procs ${_pr:-n/a}"
     return 0
   fi
 
@@ -311,11 +336,11 @@ diag_pack() {
     echo "说明: 设备无 zip 工具，已用 $_how 打包（扩展名 .tar.gz）"
     echo "大小: ${_sz:-?} 字节"
     echo "内容: 日志 $_n 个，配置 $_cn 个（settings.json 已脱敏）"
-    echo "采集: state $_sn / runtime ${_rt} / sysfs ${_sysfs_n} 项 / thermal ${_th} / module ${_mr} / settings ${_sc} / dmesg ${_dm}"
+    echo "采集: state $_sn / runtime ${_rt} / sysfs ${_sysfs_n} 项 / thermal ${_th} / module ${_mr} / settings ${_sc} / dmesg ${_dm} / procs ${_pr:-n/a}"
     return 0
   fi
 
   echo "打包失败: 设备无 zip/tar 可用；散装文件保留在 $_stage"
-  echo "采集: state $_sn / runtime ${_rt} / sysfs ${_sysfs_n} 项 / thermal ${_th} / module ${_mr} / settings ${_sc} / dmesg ${_dm}"
+  echo "采集: state $_sn / runtime ${_rt} / sysfs ${_sysfs_n} 项 / thermal ${_th} / module ${_mr} / settings ${_sc} / dmesg ${_dm} / procs ${_pr:-n/a}"
   return 1
 }
