@@ -1,11 +1,11 @@
 {
-  "version": "3.1.53",
-  "versionCode": 363,
+  "version": "3.1.54",
+  "versionCode": 364,
   "date": "2026-11-10",
   "url": "",
-  "notes": "公版 PPS 解锁真实生效；修 DTBO 自动识别",
-  "download": "https://github.com/1014411313/HyperOS_XJ/releases/download/v3.1.53/rezhale_toolbox_v3.1.53.zip",
-  "download_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/download/v3.1.53/rezhale_toolbox_v3.1.53.zip",
-  "release": "https://github.com/1014411313/HyperOS_XJ/releases/tag/v3.1.53",
-  "release_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/tag/v3.1.53"
+  "notes": "修功率锯齿；循环伪装/PSS/BAA巡检/日志轮转/DTBO备份/诊断等 15 项改进",
+  "download": "https://github.com/1014411313/HyperOS_XJ/releases/download/v3.1.54/rezhale_toolbox_v3.1.54.zip",
+  "download_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/download/v3.1.54/rezhale_toolbox_v3.1.54.zip",
+  "release": "https://github.com/1014411313/HyperOS_XJ/releases/tag/v3.1.54",
+  "release_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/tag/v3.1.54"
 }
