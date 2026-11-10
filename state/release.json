@@ -3,7 +3,23 @@
   "note": "版本历史。fixed_in 落在哪个版本，就登记在该版本下；未发布的版本统一标「未发布」。",
   "history": [
     {
-      "version": "3.1.52（362，未发布）",
+      "version": "3.1.53（363，未发布）",
+      "date": "2026-11-10",
+      "changes": [
+        {
+          "id": "feat-010",
+          "title": "公版 PPS 解锁真实生效：锁 pd_verifed + usbpd_verifed 两节点、写入回读校验、xjctl battery pps restore/status、卸载还原",
+          "status": "已改待真机复测"
+        },
+        {
+          "id": "bug-125",
+          "title": "DTBO 自动识别在 mksh 下恒判「未找到」（${x%%|*} 解析为空）→ 改为两候选分别取路径",
+          "status": "已改待真机复测"
+        }
+      ]
+    },
+    {
+      "version": "3.1.52（362，已发布）",
       "date": "2026-11-10",
       "changes": [
         {

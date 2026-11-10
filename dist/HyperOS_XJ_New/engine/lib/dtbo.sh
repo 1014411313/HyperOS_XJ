@@ -217,10 +217,15 @@ dtbo_haslocal() {
 # 过小的文件（疑似错误页/空文件）一律不当作可用镜像。
 dtbo_resolve() {
   _dc=$(dev_code)
-  for _cand in "$(dtbo_local_img)|local" "$DTBO_DIR/$_dc.img|builtin"; do
-    _p=${_cand%%|*}
-    _src=${_cand##*|}
-    [ "$_src" = "builtin" ] && [ "$_dc" = "unknown" ] && continue
+  # 两个候选分开取：mksh（Android /system/bin/sh）对 "${v%%|*}" 这类以 | 拼接再拆分
+  # 的写法解析为空（实测 MIRBSD KSH R59），曾导致下载后依旧报「未找到」。
+  for _src in local builtin; do
+    if [ "$_src" = "local" ]; then
+      _p=$(dtbo_local_img)
+    else
+      [ "$_dc" = "unknown" ] && continue
+      _p="$DTBO_DIR/$_dc.img"
+    fi
     [ -f "$_p" ] || continue
     _sz=$(stat -c %s "$_p" 2>/dev/null)
     case "$_sz" in ''|*[!0-9]*) _sz=0 ;; esac

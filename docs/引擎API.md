@@ -107,7 +107,7 @@ xjctl.sh setting dump
 ```sh
 xjctl.sh battery boot
 xjctl.sh battery unlock on|off
-xjctl.sh battery pps on|off
+xjctl.sh battery pps on|off|restore|status
 xjctl.sh battery cloud on|off
 xjctl.sh battery apl on|off
 xjctl.sh battery cycle <N|clear|get>
@@ -120,7 +120,8 @@ xjctl.sh battery status
 - `battery` 命令会 re-exec 到 PID1 mount namespace（BAA 需要）。
 - `unlock on`：BAA mount + 可选 PSS disable。
 - `unlock off`：BAA umount + PSS enable。
-- `pps/cloud/apl`：当前主要写配置；引擎的 `battery_guard_tick` 负责 `pd_verifed`、cycle、fv、term 的基础节点写。
+- `pps`（公版 PPS 解锁）：`on/off` 写配置并立即应用；`restore` 只把验证节点归零；`status` 打印 `freepps` 与两个验证节点的当前值。守护每拍调 `pps_tick`，把 `pd_verifed` 与 `usbpd_verifed` 锁到与开关一致（回读校验，失败记日志）。
+- `cloud/apl`：写配置；引擎的 `battery_guard_tick` 负责 cycle、smart_fv 的基础节点写。
 
 `battery status` 输出 KEY=value：
 

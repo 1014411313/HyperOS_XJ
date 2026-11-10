@@ -8,6 +8,8 @@ DATA_DIR=/data/adb/rezhale_toolbox
 [ -f "$MODDIR/engine/xjctl.sh" ] && sh "$MODDIR/engine/xjctl.sh" battery unlock off >/dev/null 2>&1
 # 还原 smart_fv 与循环计数（写回模块接管前的值）
 [ -f "$MODDIR/engine/xjctl.sh" ] && sh "$MODDIR/engine/xjctl.sh" battery restore >/dev/null 2>&1
+# 归还公版 PPS 验证节点（否则会停在 1）
+[ -f "$MODDIR/engine/xjctl.sh" ] && sh "$MODDIR/engine/xjctl.sh" battery pps off >/dev/null 2>&1
 # 交回充电节点
 [ -f "$MODDIR/engine/xjctl.sh" ] && sh "$MODDIR/engine/xjctl.sh" power restore >/dev/null 2>&1
 # 恢复温控默认配置

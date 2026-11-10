@@ -148,10 +148,8 @@ battery_guard_tick() {
     case "$_tv" in ''|*[!0-9]*) _tv="" ;; esac
     [ -n "$_tv" ] && [ $((BAT_VOLT / 1000)) -le "$_tv" ] && { log "电压 $((BAT_VOLT / 1000))mV ≤ 关机阈值 ${_tv}mV，执行关机"; reboot -p 2>/dev/null || svc power shutdown 2>/dev/null; }
   fi
-  # 公版 PPS：维护 pd_verifed 节点与开关一致。
-  _pps=$(cfg_get freepps 0)
-  _node=/sys/class/qcom-battery/pd_verifed
-  [ -f "$_node" ] && [ -w "$_node" ] && [ "$(cat "$_node" 2>/dev/null)" != "$_pps" ] && { chmod 0664 "$_node" 2>/dev/null; echo "$_pps" > "$_node"; } 2>/dev/null
+  # 公版 PPS：验证节点与 freepps 开关保持一致（两节点 + 回读校验在 pps_apply 里）。
+  pps_tick
   # smart_fv 守护：充电中才压强 0（解除满充电压限制）；非充电必须写回有效值，
   # 否则手机管家读到 0 会不显示电池健康度。
   if [ "$(cfg_get unlock 1)" = "1" ]; then

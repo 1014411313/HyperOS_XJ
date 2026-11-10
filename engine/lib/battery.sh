@@ -195,6 +195,35 @@ pss_enable() {
   blog "PSS enabled"
 }
 
+# ---------- 公版 PPS 解锁 ----------
+# 非小米认证充电头会被系统拒走 PPS：验证节点 pd_verifed 保持 0，PPS 契约不成立。
+# freepps=1 时把验证节点锁在 1（关掉时还原 0）。纯 shell 写节点，不依赖外部二进制。
+# 两个节点都要盖：qcom-battery 是策略侧，Charging_Adapter 是适配器侧。
+PPS_NODES="/sys/class/qcom-battery/pd_verifed /sys/class/Charging_Adapter/pd_adapter/usbpd_verifed"
+
+pps_apply() {
+  _want="$1"
+  for _n in $PPS_NODES; do
+    [ -e "$_n" ] || continue
+    [ "$(cat "$_n" 2>/dev/null)" = "$_want" ] && continue
+    chmod 0664 "$_n" 2>/dev/null
+    { echo "$_want" > "$_n"; } 2>/dev/null
+    # 部分机型节点只读或驱动立即顶回，回读确认并记日志，避免「看着开了其实没生效」
+    [ "$(cat "$_n" 2>/dev/null)" = "$_want" ] || blog "公版 PPS: $_n 写入 ${_want} 失败（回读 $(cat "$_n" 2>/dev/null)）"
+  done
+  return 0
+}
+
+pps_tick() { pps_apply "$(cfg_get freepps 0)"; }
+
+pps_status() {
+  echo "freepps=$(cfg_get freepps 0)"
+  for _n in $PPS_NODES; do
+    [ -e "$_n" ] || continue
+    echo "$(basename "$(dirname "$_n")")_$(basename "$_n")=$(cat "$_n" 2>/dev/null)"
+  done
+}
+
 battery_boot() {
   [ "$(cfg_get unlock 1)" = "1" ] && baa_mount >/dev/null 2>&1
   [ "$(cfg_get pss_disable 0)" = "1" ] && pss_disable
