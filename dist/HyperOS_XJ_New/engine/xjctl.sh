@@ -42,6 +42,86 @@ usage() {
 EOF
 }
 
+# ---------- 循环伪装（参照 v3.12.9 unlock.sh do_cycle） ----------
+CYCLE_NODE=/sys/class/xm_power/fg_master/cyclecount
+CYCLE_NODE2=/sys/class/power_supply/battery/cycle_count
+CYCLE_REAL_NODE=/sys/class/xm_power/fg_master/qmax_cyclecount
+
+# 真实循环值：qmax_cyclecount 不受伪装影响（权威），回退上次锁存的 cycle_real。
+cycle_real_value() {
+  _r=$(cat "$CYCLE_REAL_NODE" 2>/dev/null)
+  case "$_r" in ''|*[!0-9]*) _r=$(cat "$BT_STATE/cycle_real" 2>/dev/null) ;; esac
+  case "$_r" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s' "$_r"
+}
+
+battery_cycle_set() {
+  _v="$1"
+  case "$_v" in
+    *[!0-9]*) echo "数值无效: $_v"; return 2 ;;
+  esac
+  # 拒绝 0：实测 FG 把 0 当无效值立即写回真实循环数，配置=0 与节点=真实值永久矛盾；
+  # 1~9999 均可正常伪装，取消伪装走 clear。
+  if [ "$_v" = "0" ]; then
+    echo "数值无效: 0（FG 不接受 0，会立刻写回真实值）"
+    echo "  循环伪装请填 1 ~ 9999；要取消伪装用 cycle clear"
+    return 2
+  fi
+  case "$_v" in
+    [1-9]|[1-9][0-9]|[1-9][0-9][0-9]|[1-9][0-9][0-9][0-9]) ;;
+    *) echo "数值超出范围（1~9999）: $_v"; return 2 ;;
+  esac
+  # 先捕获真实值再写伪装：qmax 是权威；qmax 不可用时回退当前节点，
+  # 但当前节点可能是旧伪装值，等于目标值时不能落盘，否则 clear 会把伪装值当真实值。
+  if [ ! -f "$BT_STATE/cycle_real" ]; then
+    _r=$(cat "$CYCLE_REAL_NODE" 2>/dev/null)
+    case "$_r" in ''|*[!0-9]*) _r=$(cat "$CYCLE_NODE" 2>/dev/null) ;; esac
+    case "$_r" in
+      ''|*[!0-9]*)
+        echo "警告: 未能读到真实循环值，伪装后 clear/卸载只能靠 qmax_cyclecount 恢复"
+        cfg_set cycle_fake "$_v"
+        _write_nodes=1 ;;
+      *)
+        if [ "$_r" != "$_v" ]; then
+          mkdir -p "$BT_STATE" 2>/dev/null
+          printf '%s' "$_r" > "$BT_STATE/cycle_real" 2>/dev/null
+        fi
+        cfg_set cycle_fake "$_v"
+        _write_nodes=1 ;;
+    esac
+  else
+    cfg_set cycle_fake "$_v"
+    _write_nodes=1
+  fi
+  # 立即写节点，不等下一拍守护
+  if [ "$_write_nodes" = "1" ]; then
+    for _n in "$CYCLE_NODE" "$CYCLE_NODE2"; do
+      [ -e "$_n" ] || continue
+      chmod 0666 "$_n" 2>/dev/null
+      echo "$_v" > "$_n" 2>/dev/null
+    done
+  fi
+  echo "cycle_fake=$(cfg_get cycle_fake "") node=$(cat "$CYCLE_NODE" 2>/dev/null) real=$(cat "$BT_STATE/cycle_real" 2>/dev/null)"
+}
+
+battery_cycle_clear() {
+  cfg_set cycle_fake ""
+  # 立即把两节点写回真实值，不等卸载：伪装时写了两个节点，清除也必须都还原，
+  # 否则 battery/cycle_count 停在伪装值直到重启，系统设置里看到的仍是假值。
+  _r=$(cycle_real_value)
+  if [ -n "$_r" ]; then
+    for _n in "$CYCLE_NODE" "$CYCLE_NODE2"; do
+      [ -e "$_n" ] || continue
+      [ "$(cat "$_n" 2>/dev/null)" = "$_r" ] && continue
+      chmod 0666 "$_n" 2>/dev/null
+      echo "$_r" > "$_n" 2>/dev/null
+    done
+    echo "cleared real=$_r node=$(cat "$CYCLE_NODE" 2>/dev/null)"
+  else
+    echo "cleared（未读到真实值，重启后由 FG 自动恢复）"
+  fi
+}
+
 status_json() {
   _tmp="$STATE/status.$$.frag"; : > "$_tmp"
   data_read 2>/dev/null | while IFS= read -r _l; do
@@ -56,6 +136,26 @@ status_json() {
   js_line freepps "$(cfg_get freepps 0)" str >> "$_tmp"
   js_line cloud_guard "$(cfg_get cloud_guard 1)" str >> "$_tmp"
   js_line apl_enable "$(cfg_get apl_enable 0)" str >> "$_tmp"
+  # ---- 守护/功能存活上报（参照 v3.12.9 status_kv.sh）：
+  #      让「开关开着但功能实际没跑」可见。读不到（进程不在/文件不存在）给空串，不报错。 ----
+  _dpid=$(cat "$STATE/daemon.pid" 2>/dev/null)
+  _dup=""
+  case "$_dpid" in
+    ''|*[!0-9]*) _dpid="" ;;
+    *) [ -d "/proc/$_dpid" ] || _dpid="" ;;
+  esac
+  if [ -n "$_dpid" ]; then
+    _mt=$(stat -c %Y "/proc/$_dpid" 2>/dev/null)
+    case "$_mt" in ''|*[!0-9]*) ;; *) _dup=$(( $(date +%s) - _mt )) ;; esac
+  fi
+  js_line daemon_pid "$_dpid" str >> "$_tmp"
+  js_line daemon_uptime "$_dup" str >> "$_tmp"
+  js_line power_last_write "$(cat "$BT_STATE/cg_last_write_ts" 2>/dev/null)" str >> "$_tmp"
+  js_line power_sig "$(cat "$BT_STATE/power_sig" 2>/dev/null)" str >> "$_tmp"
+  js_line apl_target_ma "$(cat "$STATE/apl_target_ma" 2>/dev/null)" str >> "$_tmp"
+  js_line apl_state_mtime "$(stat -c %Y "$STATE/apl_state" 2>/dev/null)" str >> "$_tmp"
+  js_line baa_state "$(baa_state)" str >> "$_tmp"
+  js_line battery_state_mtime "$(stat -c %Y "$BT_STATE/cloud_guard.state" 2>/dev/null)" str >> "$_tmp"
   js_line cycle_fake "$(cfg_get cycle_fake "")" str >> "$_tmp"
   js_line term_v "$(cfg_get term_v "")" str >> "$_tmp"
   js_line bypass_manual "$([ -f "$CONFDIR/bypass_manual" ] && echo 1 || echo 0)" str >> "$_tmp"
@@ -158,9 +258,15 @@ case "$1" in
         esac ;;
       cycle)
         case "$3" in
-          clear) cfg_set cycle_fake "" ;;
-          get) cfg_get cycle_fake "" ;;
-          *) cfg_set cycle_fake "$3" ;;
+          clear) battery_cycle_clear ;;
+          get|'')
+            # 无参数=读当前（App 走 status JSON，这里给人眼用）：伪装值 + 真实值 + 两个节点。
+            echo "cycle_fake=$(cfg_get cycle_fake "")"
+            echo "cycle_real=$(cycle_real_value 2>/dev/null)"
+            echo "node=$(cat "$CYCLE_NODE" 2>/dev/null)"
+            echo "node2=$(cat "$CYCLE_NODE2" 2>/dev/null)"
+            ;;
+          *) battery_cycle_set "$3" ;;
         esac ;;
       volt)
         case "$3" in

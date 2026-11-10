@@ -93,8 +93,20 @@ cfg_get() {
 cfg_set() {
   _k="$1"; _v="$2"
   mkdir -p "$(dirname "$BT_CONF")" 2>/dev/null
+  touch "$BT_CONF" 2>/dev/null
+  # 末行无换行时先补一个换行：否则下方 >> 追加会与末行粘连，把键名拼进上一行的值里
+  # 写坏配置（同款事故见 ref_battery/scripts/common.sh 的 cfg_set 修复）
+  if [ -s "$BT_CONF" ] && [ -n "$(tail -c 1 "$BT_CONF" 2>/dev/null)" ]; then
+    printf '\n' >> "$BT_CONF"
+  fi
   if grep -aqE "^${_k}=" "$BT_CONF" 2>/dev/null; then
-    sed -i "s|^${_k}=.*|${_k}=${_v}|" "$BT_CONF" 2>/dev/null
+    # awk 按键前缀（index==1）精确替换，不依赖任何分隔符：值里含 |/ @/ 等任意字符都原样输出。
+    # 键值经环境变量传入而非 -v：awk 的 -v 会对值做反斜杠转义解释，ENVIRON 完全字面。
+    # 所有同名键行都替换，与 cfg_get 的 tail -n1（读最后一行）语义对齐，顺带自愈历史重复键。
+    _cfg_k="$_k" _cfg_v="$_v" awk '
+      index($0, ENVIRON["_cfg_k"] "=") == 1 { print ENVIRON["_cfg_k"] "=" ENVIRON["_cfg_v"]; next }
+      { print }
+    ' "$BT_CONF" > "$BT_CONF.new" 2>/dev/null && cat "$BT_CONF.new" > "$BT_CONF" && rm -f "$BT_CONF.new"
   else
     printf '%s=%s\n' "$_k" "$_v" >> "$BT_CONF"
   fi

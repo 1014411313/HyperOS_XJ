@@ -275,6 +275,9 @@ apl_tick() {
     [ "$_apl_new" -gt "$_apl_cap" ] && _apl_new="$_apl_cap"
     _apl_tgt="$_apl_new"
     blog "APL 硬故障：降 ${_apl_tgt}mA，锁 30s"
+    # 硬故障要立刻退让：写 state/apl_urgent，power.sh 下次写电流节点时绕过 60 秒全局限流，
+    #   否则「立即退让」会被拖到最多 60 秒后才生效，波浪图会持续一整轮。该标志是一次性的。
+    printf '1' > "$STATE/apl_urgent" 2>/dev/null
     apl_lock_until=$(( _apl_now + 30 ))
     apl_low_cnt=0; apl_stable_cnt=0; apl_last_up=$_apl_now
   fi

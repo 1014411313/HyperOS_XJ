@@ -8,6 +8,9 @@ BAT_STATE="$BT_STATE"
 BAA_LABEL="u:object_r:batteryantiaging_cfg_file:s0"
 PSS_COMPONENT=com.miui.securitycenter/com.miui.powercenter.provider.PowerSaveService
 
+# BAA 巡检拍数计数器（xjdaemon battery_guard_tick 每 100 拍巡检一次 BAA 挂载）
+BT_BAA_TICK_N=0
+
 mkdir -p "$BAT_STATE" 2>/dev/null
 
 blog() { echo "$(date '+%F %T') [battery] $*" >> "$LOGDIR/battery.log" 2>/dev/null; }
@@ -195,6 +198,40 @@ pss_enable() {
   blog "PSS enabled"
 }
 
+# ---------- PSS 动态模式（参照 v3.12.9 common.sh pss_guard_tick） ----------
+# 矛盾：解容要禁 PSS 防低电量锁容，但 PSS 禁用后「电池健康度」不显示。
+# 解法：只在低电量禁用。SOC ≤ pss_low_soc 禁用；≥ pss_low_soc + pss_low_hyst 启用；
+# 区间内保持不变（滞回，避免在阈值附近反复 pm enable/disable 抖动）。
+# pss_low_soc=0 默认关闭，行为与旧版一致（始终禁用）。
+# 轻量：用 pss_dynamic 状态文件记录上次动作，不调 dumpsys（pss_state 很贵），可每拍挂循环。
+pss_guard_tick() {
+  [ "$(cfg_get pss_disable 1)" = "1" ] || return 0
+  _low=$(cfg_get pss_low_soc 0)
+  case "$_low" in ''|*[!0-9]*) return 0 ;; esac
+  [ "$_low" -gt 0 ] 2>/dev/null || return 0
+  _hys=$(cfg_get pss_low_hyst 5)
+  case "$_hys" in ''|*[!0-9]*) _hys=5 ;; esac
+  _soc=$(cat /sys/class/power_supply/battery/capacity 2>/dev/null)
+  case "$_soc" in ''|*[!0-9]*) return 0 ;; esac
+  _pd=$(cat "$BAT_STATE/pss_dynamic" 2>/dev/null)
+  if [ "$_soc" -le "$_low" ]; then
+    # 低电区 → 确保禁用（防锁容）；状态一致时不重复 pm 调用
+    [ "$_pd" = "disabled" ] && return 0
+    pm disable "$PSS_COMPONENT" >/dev/null 2>&1
+    printf '1' > "$BAT_STATE/pss_disabled_by_module" 2>/dev/null
+    printf 'disabled' > "$BAT_STATE/pss_dynamic" 2>/dev/null
+    blog "pss_dynamic: SOC=${_soc}% <= ${_low}% → PSS 禁用（防低电量锁容）"
+  elif [ "$_soc" -ge "$((_low + _hys))" ]; then
+    # 安全区 → 确保启用（恢复健康度显示）
+    [ "$_pd" = "enabled" ] && return 0
+    pm enable "$PSS_COMPONENT" >/dev/null 2>&1
+    rm -f "$BAT_STATE/pss_disabled_by_module" 2>/dev/null
+    printf 'enabled' > "$BAT_STATE/pss_dynamic" 2>/dev/null
+    blog "pss_dynamic: SOC=${_soc}% >= $((_low + _hys))% → PSS 启用（恢复电池健康度显示）"
+  fi
+  return 0
+}
+
 # ---------- 公版 PPS 解锁 ----------
 # 非小米认证充电头会被系统拒走 PPS：验证节点 pd_verifed 保持 0，PPS 契约不成立。
 # freepps=1 时把验证节点锁在 1（关掉时还原 0）。纯 shell 写节点，不依赖外部二进制。
@@ -226,14 +263,25 @@ pps_status() {
 
 battery_boot() {
   [ "$(cfg_get unlock 1)" = "1" ] && baa_mount >/dev/null 2>&1
-  [ "$(cfg_get pss_disable 0)" = "1" ] && pss_disable
+  if [ "$(cfg_get pss_disable 1)" = "1" ]; then
+    # pss_low_soc>0（动态模式）时开机不立即禁用：交给 pss_guard_tick 按当前电量决定，
+    # 否则「开解容立刻禁用」会和动态模式「只在低电禁用」打架，下一拍又被启用回来。
+    _pls=$(cfg_get pss_low_soc 0)
+    case "$_pls" in ''|*[!0-9]*) _pls=0 ;; esac
+    [ "$_pls" -gt 0 ] 2>/dev/null || pss_disable
+  fi
   return 0
 }
 
 battery_unlock_on() {
   cfg_set unlock 1
   baa_mount
-  [ "$(cfg_get pss_disable 0)" = "1" ] && pss_disable
+  if [ "$(cfg_get pss_disable 1)" = "1" ]; then
+    # 同 battery_boot：动态模式开启时交给 pss_guard_tick 按电量决定。
+    _pls=$(cfg_get pss_low_soc 0)
+    case "$_pls" in ''|*[!0-9]*) _pls=0 ;; esac
+    [ "$_pls" -gt 0 ] 2>/dev/null || pss_disable
+  fi
   setprop ctl.restart batteryantiaging 2>/dev/null
   blog "unlock ON"
 }

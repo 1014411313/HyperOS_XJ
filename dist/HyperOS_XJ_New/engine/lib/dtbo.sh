@@ -4,7 +4,25 @@
 # 安全原则：分区节点查不到就拒绝，绝不猜测；刷入前必须机型匹配 + 自动备份 + 回读校验。
 
 DTBO_DIR="$MODDIR/battery/dtbo"
-DTBO_BACKUP_DEFAULT="/sdcard/Download/dtbo_backup"
+# DTBO 备份双路径：主 /sdcard/Download（用户看得见、变砖后能手动取用），
+# 回退 $BT_STATE（模块目录外，升级不删；开机早期 /sdcard 可能不可写时自动落这里）。
+# manifest 跟随实际使用的目录；去重读取时两个 manifest 都查（先主后回退）。
+DTBO_BACKUP_PRIMARY="/sdcard/Download/dtbo_backup"
+DTBO_BACKUP_FALLBACK="$BT_STATE/dtbo_backup"
+
+# 解析本次实际使用的备份目录：主目录可建可写用主，否则回退；
+# 两者都不行仍返回主（让后续 dd/写入按统一报错失败，不静默换位）。
+dtbo_backup_dir() {
+  if mkdir -p "$DTBO_BACKUP_PRIMARY" 2>/dev/null && [ -w "$DTBO_BACKUP_PRIMARY" ]; then
+    echo "$DTBO_BACKUP_PRIMARY"
+    return 0
+  fi
+  if mkdir -p "$DTBO_BACKUP_FALLBACK" 2>/dev/null && [ -w "$DTBO_BACKUP_FALLBACK" ]; then
+    echo "$DTBO_BACKUP_FALLBACK"
+    return 0
+  fi
+  echo "$DTBO_BACKUP_PRIMARY"
+}
 
 dtbo_need_root() {
   [ "$(id -u 2>/dev/null)" = "0" ] && return 0
@@ -50,6 +68,33 @@ dtbo_human() {
 
 dtbo_sha() { sha256sum "$1" 2>/dev/null | awk '{print $1}'; }
 
+# 分区内容 sha256：走 dd 管道而非直接 sha256sum 块设备（与参照实现一致，行为更可预期）
+dtbo_dev_sha() { dd if="$1" bs=1M 2>/dev/null | sha256sum | awk '{print $1}'; }
+
+# 槽位标识：dtbo_a/dtbo_b 取 a/b，无 A/B 分区的 dtbo 记 unknown（只进 manifest，不做逻辑）
+dtbo_slot_of() {
+  case "$(basename "$1")" in
+    dtbo_a) echo a ;;
+    dtbo_b) echo b ;;
+    *) echo unknown ;;
+  esac
+}
+
+# 同内容（sha 一致）已备份过则跳过：dd 整分区只是重复堆积，每份几十 MB。
+# sha 为空时绝不去重（grep -F 空串会匹配所有行），直接走备份。
+dtbo_manifest_has() {
+  [ -n "$1" ] && [ -f "$2" ] && grep -qF "$1" "$2" 2>/dev/null
+}
+
+# 去重检查：主/回退两个 manifest 都查（先主后回退），任一含该 sha 即视为已备份。
+dtbo_manifest_any_has() {
+  [ -n "$1" ] || return 1
+  for _mf in "$DTBO_BACKUP_PRIMARY/manifest.txt" "$DTBO_BACKUP_FALLBACK/manifest.txt"; do
+    [ -f "$_mf" ] && grep -qF "$1" "$_mf" 2>/dev/null && return 0
+  done
+  return 1
+}
+
 dtbo_status() {
   dtbo_need_root || return 1
   _dev=$(dtbo_dev) || {
@@ -92,17 +137,39 @@ dtbo_status() {
 
 dtbo_backup() {
   dtbo_need_root || return 1
-  _dir="${1:-$DTBO_BACKUP_DEFAULT}"
+  _arg="${1:-}"
+  if [ -n "$_arg" ]; then
+    _dir="$_arg"          # 显式指定目录：完全跟随它，去重只查该目录自己的 manifest
+  else
+    _dir=$(dtbo_backup_dir)
+  fi
+  _man="$_dir/manifest.txt"
   _dev=$(dtbo_dev) || { echo "DTBO 分区未找到，无法备份"; return 2; }
   mkdir -p "$_dir" 2>/dev/null || { echo "备份目录不可用: $_dir"; return 1; }
   _name=$(basename "$_dev")
+  _slot=$(dtbo_slot_of "$_dev")
+  _sha=$(dtbo_dev_sha "$_dev")
+  # 同内容已备份过则跳过，不重复堆积；无参时查主/回退两个 manifest（先主后回退）
+  _has_backup=0
+  if [ -n "$_arg" ]; then
+    dtbo_manifest_has "$_sha" "$_man" && _has_backup=1
+  else
+    dtbo_manifest_any_has "$_sha" && _has_backup=1
+  fi
+  if [ "$_has_backup" = "1" ]; then
+    echo "当前分区内容已有备份（sha256=$_sha），跳过重复备份"
+    log "dtbo: backup skipped（sha 已在 manifest: $_sha）"
+    return 0
+  fi
   _out="$_dir/${_name}_$(date +%Y%m%d-%H%M%S).img"
   echo "备份 $_dev -> $_out ..."
   if dd if="$_dev" of="$_out" bs=1M 2>/dev/null; then
     sync
+    # manifest 行：时间 动作 槽 sha 文件名
+    echo "$(date '+%F %T') manual_backup slot=$_slot sha=$_sha $(basename "$_out")" >> "$_man"
     echo "备份完成: $_out"
     echo "大小: $(stat -c %s "$_out" 2>/dev/null) 字节"
-    echo "sha256: $(dtbo_sha "$_out")"
+    echo "sha256: $_sha"
     return 0
   fi
   echo "备份失败"; rm -f "$_out" 2>/dev/null; return 1
@@ -148,20 +215,28 @@ dtbo_flash() {
   echo "机型: $_dc   镜像: $_base ($_fsz 字节)"
   echo "分区: $_dev ($(dtbo_human "${_dsz:-0}"))"
 
-  # (c) 自动备份当前分区：备份失败即中止，绝不动分区。
-  _bdir="$DTBO_BACKUP_DEFAULT"
+  # (c) 自动备份当前分区：备份失败即中止，绝不动分区；同内容已有备份则复用不重复堆积。
+  _bdir=$(dtbo_backup_dir)
   mkdir -p "$_bdir" 2>/dev/null || { echo "已拒绝: 备份目录不可建 ($_bdir)，不刷入"; return 1; }
-  _bf="$_bdir/$(basename "$_dev")_before_$(date +%Y%m%d-%H%M%S).img"
-  echo "自动备份 -> $_bf"
-  if ! dd if="$_dev" of="$_bf" bs=1M 2>/dev/null; then
-    echo "已中止: 备份失败，分区未被改动"; rm -f "$_bf" 2>/dev/null; return 1
+  _man="$_bdir/manifest.txt"
+  _slot=$(dtbo_slot_of "$_dev")
+  _bsha=$(dtbo_dev_sha "$_dev")
+  if dtbo_manifest_any_has "$_bsha"; then
+    echo "当前分区内容已有备份记录（sha256=$_bsha），复用，不重复备份"
+  else
+    _bf="$_bdir/$(basename "$_dev")_before_$(date +%Y%m%d-%H%M%S).img"
+    echo "自动备份 -> $_bf"
+    if ! dd if="$_dev" of="$_bf" bs=1M 2>/dev/null; then
+      echo "已中止: 备份失败，分区未被改动"; rm -f "$_bf" 2>/dev/null; return 1
+    fi
+    sync
+    _bhsz=$(stat -c %s "$_bf" 2>/dev/null)
+    if [ -n "$_dsz" ] && [ -n "$_bhsz" ] && [ "$_bhsz" != "$_dsz" ]; then
+      echo "已中止: 备份大小异常（$_bhsz != $_dsz），分区未被改动"; return 1
+    fi
+    echo "$(date '+%F %T') before_flash slot=$_slot sha=$_bsha $(basename "$_bf")" >> "$_man"
+    echo "备份完成: $_bf (${_bhsz:-?} 字节, sha256=$_bsha)"
   fi
-  sync
-  _bhsz=$(stat -c %s "$_bf" 2>/dev/null)
-  if [ -n "$_dsz" ] && [ -n "$_bhsz" ] && [ "$_bhsz" != "$_dsz" ]; then
-    echo "已中止: 备份大小异常（$_bhsz != $_dsz），分区未被改动"; return 1
-  fi
-  echo "备份完成: $_bf (${_bhsz:-?} 字节, sha256=$(dtbo_sha "$_bf"))"
 
   # 镜像小于分区时补零到分区大小：否则尾部残留旧 dtbo 数据导致头尾不一致，
   # 而按文件大小回读又会误报成功。补零失败即中止。
@@ -258,6 +333,37 @@ dtbo_flashlocal() {
   [ -f "$_f" ] || { echo "已拒绝: 本地镜像不存在 -> $_f（请先下载或放入）"; return 2; }
   echo "刷本地镜像: $_f"
   dtbo_flash "$_f" 1
+}
+
+# ---- 开机自动备份当前槽（service.sh 后台调用）----
+# manifest 里已有当前分区内容（sha 一致）则不重复备份；任何失败都返回 0——
+# 它是开机附带动作，绝不能影响或拖慢开机流程。
+dtbo_autobackup() {
+  [ "$(id -u 2>/dev/null)" = "0" ] || { log "dtbo: autobackup 跳过（无 root）"; return 0; }
+  _dev=$(dtbo_dev) || { log "dtbo: autobackup 跳过（分区未找到）"; return 0; }
+  _dir=$(dtbo_backup_dir)
+  mkdir -p "$_dir" 2>/dev/null || { log "dtbo: autobackup 跳过（备份目录不可建）"; return 0; }
+  _man="$_dir/manifest.txt"
+  _slot=$(dtbo_slot_of "$_dev")
+  _sha=$(dtbo_dev_sha "$_dev")
+  if [ -z "$_sha" ]; then
+    log "dtbo: autobackup 跳过（读取分区 sha 失败）"
+    return 0
+  fi
+  if dtbo_manifest_any_has "$_sha"; then
+    log "dtbo: autobackup 跳过（当前槽已有备份 sha=$_sha）"
+    return 0
+  fi
+  _out="$_dir/$(basename "$_dev")_auto_$(date +%Y%m%d-%H%M%S).img"
+  if dd if="$_dev" of="$_out" bs=1M 2>/dev/null; then
+    sync
+    echo "$(date '+%F %T') auto_backup slot=$_slot sha=$_sha $(basename "$_out")" >> "$_man"
+    log "dtbo: autobackup 已保存 $_out"
+  else
+    rm -f "$_out" 2>/dev/null
+    log "dtbo: autobackup 失败（不影响开机）"
+  fi
+  return 0
 }
 
 # ---- 在线下载当前机型镜像 ----

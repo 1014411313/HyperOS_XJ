@@ -13,6 +13,40 @@ while [ "$(getprop sys.boot_completed 2>/dev/null)" != "1" ]; do
 done
 echo "$(date '+%F %T') [SVC] boot_completed waited=${i}s" >> "$LOG"
 
+# 日志轮转（参照 ref_battery/service.sh）：单文件 >2MiB 截尾保留末尾 10000 行。
+# tail 写临时文件再 mv 原子替换，避免轮转途中读取方（诊断包/用户）读到半截日志；
+# 无系统 tail 时回退 Magisk/KernelSU 自带 busybox 的 tail，再没有就记一行跳过。
+svc_log_rotate() {
+    _tailbin=""
+    if command -v tail >/dev/null 2>&1; then
+        _tailbin="tail"
+    elif [ -x /data/adb/ksu/bin/busybox ]; then
+        _tailbin="/data/adb/ksu/bin/busybox tail"
+    elif [ -x /data/adb/magisk/busybox ]; then
+        _tailbin="/data/adb/magisk/busybox tail"
+    elif command -v busybox >/dev/null 2>&1; then
+        _tailbin="busybox tail"
+    fi
+    if [ -z "$_tailbin" ]; then
+        echo "$(date '+%F %T') [SVC] log rotate skip: no tail/busybox available" >> "$LOG"
+        return 0
+    fi
+    for _lf in "$DATA_DIR"/log/*.log; do
+        [ -f "$_lf" ] || continue
+        _sz=$(wc -c < "$_lf" 2>/dev/null)
+        case "$_sz" in ''|*[!0-9]*) continue ;; esac
+        [ "$_sz" -gt 2097152 ] || continue
+        if "$_tailbin" -n 10000 "$_lf" > "$_lf.rot" 2>/dev/null && mv -f "$_lf.rot" "$_lf" 2>/dev/null; then
+            echo "$(date '+%F %T') [SVC] log rotated: $_lf (was $_sz bytes, keep last 10000 lines)" >> "$LOG"
+        else
+            rm -f "$_lf.rot" 2>/dev/null
+            echo "$(date '+%F %T') [SVC] log rotate failed: $_lf" >> "$LOG"
+        fi
+    done
+    return 0
+}
+svc_log_rotate
+
 [ -s "$DATA_DIR/config/settings.json" ] || \
     cp -f "$MODDIR/default_settings.json" "$DATA_DIR/config/settings.json" 2>/dev/null
 
@@ -66,6 +100,15 @@ fi
 # 自研引擎常驻进程（温控 + 功率 + 背屏 + 数据）
 if [ -f "$MODDIR/engine/boot.sh" ]; then
     ( setsid sh "$MODDIR/engine/boot.sh" >> "$LOG" 2>&1 < /dev/null & )
+fi
+
+# DTBO 开机自动备份：后台执行，同内容未备份过才备份一份；失败不影响开机。
+if [ -f "$MODDIR/engine/lib/dtbo.sh" ]; then
+    (
+        . "$MODDIR/engine/lib/env.sh" 2>/dev/null
+        . "$MODDIR/engine/lib/dtbo.sh" 2>/dev/null
+        dtbo_autobackup
+    ) >/dev/null 2>&1 &
 fi
 
 exit 0

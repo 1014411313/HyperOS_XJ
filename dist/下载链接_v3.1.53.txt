@@ -1,0 +1,11 @@
+热炸了工具箱 v3.1.53 下载链接
+
+Gitee（国内推荐）：
+https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/download/v3.1.53/rezhale_toolbox_v3.1.53.zip
+
+GitHub：
+https://github.com/1014411313/HyperOS_XJ/releases/download/v3.1.53/rezhale_toolbox_v3.1.53.zip
+
+发布页：
+https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/tag/v3.1.53
+https://github.com/1014411313/HyperOS_XJ/releases/tag/v3.1.53

@@ -10,6 +10,7 @@ DIR=$(cd "$(dirname "$0")" && pwd)
 . "$DIR/lib/rear.sh"
 . "$DIR/lib/battery.sh"
 . "$DIR/lib/apl.sh"
+. "$DIR/lib/diag_log.sh"
 
 # 电池子系统（BAA/PSS/fv/cycle/volt/cloud/APL）存在时，其守护负责这些节点；
 # 引擎只保留功率/温控/背屏，避免两边同时写 cycle/fv/term/pd_verifed。
@@ -150,6 +151,8 @@ battery_guard_tick() {
   fi
   # 公版 PPS：验证节点与 freepps 开关保持一致（两节点 + 回读校验在 pps_apply 里）。
   pps_tick
+  # PSS 动态模式：低电才禁用、回安全区自动启用（内部短路，不重复 pm 调用）。
+  pss_guard_tick
   # smart_fv 守护：充电中才压强 0（解除满充电压限制）；非充电必须写回有效值，
   # 否则手机管家读到 0 会不显示电池健康度。
   if [ "$(cfg_get unlock 1)" = "1" ]; then
@@ -173,6 +176,21 @@ battery_guard_tick() {
           *) chmod 0664 "$_sf" 2>/dev/null; echo "$_fd" > "$_sf" 2>/dev/null ;;
         esac
       fi
+    fi
+  fi
+  # BAA 运行期重挂巡检（参照 v3.12.9 cloud_guard.sh watch，约每 5 分钟一次）：
+  # 系统 mid-session 替换 /odm、OTA 残留会冲掉 bind mount，表现为解容「开关开着但没生效」。
+  # 重挂后必须 restart batteryantiaging，否则文件已换成解容版、内存里跑的还是原厂策略。
+  BT_BAA_TICK_N=$((BT_BAA_TICK_N + 1))
+  if [ $((BT_BAA_TICK_N % 100)) -eq 0 ] && [ "$(cfg_get unlock 1)" = "1" ] && [ "$(baa_state)" != "active" ]; then
+    blog "BAA inactive detected, remounting"
+    baa_refresh_src >/dev/null 2>&1
+    baa_mount >/dev/null 2>&1
+    setprop ctl.restart batteryantiaging 2>/dev/null
+    if [ "$(baa_state)" = "active" ]; then
+      blog "BAA remounted OK"
+    else
+      blog "BAA remount failed（仍 inactive，可能缺 PID1 namespace）"
     fi
   fi
 }
@@ -228,6 +246,7 @@ run_tick() {
     printf '1' > "$CONFDIR/bypass_active"
     apply_bypass
     write_status_json
+    diag_log_tick
     [ "$BT_GUARDS_EXTERNAL" = "1" ] || battery_guard_tick
     rear_tick
     return 0
@@ -310,6 +329,7 @@ run_tick() {
   rear_tick
   update_status "$(cat "$CONFDIR/current_mode" 2>/dev/null)"
   write_status_json
+  diag_log_tick
 }
 
 bootstrap || log "初始化失败，稍后重试"

@@ -177,6 +177,26 @@ diag_pack() {
     cp -f "$_f" "$_stage/state/$_b" 2>/dev/null && _sn=$((_sn + 1))
   done
 
+  # ---- battery_state/：BAT_STATE 运行态（功率/载荷/满压等电池子系统）----
+  # 排查「功率不正常」的直接证据在这里：power_sig / power_write_ts / power_orig_*
+  # / fv_default / cloud 状态。云控隔离目录体积不可控，只计数不复制。
+  _bsn=0
+  mkdir -p "$_stage/battery_state" 2>/dev/null
+  for _f in "$BT_STATE"/*; do
+    if [ -d "$_f" ]; then
+      _b=$(basename "$_f")
+      diag_is_sensitive_name "$_b" && continue
+      [ "$_b" = "cloud_quarantine" ] && continue
+      cp -r "$_f" "$_stage/battery_state/" 2>/dev/null && _bsn=$((_bsn + 1))
+      continue
+    fi
+    [ -f "$_f" ] || continue
+    _b=$(basename "$_f")
+    case "$_b" in *tmp*|*frag*) continue ;; esac
+    diag_is_sensitive_name "$_b" && continue
+    cp -f "$_f" "$_stage/battery_state/$_b" 2>/dev/null && _bsn=$((_bsn + 1))
+  done
+
   # ---- runtime.txt：daemon 存活证据（/proc cmdline 扫描 + pid 核验）与时间基准 ----
   {
     echo "== xjdaemon 进程（/proc cmdline 扫描）=="
@@ -340,7 +360,7 @@ diag_pack() {
     if [ "$_img_n" -gt 0 ]; then diag_clear_problem_images; fi
     echo "大小: ${_sz:-?} 字节   打包: $_how"
     echo "内容: 日志 $_n 个，配置 $_cn 个（settings.json 已脱敏）图片 $_img_n 张（${_img_kb:-0}KB）"
-    echo "采集: state $_sn / runtime ${_rt} / sysfs ${_sysfs_n} 项 / thermal ${_th} / module ${_mr} / settings ${_sc} / dmesg ${_dm} / procs ${_pr:-n/a}"
+    echo "采集: state $_sn / battery_state $_bsn / runtime ${_rt} / sysfs ${_sysfs_n} 项 / thermal ${_th} / module ${_mr} / settings ${_sc} / dmesg ${_dm} / procs ${_pr:-n/a}"
     return 0
   fi
 
@@ -356,11 +376,11 @@ diag_pack() {
     echo "说明: 设备无 zip 工具，已用 $_how 打包（扩展名 .tar.gz）"
     echo "大小: ${_sz:-?} 字节"
     echo "内容: 日志 $_n 个，配置 $_cn 个（settings.json 已脱敏）图片 $_img_n 张（${_img_kb:-0}KB）"
-    echo "采集: state $_sn / runtime ${_rt} / sysfs ${_sysfs_n} 项 / thermal ${_th} / module ${_mr} / settings ${_sc} / dmesg ${_dm} / procs ${_pr:-n/a}"
+    echo "采集: state $_sn / battery_state $_bsn / runtime ${_rt} / sysfs ${_sysfs_n} 项 / thermal ${_th} / module ${_mr} / settings ${_sc} / dmesg ${_dm} / procs ${_pr:-n/a}"
     return 0
   fi
 
   echo "打包失败: 设备无 zip/tar 可用；散装文件保留在 $_stage"
-  echo "采集: state $_sn / runtime ${_rt} / sysfs ${_sysfs_n} 项 / thermal ${_th} / module ${_mr} / settings ${_sc} / dmesg ${_dm} / procs ${_pr:-n/a}"
+  echo "采集: state $_sn / battery_state $_bsn / runtime ${_rt} / sysfs ${_sysfs_n} 项 / thermal ${_th} / module ${_mr} / settings ${_sc} / dmesg ${_dm} / procs ${_pr:-n/a}"
   return 1
 }

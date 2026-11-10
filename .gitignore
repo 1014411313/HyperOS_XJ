@@ -34,3 +34,6 @@ preview.*.log
 
 # 本地素材/产出（不上传）
 /output/
+
+# 独立子项目（自带 git 仓库，不纳入本仓库）
+baofeiche/
