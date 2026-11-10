@@ -78,6 +78,11 @@ diag_copy_to_app() {
   return 0
 }
 
+# 图片已进包，清掉 App 侧待打包图，避免下次诊断重复上传同一批截图。
+diag_clear_problem_images() {
+  rm -f /data/user/0/com.hyperos.xj/files/diag_pics/* 2>/dev/null
+}
+
 # 打包：优先 zip（$.zip），设备无 zip 工具时回退 tar.gz（如实告知扩展名）。
 diag_do_zip() {
   _stage="$1"; _out="$2"
@@ -125,6 +130,19 @@ diag_pack() {
     echo "槽位    : $(getprop ro.boot.slot_suffix 2>/dev/null)"
     echo "系统    : Android $(getprop ro.build.version.release 2>/dev/null) (SDK $(getprop ro.build.version.sdk 2>/dev/null))"
   } > "$_stage/device_info.txt" 2>/dev/null
+
+  # ---- images/：App 里选的问题截图，随诊断包一起上传（压缩在 App 侧完成） ----
+  _img_n=0
+  _img_kb=0
+  for _id in /data/user/0/com.hyperos.xj/files/diag_pics "$DATA_DIR/state/diag_pics"; do
+    [ -d "$_id" ] || continue
+    for _f in "$_id"/*; do
+      [ -f "$_f" ] || continue
+      mkdir -p "$_stage/images" 2>/dev/null
+      cp -f "$_f" "$_stage/images/" 2>/dev/null && _img_n=$((_img_n + 1))
+    done
+  done
+  [ "$_img_n" -gt 0 ] && _img_kb=$(du -sk "$_stage/images" 2>/dev/null | awk '{print $1}')
 
   _n=0
   for _f in "$LOGDIR"/*; do
@@ -319,8 +337,9 @@ diag_pack() {
     rm -rf "$_stage" 2>/dev/null
     echo "已导出: $_zip"
     diag_copy_to_app "$_zip"
+    if [ "$_img_n" -gt 0 ]; then diag_clear_problem_images; fi
     echo "大小: ${_sz:-?} 字节   打包: $_how"
-    echo "内容: 日志 $_n 个，配置 $_cn 个（settings.json 已脱敏）"
+    echo "内容: 日志 $_n 个，配置 $_cn 个（settings.json 已脱敏）图片 $_img_n 张（${_img_kb:-0}KB）"
     echo "采集: state $_sn / runtime ${_rt} / sysfs ${_sysfs_n} 项 / thermal ${_th} / module ${_mr} / settings ${_sc} / dmesg ${_dm} / procs ${_pr:-n/a}"
     return 0
   fi
@@ -333,9 +352,10 @@ diag_pack() {
     rm -rf "$_stage" 2>/dev/null
     echo "已导出: $_tgz"
     diag_copy_to_app "$_tgz"
+    if [ "$_img_n" -gt 0 ]; then diag_clear_problem_images; fi
     echo "说明: 设备无 zip 工具，已用 $_how 打包（扩展名 .tar.gz）"
     echo "大小: ${_sz:-?} 字节"
-    echo "内容: 日志 $_n 个，配置 $_cn 个（settings.json 已脱敏）"
+    echo "内容: 日志 $_n 个，配置 $_cn 个（settings.json 已脱敏）图片 $_img_n 张（${_img_kb:-0}KB）"
     echo "采集: state $_sn / runtime ${_rt} / sysfs ${_sysfs_n} 项 / thermal ${_th} / module ${_mr} / settings ${_sc} / dmesg ${_dm} / procs ${_pr:-n/a}"
     return 0
   fi

@@ -39,6 +39,7 @@ import com.hyperos.xj.runtime.Engine
 import com.hyperos.xj.runtime.ToolboxRuntimeBridge
 import com.hyperos.xj.runtime.FeedbackUpload
 import com.hyperos.xj.runtime.openUrl
+import com.hyperos.xj.runtime.pickProblemImages
 import com.hyperos.xj.ui.PlatformBackHandler
 import com.hyperos.xj.runtime.shareDiagnosticPackage
 import com.hyperos.xj.runtime.uploadDiagnosticPackage
@@ -94,6 +95,7 @@ fun AboutPage(
     var showUninstallTip by remember { mutableStateOf(false) }
     var showDiagNote by remember { mutableStateOf(false) }
     var diagNote by remember { mutableStateOf("") }
+    var diagImageCount by remember { mutableStateOf(0) }
     var showFeedback by remember { mutableStateOf(false) }
     val diagScope = rememberCoroutineScope()
 
@@ -145,7 +147,7 @@ fun AboutPage(
                 )
                 Spacer(Modifier.height(4.dp))
                 BasicText(
-                    text = "会随诊断包一起打包，写清现象与复现步骤",
+                    text = "会随诊断包一起打包，写清现象与复现步骤；可附问题截图",
                     style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp)
                 )
                 Spacer(Modifier.height(12.dp))
@@ -160,6 +162,37 @@ fun AboutPage(
                     textStyle = TextStyle(color = XJ.TextPrimary, fontSize = 13.sp),
                     cursorBrush = SolidColor(XJ.Accent)
                 )
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        Modifier
+                            .background(Color(0x1FFFFFFF), RoundedCornerShape(12.dp))
+                            .clickable {
+                                diagScope.launch {
+                                    val picked = pickProblemImages(4)
+                                    diagImageCount = picked.size
+                                    showToast(
+                                        if (picked.isEmpty()) "未选择图片"
+                                        else "已选 ${picked.size} 张，会随诊断包一起上传"
+                                    )
+                                }
+                            }
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                    ) {
+                        BasicText(
+                            "添加问题图片（最多 4 张）",
+                            style = TextStyle(color = XJ.TextPrimary, fontSize = 12.sp)
+                        )
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    BasicText(
+                        text = if (diagImageCount > 0) "已选 $diagImageCount 张（重选会替换）" else "图片会自动压缩",
+                        style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp)
+                    )
+                }
                 Spacer(Modifier.height(14.dp))
                 Row(
                     Modifier.fillMaxWidth(),

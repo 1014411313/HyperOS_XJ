@@ -29,7 +29,7 @@ usage() {
   detect                 重扫详情节点
   power get|set <档位>|status|restore
   thermal get|set <档位>|gov on|off|status
-  battery unlock|pps|cloud <on|off|status>|apl <on|off|status>|cycle <N|clear|get>|volt <fv|term|force|off> <值>|status
+  battery unlock|pps|cloud <on|off|status>|apl <on|off|status>|cycle <N|clear|get>|volt <fv|term|force|off> <值>|restore|status
   setting get <键>|set <键> <值>|dump
   bypass on|off|status
   rear on|off|set key=value...|status
@@ -119,6 +119,7 @@ case "$1" in
   battery)
     case "$2" in
       boot) battery_boot ;;
+      restore) battery_restore ;;
       unlock)
         case "$3" in
           on) battery_unlock_on ;;

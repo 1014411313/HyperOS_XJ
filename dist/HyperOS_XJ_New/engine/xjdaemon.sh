@@ -134,6 +134,19 @@ battery_guard_tick() {
   # 循环伪装：FG 回滚时自动重压。qmax_cyclecount 是不受伪装影响的权威值，只读不写。
   _cf=$(cfg_get cycle_fake "")
   if [ -n "$_cf" ]; then
+    # 首次伪装前锁存真实值，卸载时 battery_restore 靠它写回。
+    if [ ! -f "$BAT_STATE/cycle_real" ]; then
+      _cr=$(cat /sys/class/xm_power/fg_master/qmax_cyclecount 2>/dev/null)
+      case "$_cr" in ''|*[!0-9]*) _cr=$(cat /sys/class/xm_power/fg_master/cyclecount 2>/dev/null) ;; esac
+      case "$_cr" in
+        ''|*[!0-9]*) ;;
+        *)
+          if [ "$_cr" != "$_cf" ]; then
+            mkdir -p "$BAT_STATE" 2>/dev/null
+            printf '%s' "$_cr" > "$BAT_STATE/cycle_real" 2>/dev/null
+          fi ;;
+      esac
+    fi
     for _n in /sys/class/xm_power/fg_master/cyclecount \
               /sys/class/power_supply/battery/cycle_count; do
       [ -f "$_n" ] && [ -w "$_n" ] || continue
@@ -171,10 +184,31 @@ battery_guard_tick() {
   _pps=$(cfg_get freepps 0)
   _node=/sys/class/qcom-battery/pd_verifed
   [ -f "$_node" ] && [ -w "$_node" ] && [ "$(cat "$_node" 2>/dev/null)" != "$_pps" ] && { chmod 0664 "$_node" 2>/dev/null; echo "$_pps" > "$_node"; } 2>/dev/null
-  # smart_fv 守护：解容开启时把 smart_fv 压回 0，防止系统服务撤销 BAA 的无降压设置。
+  # smart_fv 守护：充电中才压强 0（解除满充电压限制）；非充电必须写回有效值，
+  # 否则手机管家读到 0 会不显示电池健康度。
   if [ "$(cfg_get unlock 1)" = "1" ]; then
     _sf=/sys/class/xm_power/charger/smart_charge/smart_fv
-    [ -e "$_sf" ] && [ -w "$_sf" ] && [ "$(cat "$_sf" 2>/dev/null)" != "0" ] && { chmod 0664 "$_sf" 2>/dev/null; echo 0 > "$_sf"; } 2>/dev/null
+    _fvd=/sys/class/qcom-battery/fv_down
+    if [ "$IS_CHARGING" = "1" ]; then
+      [ -e "$_sf" ] && [ "$(cat "$_sf" 2>/dev/null)" != "0" ] && { chmod 0664 "$_sf" 2>/dev/null; echo 0 > "$_sf"; } 2>/dev/null
+      [ -e "$_fvd" ] && [ "$(cat "$_fvd" 2>/dev/null)" != "0" ] && { chmod 0664 "$_fvd" 2>/dev/null; echo 0 > "$_fvd"; } 2>/dev/null
+    elif [ -e "$_sf" ]; then
+      _sfv=$(cat "$_sf" 2>/dev/null)
+      case "$_sfv" in
+        ''|0) ;;
+        *)
+          # 快照只在读到非 0 时落盘：升级/旧版残留的 0 不能当成原值。
+          [ -f "$BAT_STATE/fv_default" ] || printf '%s' "$_sfv" > "$BAT_STATE/fv_default" 2>/dev/null ;;
+      esac
+      if [ "$_sfv" = "0" ]; then
+        _fd=$(cat "$BAT_STATE/fv_default" 2>/dev/null)
+        case "$_fd" in ''|0|*[!0-9]*) _fd=$(cfg_get fv_v "") ;; esac
+        case "$_fd" in
+          ''|0|*[!0-9]*) ;;
+          *) chmod 0664 "$_sf" 2>/dev/null; echo "$_fd" > "$_sf" 2>/dev/null ;;
+        esac
+      fi
+    fi
   fi
 }
 

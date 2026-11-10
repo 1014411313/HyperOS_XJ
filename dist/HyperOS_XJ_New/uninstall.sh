@@ -6,6 +6,8 @@ DATA_DIR=/data/adb/rezhale_toolbox
 [ -f "$MODDIR/engine/xjctl.sh" ] && sh "$MODDIR/engine/xjctl.sh" rear off >/dev/null 2>&1
 # 卸载 BAA、恢复 PSS
 [ -f "$MODDIR/engine/xjctl.sh" ] && sh "$MODDIR/engine/xjctl.sh" battery unlock off >/dev/null 2>&1
+# 还原 smart_fv 与循环计数（写回模块接管前的值）
+[ -f "$MODDIR/engine/xjctl.sh" ] && sh "$MODDIR/engine/xjctl.sh" battery restore >/dev/null 2>&1
 # 交回充电节点
 [ -f "$MODDIR/engine/xjctl.sh" ] && sh "$MODDIR/engine/xjctl.sh" power restore >/dev/null 2>&1
 # 恢复温控默认配置

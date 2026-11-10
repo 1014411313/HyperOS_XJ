@@ -41,12 +41,36 @@ baa_cloud_variant() {
   [ "$(cfg_get cloud_guard 1)" = "1" ] && printf '%s' normal_nocloud || printf '%s' normal
 }
 
+# 原厂 BAA 分加密（BAA_ENC:）与明文两种，挂载格式必须与原厂一致，
+# 否则 batteryantiaging 解析不到策略（dada 原厂就是明文 JSON）。
+baa_fmt_use() {
+  _fmt=$(cfg_get baa_fmt auto)
+  case "$_fmt" in
+    enc|plain) printf '%s' "$_fmt"; return 0 ;;
+  esac
+  _t=$(baa_tgt 2>/dev/null)
+  [ -f "$_t" ] || { printf 'enc'; return 0; }
+  case "$(head -c 8 "$_t" 2>/dev/null)" in
+    BAA_ENC:) printf 'enc'; return 0 ;;
+  esac
+  if head -c 64 "$_t" 2>/dev/null | grep -q '{'; then printf 'plain'; else printf 'enc'; fi
+}
+
 # 选定载荷文件：优先机型专用的 <dev>.<变体>.json，其次通用 <变体>.json。
 # 机型未识别（unknown）时不回退通用文件，避免把别的机型载荷挂到未知机型上。
+# 明文变体缺失时回退加密载荷，不能因为少一个明文文件就整机不挂载。
 baa_mode_file() {
   _m="$BAT_DIR/baa/modes"
   _d=$(dev_code)
   _v=$(baa_cloud_variant)
+  if [ "$(baa_fmt_use)" = "plain" ]; then
+    if [ "$_d" != "unknown" ] && [ -s "$_m/$_d.${_v}_plain.json" ]; then
+      printf '%s' "$_m/$_d.${_v}_plain.json"; return 0
+    fi
+    if [ -s "$_m/${_v}_plain.json" ]; then
+      printf '%s' "$_m/${_v}_plain.json"; return 0
+    fi
+  fi
   _f="$_m/$_d.$_v.json"
   [ -s "$_f" ] && { printf '%s' "$_f"; return 0; }
   [ "$_d" = "unknown" ] && return 1
@@ -364,4 +388,45 @@ cloud_status() {
   echo "载荷=$(basename "$(baa_src)") 变体=$(baa_cloud_variant)"
   echo "云端目录待检=$(cloud_count) 隔离区=$(ls -1 "$CLOUD_QDIR" 2>/dev/null | grep -vc '^_sources.log$')"
   grep -E '^last_|^blocked_total=' "$CLOUD_STATE" 2>/dev/null
+}
+
+# ---------- 卸载/关闭时的节点还原 ----------
+# uninstall.sh 在 baa_umount 之后调用：BAA 已交回原厂，这里把 smart_fv 与
+# 循环计数写回模块接管前的值，否则模块删除后节点停在 0 / 伪装值。
+battery_restore() {
+  _sf=/sys/class/xm_power/charger/smart_charge/smart_fv
+  if [ -e "$_sf" ]; then
+    _def=$(cat "$BAT_STATE/fv_default" 2>/dev/null)
+    case "$_def" in ''|0|*[!0-9]*) _def=$(cfg_get fv_v "") ;; esac
+    case "$_def" in
+      ''|0|*[!0-9]*) blog "restore: 无有效 smart_fv 原值，保持系统自管" ;;
+      *)
+        chmod 0664 "$_sf" 2>/dev/null
+        echo "$_def" > "$_sf" 2>/dev/null
+        if [ "$(cat "$_sf" 2>/dev/null)" = "$_def" ]; then
+          blog "restore: smart_fv -> $_def"
+        else
+          blog "restore: smart_fv 写入失败（wanted $_def）"
+        fi ;;
+    esac
+  fi
+  _real=$(cat /sys/class/xm_power/fg_master/qmax_cyclecount 2>/dev/null)
+  case "$_real" in ''|*[!0-9]*) _real=$(cat "$BAT_STATE/cycle_real" 2>/dev/null) ;; esac
+  case "$_real" in
+    ''|*[!0-9]*) blog "restore: 无真实循环值，跳过循环还原" ;;
+    *)
+      for _n in /sys/class/xm_power/fg_master/cyclecount \
+                /sys/class/power_supply/battery/cycle_count; do
+        [ -e "$_n" ] || continue
+        [ "$(cat "$_n" 2>/dev/null)" = "$_real" ] && continue
+        chmod 0666 "$_n" 2>/dev/null
+        echo "$_real" > "$_n" 2>/dev/null
+        if [ "$(cat "$_n" 2>/dev/null)" = "$_real" ]; then
+          blog "restore: $_n -> $_real"
+        else
+          blog "restore: $_n 写入失败（wanted $_real）"
+        fi
+      done ;;
+  esac
+  return 0
 }
