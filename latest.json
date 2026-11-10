@@ -1,9 +1,9 @@
 {
-  "version": "3.1.50",
-  "versionCode": 360,
-  "date": "2026-11-09",
+  "version": "3.1.51",
+  "versionCode": 361,
+  "date": "2026-11-10",
   "url": "",
-  "notes": "修 tr 卡死吃满 CPU；诊断包新增进程采集",
-  "download": "https://github.com/1014411313/HyperOS_XJ/releases/download/v3.1.50/rezhale_toolbox_v3.1.50.zip",
-  "release": "https://github.com/1014411313/HyperOS_XJ/releases/tag/v3.1.50"
+  "notes": "解容载荷格式探测；smart_fv 充电感知；卸载还原；诊断包附图",
+  "download": "https://github.com/1014411313/HyperOS_XJ/releases/download/v3.1.51/rezhale_toolbox_v3.1.51.zip",
+  "release": "https://github.com/1014411313/HyperOS_XJ/releases/tag/v3.1.51"
 }
