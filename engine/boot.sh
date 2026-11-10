@@ -18,11 +18,10 @@ wait_boot() {
 
 # 存活判定只认真实进程，不认 pidfile：旧 pidfile 的 pid 重启后可能被系统进程复用
 
-# 存活判定：读 pidfile + kill -0 + comm 校验。
-# 不遍历 /proc 读 cmdline——读 cmdline 要访问目标进程内存，目标正在退出时该读会阻塞，
-# 曾把 tr 卡在 R 状态吃满一个核（bug-121）；comm 读的是内核结构，不会卡。
+# 存活判定：pidfile 优先，缺失时回退到 daemon 锁目录里的 pid（两者都由 daemon 写出）。
 daemon_alive() {
   _p=$(cat "$PIDFILE" 2>/dev/null)
+  case "$_p" in ''|*[!0-9]*) _p=$(cat "$STATE/daemon.lock.d/pid" 2>/dev/null) ;; esac
   case "$_p" in ''|*[!0-9]*) return 1 ;; esac
   kill -0 "$_p" 2>/dev/null || return 1
   [ "$(cat "/proc/$_p/comm" 2>/dev/null)" = "sh" ] || return 1
@@ -54,14 +53,15 @@ start_daemon() {
   daemon_alive && return 0
   rm -f "$PIDFILE" 2>/dev/null
   setsid sh "$DIR/xjdaemon.sh" >> "$LOGDIR/daemon.log" 2>&1 < /dev/null &
-  sleep 2
-  # pid 由 daemon 自己写进 pidfile（setsid 可能 fork，$! 不可靠）
-  if daemon_alive; then
-    log "xjdaemon started pid=$(cat "$PIDFILE" 2>/dev/null)"
-  else
-    rm -f "$PIDFILE" 2>/dev/null
-    log "xjdaemon started, pidfile 未就绪"
-  fi
+  # daemon 先跑 bootstrap/factory_backup/data_detect 再写 pidfile，可能超过几秒；
+  # 这里轮询等待，且不能把等待期间才写好的 pidfile 删掉——那会让看护永远误判 lost。
+  _w=0
+  while [ "$_w" -lt 15 ]; do
+    sleep 1
+    _w=$((_w + 1))
+    daemon_alive && { log "xjdaemon started pid=$(cat "$PIDFILE" 2>/dev/null)"; return 0; }
+  done
+  log "xjdaemon started, pidfile 未就绪（${_w}s 内未见）"
 }
 
 case "$1" in

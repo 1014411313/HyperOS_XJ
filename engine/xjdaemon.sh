@@ -119,17 +119,6 @@ apply_fps() {
   printf '%s' "$_fps" > "$CONFDIR/.fps_applied"
 }
 
-write_voltage_node() {
-  _n="$1" _t="$2"
-  [ -e "$_n" ] || return 1
-  _tuv=$((_t * 1000))
-  # 重定向失败由 shell 在打开文件时就报错，早于 2>/dev/null 生效，必须整组抑制；
-  # 且对 root 而言 [ -w ] 恒真，无法据此判断 sysfs 是否可写。
-  { echo "$_tuv" > "$_n"; } 2>/dev/null && { _r=$(cat "$_n" 2>/dev/null | tr -cd '0-9'); [ -n "$_r" ] && [ "$_r" -gt 0 ] && _d=$((_r - _tuv)) && [ "${_d#-}" -le 25000 ] && return 0; }
-  { echo "$_t" > "$_n"; } 2>/dev/null && { _r=$(cat "$_n" 2>/dev/null | tr -cd '0-9'); [ -n "$_r" ] && [ "$_r" -gt 0 ] && _d=$((_r - _t)) && [ "${_d#-}" -le 25 ] && return 0; }
-  return 1
-}
-
 battery_guard_tick() {
   # 循环伪装：FG 回滚时自动重压。qmax_cyclecount 是不受伪装影响的权威值，只读不写。
   _cf=$(cfg_get cycle_fake "")
@@ -152,27 +141,6 @@ battery_guard_tick() {
       [ -f "$_n" ] && [ -w "$_n" ] || continue
       [ "$(cat "$_n" 2>/dev/null)" = "$_cf" ] || { chmod 0666 "$_n" 2>/dev/null; echo "$_cf" > "$_n"; } 2>/dev/null
     done
-  fi
-  # 满电电压（fv_v）：直写 constant_charge_voltage/voltage_max 在多数机型只读或不存在，
-  # 可靠路径是改写 BAA 载荷的 vterm 并让 batteryantiaging 重读；sysfs 仅作兜底。
-  _fv=$(cfg_get fv_v "")
-  case "$_fv" in ''|*[!0-9]*) _fv="" ;; esac
-  if [ -n "$_fv" ]; then
-    # 载荷层只在挂载时改写一次，fv_v 变了要重新改写并让服务重读。
-    if [ "$(cfg_get unlock 1)" = "1" ] && [ "$(cfg_get fv_force 0)" = "1" ] && \
-       [ "$(cat "$BAT_STATE/fv_force.applied" 2>/dev/null)" != "fv=$_fv" ]; then
-      baa_fv_force_apply >/dev/null 2>&1 && setprop ctl.restart batteryantiaging 2>/dev/null
-    fi
-    # 兜底：多数机型这两个节点只读或不存在，write_voltage_node 失败会静默返回。
-    for _n in /sys/class/power_supply/battery/constant_charge_voltage \
-              /sys/class/power_supply/battery/voltage_max; do
-      [ -e "$_n" ] && write_voltage_node "$_n" "$_fv" && break
-    done
-  elif [ -f "$BAT_STATE/fv_force.applied" ]; then
-    # fv_v 清空后把载荷还原为云端变体，避免旧上限残留在挂载源里。
-    baa_refresh_src >/dev/null 2>&1
-    rm -f "$BAT_STATE/fv_force.applied" 2>/dev/null
-    setprop ctl.restart batteryantiaging 2>/dev/null
   fi
   # 关机电压：放电中电压低于阈值执行软关机。
   _tv=$(cfg_get term_v "")
@@ -202,7 +170,6 @@ battery_guard_tick() {
       esac
       if [ "$_sfv" = "0" ]; then
         _fd=$(cat "$BAT_STATE/fv_default" 2>/dev/null)
-        case "$_fd" in ''|0|*[!0-9]*) _fd=$(cfg_get fv_v "") ;; esac
         case "$_fd" in
           ''|0|*[!0-9]*) ;;
           *) chmod 0664 "$_sf" 2>/dev/null; echo "$_fd" > "$_sf" 2>/dev/null ;;
@@ -358,14 +325,33 @@ if [ "$1" = "--once" ]; then
   exit 0
 fi
 
-# 单实例：拿不到锁说明已有 daemon 在跑，直接退出。
-# 用锁文件而不是遍历 /proc 找同名进程：读 cmdline 要访问目标进程内存，
-# 目标正在退出时那个读会阻塞，曾把 tr 卡在 R 状态吃满一个核（bug-121）。
+# 单实例：mkdir 原子锁 + pid 存活校验。
+# 不用 flock：实测小米15 Pro（Android 17）的 toybox flock 不支持 `flock -n <fd>`，
+# 会报 Bad file descriptor，导致每次启动都被误判为「已有实例」而退出。
+# 也不遍历 /proc 读 cmdline 找同名进程：目标退出时那个读会阻塞（bug-121）。
 mkdir -p "$STATE" 2>/dev/null
-if command -v flock >/dev/null 2>&1; then
-  exec 9>"$STATE/daemon.lock" 2>/dev/null
-  flock -n 9 2>/dev/null || { log "已有 daemon 实例，退出"; exit 0; }
+rm -f "$STATE/daemon.lock" 2>/dev/null
+LOCKDIR="$STATE/daemon.lock.d"
+_lock_hold() {
+  mkdir "$LOCKDIR" 2>/dev/null || return 1
+  printf '%s\n' "$$" > "$LOCKDIR/pid" 2>/dev/null
+  return 0
+}
+if ! _lock_hold; then
+  _lp=$(cat "$LOCKDIR/pid" 2>/dev/null)
+  _alive=0
+  case "$_lp" in
+    ''|*[!0-9]*) ;;
+    *) kill -0 "$_lp" 2>/dev/null && [ "$(cat "/proc/$_lp/comm" 2>/dev/null)" = "sh" ] && _alive=1 ;;
+  esac
+  if [ "$_alive" = "1" ]; then
+    log "已有 daemon 实例(pid $_lp)，退出"
+    exit 0
+  fi
+  rm -rf "$LOCKDIR" 2>/dev/null
+  _lock_hold || { log "daemon 锁获取失败，退出"; exit 0; }
 fi
+trap 'rm -rf "$LOCKDIR" 2>/dev/null' EXIT INT TERM HUP
 printf '%s\n' "$$" > "$STATE/daemon.pid" 2>/dev/null
 
 # 开机先恢复原生背屏时钟，防止上次卡片投屏失败后重启仍黑屏。

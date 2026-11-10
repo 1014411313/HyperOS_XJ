@@ -35,9 +35,7 @@ App 通过 `su -c` 调用；页面不直接拼 root 命令，统一走 `Engine` 
   "cloud_guard": "1",
   "apl_enable": "0",
   "cycle_fake": "",
-  "fv_v": "",
   "term_v": "",
-  "fv_force": "0",
   "bypass_manual": "0",
   "rearscreen": "0",
   "module_version": "3.1.0",
@@ -113,10 +111,9 @@ xjctl.sh battery pps on|off
 xjctl.sh battery cloud on|off
 xjctl.sh battery apl on|off
 xjctl.sh battery cycle <N|clear|get>
-xjctl.sh battery volt fv <mV>
 xjctl.sh battery volt term <mV>
-xjctl.sh battery volt force on|off
 xjctl.sh battery volt off
+xjctl.sh battery restore
 xjctl.sh battery status
 ```
 
@@ -135,9 +132,7 @@ freepps=0
 cloud_guard=1
 apl_enable=0
 cycle_fake=
-fv_v=
 term_v=
-fv_force=0
 power_limit=inf
 ```
 

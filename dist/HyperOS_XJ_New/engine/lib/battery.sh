@@ -94,67 +94,6 @@ baa_refresh_src() {
   printf '%s' "$(basename "$_f")"
 }
 
-# ---------- 原厂上限强制覆盖（fv_force） ----------
-# 载荷里 jeita-term-para 的 vterm 才是原厂满电上限；只写 constant_charge_voltage
-# 节点压不住原厂策略，必须把载荷内所有 vterm 一起改写。
-BAA_CRYPT="$MODDIR/bin/baa_crypt"
-
-baa_crypt_bin() {
-  [ -f "$BAA_CRYPT" ] || return 1
-  # 安装器把模块内文件统一设成 0644，这里补可执行位。
-  [ -x "$BAA_CRYPT" ] || chmod 0755 "$BAA_CRYPT" 2>/dev/null
-  [ -x "$BAA_CRYPT" ] || return 1
-  printf '%s' "$BAA_CRYPT"
-  return 0
-}
-
-# fv_force=1：解密选中载荷 -> 所有 "vterm":<n> 改成 fv_v -> 用载荷自带 IV 重新加密 -> 写回 baa_src。
-# 用 cat 原地覆盖而不替换文件，inode 不变，已 bind 挂载到 charger 目录的载荷才会跟着变。
-baa_fv_force_apply() {
-  [ "$(cfg_get fv_force 0)" = "1" ] || return 1
-  _v=$(cfg_get fv_v "")
-  case "$_v" in ''|*[!0-9]*) blog "fv_force=1 但 fv_v 非法（$_v），回退原载荷"; return 1 ;; esac
-  _crypt=$(baa_crypt_bin) || { blog "fv_force=1 但 bin/baa_crypt 不可执行，回退原载荷"; return 1; }
-  _src=$(baa_src)
-  [ -s "$_src" ] || { blog "fv_force=1 但载荷不存在: $_src"; return 1; }
-  case "$(head -c 8 "$_src" 2>/dev/null)" in
-    BAA_ENC:*) ;;
-    *) blog "fv_force=1 但载荷非 BAA_ENC: 密文，回退原载荷"; return 1 ;;
-  esac
-  _tmp="$BAT_STATE/fv_force.tmp"
-  mkdir -p "$_tmp" 2>/dev/null
-  _iv=$("$_crypt" iv "$_src" 2>/dev/null)
-  "$_crypt" decrypt "$_src" "$_tmp/plain" 2>/dev/null || { blog "载荷解密失败，回退原载荷: $_src"; return 1; }
-  _n=$(grep -o '"vterm":[0-9]*' "$_tmp/plain" 2>/dev/null | wc -l)
-  case "$_n" in ''|*[!0-9]*) _n=0 ;; esac
-  [ "$_n" -gt 0 ] || { blog "载荷内无 vterm 字段，回退原载荷: $_src"; return 1; }
-  sed "s/\"vterm\":[0-9]*/\"vterm\":$_v/g" "$_tmp/plain" > "$_tmp/plain.new" 2>/dev/null || \
-    { blog "vterm 替换失败，回退原载荷"; return 1; }
-  "$_crypt" encrypt "$_tmp/plain.new" "$_tmp/enc" "$_iv" 2>/dev/null || { blog "载荷加密失败，回退原载荷"; return 1; }
-  if ! "$_crypt" decrypt "$_tmp/enc" "$_tmp/check" 2>/dev/null || ! cmp -s "$_tmp/plain.new" "$_tmp/check"; then
-    blog "载荷重加密校验失败，回退原载荷: $_src"
-    rm -rf "$_tmp" 2>/dev/null
-    return 1
-  fi
-  if ! cat "$_tmp/enc" > "$_src" 2>/dev/null; then
-    blog "载荷写回失败，回退原载荷: $_src"
-    rm -rf "$_tmp" 2>/dev/null
-    return 1
-  fi
-  chmod 0644 "$_src" 2>/dev/null
-  rm -rf "$_tmp" 2>/dev/null
-  echo "fv=$_v" > "$BAT_STATE/fv_force.applied" 2>/dev/null
-  blog "fv_force 生效：$_n 处 vterm -> ${_v}（$(basename "$_src")）"
-  return 0
-}
-
-# 配置变更后立即同步一次（App 下发 volt fv/force 时调用，不必等守护下一拍）。
-baa_fv_sync_now() {
-  [ "$(cfg_get unlock 1)" = "1" ] && [ "$(cfg_get fv_force 0)" = "1" ] || return 0
-  baa_fv_force_apply >/dev/null 2>&1 && setprop ctl.restart batteryantiaging 2>/dev/null
-  return 0
-}
-
 baa_tgt() {
   _d=$(dev_code)
   _std="/odm/etc/charger/BAA_config_$_d.json"
@@ -188,7 +127,6 @@ baa_state() {
 # 必须在 PID1 mount namespace 执行；xjctl.sh 在 battery 命令入口会 re-exec 到 PID1。
 baa_mount() {
   baa_refresh_src >/dev/null 2>&1
-  baa_fv_force_apply >/dev/null 2>&1
   _src=$(baa_src)
   _tgt=$(baa_tgt)
   if [ ! -f "$_src" ]; then
@@ -397,9 +335,8 @@ battery_restore() {
   _sf=/sys/class/xm_power/charger/smart_charge/smart_fv
   if [ -e "$_sf" ]; then
     _def=$(cat "$BAT_STATE/fv_default" 2>/dev/null)
-    case "$_def" in ''|0|*[!0-9]*) _def=$(cfg_get fv_v "") ;; esac
     case "$_def" in
-      ''|0|*[!0-9]*) blog "restore: 无有效 smart_fv 原值，保持系统自管" ;;
+      ''|0|*[!0-9]*) blog "restore: 无 smart_fv 原值快照，保持系统自管" ;;
       *)
         chmod 0664 "$_sf" 2>/dev/null
         echo "$_def" > "$_sf" 2>/dev/null

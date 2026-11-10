@@ -3,6 +3,37 @@
   "note": "版本历史。fixed_in 落在哪个版本，就登记在该版本下；未发布的版本统一标「未发布」。",
   "history": [
     {
+      "version": "3.1.52（362，未发布）",
+      "date": "2026-11-10",
+      "changes": [
+        {
+          "id": "bug-123",
+          "title": "修守护进程起不来（部分机型 toybox flock 不支持 fd 形式 → 改用 mkdir 原子锁 + pid 校验）",
+          "status": "已修待复测"
+        },
+        {
+          "id": "bug-124",
+          "title": "boot.sh 启动只等 2 秒就删 pidfile 导致看护永久误判 lost；改 15 秒轮询且不误删",
+          "status": "已修待复测"
+        },
+        {
+          "id": "feat-007",
+          "title": "移除「修改满电电压」功能（fv_v/强制覆盖），保留关机电压",
+          "status": "已修待复测"
+        },
+        {
+          "id": "feat-008",
+          "title": "DTBO 刷入改为自动识别镜像（local.img 优先/内置机型镜像）+ 风险提示",
+          "status": "已修待复测"
+        },
+        {
+          "id": "feat-009",
+          "title": "安装时清理旧数据目录 /data/adb/HyperOS_XJ 与 fv 残留配置",
+          "status": "已修待复测"
+        }
+      ]
+    },
+    {
       "version": "3.1.51（361，未发布）",
       "date": "2026-11-10",
       "changes": [

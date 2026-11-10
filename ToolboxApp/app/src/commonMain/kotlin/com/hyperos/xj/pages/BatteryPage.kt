@@ -32,6 +32,7 @@ import com.hyperos.xj.runtime.DeviceStatus
 import com.hyperos.xj.runtime.Engine
 import com.hyperos.xj.runtime.ToolboxRuntimeBridge
 import com.hyperos.xj.runtime.pickDirectoryPath
+import com.hyperos.xj.runtime.parseKv
 import com.hyperos.xj.ui.ActionButton
 import com.hyperos.xj.ui.GlassCard
 import com.hyperos.xj.ui.GlassInput
@@ -60,7 +61,12 @@ fun BatteryPage(
     var apl by remember { mutableStateOf(status.aplEnable) }
     var dtboStatus by remember { mutableStateOf("读取中") }
     var dtboStatusDetail by remember { mutableStateOf("") }
+    // 空 = 用自动识别结果（local.img 优先，其次内置机型镜像）；非空 = 镜像库里手动选的那个
     var dtboImg by remember { mutableStateOf("") }
+    var dtboAutoImg by remember { mutableStateOf("") }
+    var dtboAutoSource by remember { mutableStateOf("") }
+    var dtboAutoSize by remember { mutableStateOf(0L) }
+    var dtboHint by remember { mutableStateOf("") }
     var dtboBusy by remember { mutableStateOf(false) }
     var showDtboConfirm by remember { mutableStateOf(false) }
     var dtboDir by remember { mutableStateOf("") }
@@ -69,10 +75,7 @@ fun BatteryPage(
     var dtboHasLocal by remember { mutableStateOf(false) }
     var dtboLibraryMsg by remember { mutableStateOf("") }
     var showLocalConfirm by remember { mutableStateOf(false) }
-    var showVoltForceConfirm by remember { mutableStateOf(false) }
     var cycleTarget by remember { mutableStateOf(status.cycleFake) }
-    var fullVoltage by remember { mutableStateOf(status.fvV) }
-    var forceLimit by remember { mutableStateOf(status.fvForce) }
     var shutdownVoltage by remember { mutableStateOf(status.termV) }
     var loaded by remember { mutableStateOf(false) }
 
@@ -113,9 +116,32 @@ fun BatteryPage(
         }
     }
 
-    fun dtboFlashTarget(): String {
-        val img = dtboImg.trim()
-        return if (img.contains('/')) img else "${Engine.MODULE_DIR}/battery/dtbo/$img"
+    fun dtboTargetPath(): String = dtboImg.trim().ifEmpty { dtboAutoImg }
+
+    fun dtboTargetName(): String =
+        dtboTargetPath().substringAfterLast('/').ifBlank { "未识别到镜像" }
+
+    fun dtboSizeText(bytes: Long): String = when {
+        bytes >= 1_048_576 -> "${tenthOf(bytes, 1_048_576)} MB"
+        bytes >= 1_024 -> "${bytes / 1_024} KB"
+        else -> "$bytes B"
+    }
+
+    fun dtboTargetSource(): String = when {
+        dtboImg.isNotBlank() -> "镜像库所选"
+        dtboAutoSource == "local" -> "已下载"
+        dtboAutoSource == "builtin" -> "模块内置"
+        else -> ""
+    }
+
+    fun refreshDtboResolve() {
+        scope.launch {
+            val kv = parseKv(bridge.exec(Engine.dtboResolve()))
+            dtboAutoImg = kv["img"].orEmpty()
+            dtboAutoSource = kv["source"].orEmpty()
+            dtboAutoSize = kv["size"]?.toLongOrNull() ?: 0L
+            dtboHint = kv["hint"].orEmpty()
+        }
     }
 
     fun flashLocal() {
@@ -130,6 +156,7 @@ fun BatteryPage(
         dtboStatusDetail = out
         dtboStatus = out.lineSequence().firstOrNull { it.isNotBlank() }?.take(24) ?: "无输出"
         dtboHasLocal = bridge.exec(Engine.dtboHasLocal()).trim() == "yes"
+        refreshDtboResolve()
         refreshDtboLibrary()
         loaded = true
     }
@@ -165,7 +192,25 @@ fun BatteryPage(
 
             GlassCard(backdrop, Modifier.fillMaxWidth()) {
                 SectionLabel("DTBO")
-                ValueRow("DTBO 刷入", dtboStatus)
+                ValueRow("分区状态", dtboStatus)
+                Spacer(Modifier.height(6.dp))
+                val dtboTarget = dtboTargetPath()
+                BasicText(
+                    text = if (dtboTarget.isBlank()) {
+                        dtboHint.ifBlank { "未找到可用镜像" }
+                    } else {
+                        "自动识别：${dtboTargetName()}（${dtboSizeText(dtboAutoSize)}，${dtboTargetSource()}）"
+                    },
+                    style = TextStyle(
+                        color = if (dtboTarget.isBlank()) XJ.TextSecondary else XJ.TextPrimary,
+                        fontSize = 12.sp
+                    )
+                )
+                Spacer(Modifier.height(4.dp))
+                BasicText(
+                    text = "刷入 DTBO 会改写系统分区，属高风险操作，确认无误再继续。",
+                    style = TextStyle(color = XJ.Danger, fontSize = 11.sp)
+                )
                 if (dtboStatusDetail.isNotBlank()) {
                     Spacer(Modifier.height(6.dp))
                     BasicText(
@@ -173,8 +218,6 @@ fun BatteryPage(
                         style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp)
                     )
                 }
-                Spacer(Modifier.height(8.dp))
-                GlassInput(dtboImg, { dtboImg = it }, "文件名或完整路径，如 haotian.img")
                 Spacer(Modifier.height(8.dp))
                 ActionButton(
                     backdrop,
@@ -191,6 +234,7 @@ fun BatteryPage(
                                 dtboStatusDetail = result.output.ifBlank { if (result.success) "下载指令已结束。" else "下载失败。" }
                                 showToast(if (result.success) "DTBO 下载完成" else "失败：DTBO 下载")
                                 dtboHasLocal = bridge.exec(Engine.dtboHasLocal()).trim() == "yes"
+                                refreshDtboResolve()
                                 dtboBusy = false
                             }
                         }
@@ -200,12 +244,11 @@ fun BatteryPage(
                 Spacer(Modifier.height(8.dp))
                 ActionButton(
                     backdrop,
-                    "确认刷入，重启生效",
+                    "刷入并重启生效",
                     {
-                        val img = dtboImg.trim()
                         when {
                             dtboBusy -> dtboStatusDetail = "上一条刷入指令仍在执行。"
-                            img.isEmpty() -> dtboStatusDetail = "请先填入镜像文件名，或在下方镜像库中选择。"
+                            dtboTargetPath().isBlank() -> dtboStatusDetail = dtboHint.ifBlank { "未找到可用镜像，请先在线下载或到镜像库选择。" }
                             else -> showDtboConfirm = true
                         }
                     },
@@ -216,15 +259,17 @@ fun BatteryPage(
                     Spacer(Modifier.height(10.dp))
                     ConfirmCard(
                         backdrop,
-                        title = "刷入 DTBO 镜像",
-                        detail = "将向当前 DTBO 分区写入 ${dtboFlashTarget()}，错误镜像或错误槽位可能导致设备无法启动，刷入后需重启生效。",
+                        title = "刷入 DTBO 镜像？",
+                        detail = "将向当前 DTBO 分区写入 ${dtboTargetName()}（${dtboSizeText(dtboAutoSize)}）。\n\n风险：DTBO 是系统分区，写入错误镜像或错误槽位可能让设备无法开机（变砖），操作不可撤销。刷入前会自动备份当前分区到 /sdcard/Download/dtbo_backup，刷入后需重启生效。请确认电量充足、重要数据已备份。",
                         confirmText = "确认刷入",
                         onConfirm = {
+                            val dtboFlashImg = dtboTargetPath()
+                            val dtboViaLocal = dtboImg.isBlank() && dtboAutoSource == "local"
                             showDtboConfirm = false
                             dtboBusy = true
                             dtboStatus = "刷入中…"
                             scope.launch {
-                                val result = bridge.execResult(Engine.dtboFlash(dtboImg.trim()))
+                                val result = bridge.execResult(if (dtboViaLocal) Engine.dtboFlashLocal() else Engine.dtboFlash(dtboFlashImg))
                                 dtboStatusDetail = result.output
                                 dtboStatus = result.output.lineSequence().firstOrNull { it.isNotBlank() }?.take(24) ?: "已下发，重启生效"
                                 showToast(if (result.success) "DTBO 已刷入，重启生效" else "失败：DTBO 刷入")
@@ -331,7 +376,7 @@ fun BatteryPage(
                         Row(
                             Modifier
                                 .fillMaxWidth()
-                                .clickable { dtboImg = img.path }
+                                .clickable { dtboImg = if (dtboImg == img.path) "" else img.path }
                                 .padding(vertical = 4.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
@@ -352,7 +397,7 @@ fun BatteryPage(
                             }
                             if (dtboImg == img.path) {
                                 BasicText(
-                                    text = "已选择",
+                                    text = "已选（再点取消）",
                                     style = TextStyle(color = accent, fontSize = 12.sp)
                                 )
                             }
@@ -385,7 +430,7 @@ fun BatteryPage(
                     ConfirmCard(
                         backdrop,
                         title = "刷入本地镜像",
-                        detail = "将向当前 DTBO 分区写入模块内置镜像 ${Engine.MODULE_DIR}/battery/dtbo/local.img，错误镜像或错误槽位可能导致设备无法启动，刷入后需重启生效。",
+                        detail = "将向当前 DTBO 分区写入模块内置镜像 local.img。\n\n风险：DTBO 是系统分区，写入错误镜像或错误槽位可能让设备无法开机（变砖）。刷入前会自动备份当前分区，刷入后需重启生效。",
                         confirmText = "确认刷入",
                         onConfirm = {
                             showLocalConfirm = false
@@ -429,73 +474,29 @@ fun BatteryPage(
             }
 
             GlassCard(backdrop, Modifier.fillMaxWidth()) {
-                SectionLabel("电池电压")
-                ValueRow("满电电压", "4300~4700 mV · ${status.fvV.ifBlank { "未设置" }}")
-                GlassInput(fullVoltage, { fullVoltage = it }, "输入满电电压 mV", numeric = true)
-                Spacer(Modifier.height(8.dp))
-                ToggleLine(
-                    backdrop,
-                    "强制覆盖原厂上限",
-                    "目标值超过原厂上限时开启",
-                    forceLimit,
-                    onCheckedChange = {
-                        if (it) {
-                            showVoltForceConfirm = true
-                        } else {
-                            forceLimit = false
-                            scope.launch {
-                                val result = bridge.execResult(Engine.batteryRaw("volt", "force", "off"))
-                                showToast(if (result.success) "强制覆盖已关闭" else "失败：关闭强制覆盖")
-                            }
-                        }
-                    }
-                )
-                if (showVoltForceConfirm) {
-                    Spacer(Modifier.height(6.dp))
-                    ConfirmCard(
-                        backdrop,
-                        title = "改写电池满电电压上限",
-                        detail = "将强制覆盖原厂满电电压上限，可能加速电池老化或绕过硬件保护，存在硬件风险。确认后下发 volt force on，再通过「应用电压」写入目标值。",
-                        confirmText = "确认开启",
-                        onConfirm = {
-                            showVoltForceConfirm = false
-                            forceLimit = true
-                            scope.launch {
-                                val result = bridge.execResult(Engine.batteryRaw("volt", "force", "on"))
-                                showToast(if (result.success) "强制覆盖已开启" else "失败：开启强制覆盖")
-                            }
-                        },
-                        onDismiss = { showVoltForceConfirm = false }
-                    )
-                }
+                SectionLabel("关机电压")
                 ValueRow("关机电压", "2800~3500 mV · ${status.termV.ifBlank { "未设置" }}")
                 GlassInput(shutdownVoltage, { shutdownVoltage = it }, "输入关机电压 mV", numeric = true)
                 Spacer(Modifier.height(10.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     ActionButton(
                         backdrop,
-                        "应用电压",
+                        "应用关机电压",
                         {
                             scope.launch {
-                                bridge.exec(Engine.batteryRaw("volt", "force", if (forceLimit) "on" else "off"))
-                                val fv = bridge.execResult(Engine.batteryRaw("volt", "fv", fullVoltage))
-                                if (fv.success) {
-                                    val term = bridge.execResult(Engine.batteryRaw("volt", "term", shutdownVoltage))
-                                    showToast(if (term.success) "电压已应用" else "失败：关机电压写入")
-                                } else {
-                                    showToast("失败：满电电压写入")
-                                }
+                                val term = bridge.execResult(Engine.batteryRaw("volt", "term", shutdownVoltage))
+                                showToast(if (term.success) "关机电压已应用" else "失败：关机电压写入")
                             }
                         },
                         Modifier.weight(1f)
                     )
                     ActionButton(
                         backdrop,
-                        "关闭电压",
+                        "关闭",
                         {
                             scope.launch {
                                 val result = bridge.execResult(Engine.batteryRaw("volt", "off"))
-                                showToast(if (result.success) "电压设置已关闭" else "失败：关闭电压")
+                                showToast(if (result.success) "关机电压已关闭" else "失败：关闭")
                             }
                         },
                         Modifier.weight(1f),
@@ -504,7 +505,7 @@ fun BatteryPage(
                 }
                 Spacer(Modifier.height(8.dp))
                 BasicText(
-                    text = "风险提示：电池老化 / 硬件保护 / 生效条件 / 还原说明。",
+                    text = "放电中电压 ≤ 该值时执行软关机（OS4 新平台无可写内核关机节点）。",
                     style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp)
                 )
             }

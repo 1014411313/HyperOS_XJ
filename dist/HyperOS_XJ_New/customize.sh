@@ -67,6 +67,20 @@ if [ -n "$_dev" ] && [ -f "$DATA_DIR/battery/settings.conf" ] && ! grep -q '^dev
     echo "dev_code=$_dev" >> "$DATA_DIR/battery/settings.conf" 2>/dev/null
 fi
 
+# 「修改满电电压」功能已移除：清掉旧配置键与运行时残留，避免遗留值继续误导（也避免超上限值）。
+if [ -f "$DATA_DIR/battery/settings.conf" ] && grep -qE '^(fv_v|fv_force)=' "$DATA_DIR/battery/settings.conf" 2>/dev/null; then
+    sed -i '/^fv_v=/d; /^fv_force=/d' "$DATA_DIR/battery/settings.conf" 2>/dev/null
+    print " - 已清理旧配置键 fv_v / fv_force"
+fi
+rm -rf "$DATA_DIR/battery/state/fv_force.applied" "$DATA_DIR/battery/state/fv_force.tmp" \
+       "$DATA_DIR/battery/state/fv_force_backup" 2>/dev/null
+
+# 旧数据根 /data/adb/HyperOS_XJ 与旧版引擎路径混在一起（旧 daemon 会持续报路径不存在）；
+# 数据已在 rezhale_toolbox 下，这里清掉旧运行目录（_backup/_data 历史备份保留）。
+if [ -d "$DATA_DIR" ] && [ -d /data/adb/HyperOS_XJ ]; then
+    rm -rf /data/adb/HyperOS_XJ 2>/dev/null && print " - 已清理旧数据目录（/data/adb/HyperOS_XJ）"
+fi
+
 _plat=$(getprop ro.board.platform 2>/dev/null)
 [ -n "$_plat" ] || _plat=$(getprop ro.hardware 2>/dev/null)
 case "$_plat" in

@@ -38,9 +38,7 @@ data class DeviceStatus(
     val cloudGuard: Boolean = true,
     val aplEnable: Boolean = false,
     val cycleFake: String = "",
-    val fvV: String = "",
     val termV: String = "",
-    val fvForce: Boolean = false,
     val bypassManual: Boolean = false,
     val rearScreen: Boolean = false,
     val rearScreenSupported: Boolean = true,
@@ -144,6 +142,8 @@ object Engine {
     fun dtboDirs(): String = build("dtbo", "dirs")
 
     fun dtboHasLocal(): String = build("dtbo", "haslocal")
+
+    fun dtboResolve(): String = build("dtbo", "resolve")
 
     fun dtboFlashLocal(): String = build("dtbo", "flashlocal")
 

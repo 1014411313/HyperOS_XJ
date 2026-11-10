@@ -29,11 +29,11 @@ usage() {
   detect                 重扫详情节点
   power get|set <档位>|status|restore
   thermal get|set <档位>|gov on|off|status
-  battery unlock|pps|cloud <on|off|status>|apl <on|off|status>|cycle <N|clear|get>|volt <fv|term|force|off> <值>|restore|status
+  battery unlock|pps|cloud <on|off|status>|apl <on|off|status>|cycle <N|clear|get>|volt <term|off> <值>|restore|status
   setting get <键>|set <键> <值>|dump
   bypass on|off|status
   rear on|off|set key=value...|status
-  dtbo status|backup [目录]|flash <镜像>|flashlocal|haslocal
+  dtbo status|backup [目录]|resolve|flash <镜像>|flashlocal|haslocal
   dtbo list|dirs|adddir <绝对目录>|deldir <绝对目录>
   log [行数]             查看最近日志（默认 200 行）
   diag pack              打包日志与脱敏配置到 /sdcard/Download/
@@ -57,9 +57,7 @@ status_json() {
   js_line cloud_guard "$(cfg_get cloud_guard 1)" str >> "$_tmp"
   js_line apl_enable "$(cfg_get apl_enable 0)" str >> "$_tmp"
   js_line cycle_fake "$(cfg_get cycle_fake "")" str >> "$_tmp"
-  js_line fv_v "$(cfg_get fv_v "")" str >> "$_tmp"
   js_line term_v "$(cfg_get term_v "")" str >> "$_tmp"
-  js_line fv_force "$(cfg_get fv_force 0)" str >> "$_tmp"
   js_line bypass_manual "$([ -f "$CONFDIR/bypass_manual" ] && echo 1 || echo 0)" str >> "$_tmp"
   js_line rearscreen "$(cfg_get rearscreen 0)" str >> "$_tmp"
   js_line rearscreen_supported "$(pm path com.xiaomi.subscreencenter >/dev/null 2>&1 && echo 1 || echo 0)" str >> "$_tmp"
@@ -165,11 +163,9 @@ case "$1" in
         esac ;;
       volt)
         case "$3" in
-          fv) cfg_set fv_v "$4"; baa_fv_sync_now ;;
           term) cfg_set term_v "$4" ;;
-          force) cfg_set fv_force "$([ "$4" = "on" ] && echo 1 || echo 0)"; baa_fv_sync_now ;;
-          off) cfg_set fv_v ""; cfg_set term_v "" ;;
-          *) echo "fv_v=$(cfg_get fv_v "") term_v=$(cfg_get term_v "") fv_force=$(cfg_get fv_force 0)" ;;
+          off) cfg_set term_v "" ;;
+          *) echo "term_v=$(cfg_get term_v "")" ;;
         esac ;;
       status)
         echo "unlock=$(cfg_get unlock 1)"
@@ -179,9 +175,7 @@ case "$1" in
         echo "cloud_guard=$(cfg_get cloud_guard 1)"
         echo "apl_enable=$(cfg_get apl_enable 0)"
         echo "cycle_fake=$(cfg_get cycle_fake "")"
-        echo "fv_v=$(cfg_get fv_v "")"
         echo "term_v=$(cfg_get term_v "")"
-        echo "fv_force=$(cfg_get fv_force 0)"
         echo "power_limit=$(cfg_get power_limit inf)"
         ;;
       *) usage; exit 9 ;;
@@ -273,6 +267,7 @@ case "$1" in
       flashlocal) dtbo_flashlocal; exit $? ;;
       download)   dtbo_download; exit $? ;;
       haslocal)   dtbo_haslocal; exit $? ;;
+      resolve)    dtbo_resolve; exit $? ;;
       list)   dtbo_scan_list; exit $? ;;
       dirs)   dtbo_dirs_show; exit $? ;;
       adddir) dtbo_dirs_add "$3"; exit $? ;;

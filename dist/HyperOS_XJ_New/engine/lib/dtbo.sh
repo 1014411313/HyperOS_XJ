@@ -212,6 +212,42 @@ dtbo_haslocal() {
   [ -f "$(dtbo_local_img)" ] && echo yes || echo no
 }
 
+# 自动识别当前该刷的镜像：优先已下载的 local.img，其次模块内置的 <机型>.img。
+# 输出 KV；img 为空表示无可用镜像，hint 给用户可操作的下一步。
+# 过小的文件（疑似错误页/空文件）一律不当作可用镜像。
+dtbo_resolve() {
+  _dc=$(dev_code)
+  for _cand in "$(dtbo_local_img)|local" "$DTBO_DIR/$_dc.img|builtin"; do
+    _p=${_cand%%|*}
+    _src=${_cand##*|}
+    [ "$_src" = "builtin" ] && [ "$_dc" = "unknown" ] && continue
+    [ -f "$_p" ] || continue
+    _sz=$(stat -c %s "$_p" 2>/dev/null)
+    case "$_sz" in ''|*[!0-9]*) _sz=0 ;; esac
+    [ "$_sz" -ge 32768 ] || continue
+    echo "img=$_p"
+    echo "name=$(basename "$_p")"
+    echo "size=$_sz"
+    echo "source=$_src"
+    if [ "$_src" = "local" ]; then
+      echo "hint=已下载到模块的镜像（local.img）"
+    else
+      echo "hint=模块内置的当前机型镜像"
+    fi
+    return 0
+  done
+  echo "img="
+  echo "name="
+  echo "size=0"
+  echo "source=none"
+  if [ "$_dc" = "unknown" ]; then
+    echo "hint=机型未识别且无 local.img；请先放 local.img 或到镜像库选一个 .img"
+  else
+    echo "hint=未找到内置 $_dc.img 与 local.img；请先点「在线下载当前手机 DTBO」"
+  fi
+  return 1
+}
+
 dtbo_flashlocal() {
   _f=$(dtbo_local_img)
   [ -f "$_f" ] || { echo "已拒绝: 本地镜像不存在 -> $_f（请先下载或放入）"; return 2; }
