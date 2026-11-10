@@ -5,5 +5,7 @@
   "url": "",
   "notes": "解容载荷格式探测；smart_fv 充电感知；卸载还原；诊断包附图",
   "download": "https://github.com/1014411313/HyperOS_XJ/releases/download/v3.1.51/rezhale_toolbox_v3.1.51.zip",
-  "release": "https://github.com/1014411313/HyperOS_XJ/releases/tag/v3.1.51"
+  "download_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/download/v3.1.51/rezhale_toolbox_v3.1.51.zip",
+  "release": "https://github.com/1014411313/HyperOS_XJ/releases/tag/v3.1.51",
+  "release_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/tag/v3.1.51"
 }
