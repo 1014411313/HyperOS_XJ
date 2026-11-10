@@ -1,11 +1,11 @@
 {
-  "version": "3.1.51",
-  "versionCode": 361,
+  "version": "3.1.52",
+  "versionCode": 362,
   "date": "2026-11-10",
   "url": "",
-  "notes": "解容载荷格式探测；smart_fv 充电感知；卸载还原；诊断包附图",
-  "download": "https://github.com/1014411313/HyperOS_XJ/releases/download/v3.1.51/rezhale_toolbox_v3.1.51.zip",
-  "download_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/download/v3.1.51/rezhale_toolbox_v3.1.51.zip",
-  "release": "https://github.com/1014411313/HyperOS_XJ/releases/tag/v3.1.51",
-  "release_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/tag/v3.1.51"
+  "notes": "修守护进程起不来（flock 兼容）；移除满电电压功能；DTBO 自动识别",
+  "download": "https://github.com/1014411313/HyperOS_XJ/releases/download/v3.1.52/rezhale_toolbox_v3.1.52.zip",
+  "download_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/download/v3.1.52/rezhale_toolbox_v3.1.52.zip",
+  "release": "https://github.com/1014411313/HyperOS_XJ/releases/tag/v3.1.52",
+  "release_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/tag/v3.1.52"
 }
