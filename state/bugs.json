@@ -1,25 +1,9 @@
 {
   "project": "MiWKJR / HyperOS_XJ",
-  "module_version": "3.1.17 (327，未发布)",
+  "module_version": "3.1.54（364，已发布）",
   "device": "haotian / Xiaomi 15 Pro / Android 17",
   "note": "唯一台账。收到反馈只记录不动代码；用户明确说「修复」后才按 fix_plan 逐条改。",
-  "collecting": [
-    {
-      "id": "bug-021",
-      "title": "待验证：LSPosed 是否启用本模块及 scope",
-      "reported": "2026-11-08",
-      "type": "bug",
-      "version_seen": "3.1.0 (310)",
-      "device": "haotian",
-      "status": "待修",
-      "evidence": "LSPosed modules 日志无 'XJRear' 输出；但本机无 subscreencenter 进程，无法据此判断模块是否启用",
-      "root_cause": "无背屏硬件，hook 无从触发，无法静态确认启用状态",
-      "fix_plan": "在有背屏机型或先确认 LSPosed 模块启用+scope=com.xiaomi.subscreencenter 后验证 RearHook 与 SubScreenCenterApp 类名",
-      "affected": [
-        "ToolboxApp/androidApp/src/main/java/com/hyperos/xj/rear/RearHook.java:41"
-      ]
-    }
-  ],
+  "collecting": [],
   "fixed": [
     {
       "id": "bug-068",
@@ -2094,6 +2078,25 @@
       "affected": [
         "engine/lib/diag.sh"
       ]
+    },
+    {
+      "id": "bug-021",
+      "title": "待验证：LSPosed 是否启用本模块及 scope",
+      "reported": "2026-11-08",
+      "type": "bug",
+      "version_seen": "3.1.0 (310)",
+      "device": "haotian",
+      "status": "已验证",
+      "evidence": "LSPosed modules 日志无 'XJRear' 输出；但本机无 subscreencenter 进程，无法据此判断模块是否启用",
+      "root_cause": "无背屏硬件，hook 无从触发，无法静态确认启用状态",
+      "fix_plan": "在有背屏机型或先确认 LSPosed 模块启用+scope=com.xiaomi.subscreencenter 后验证 RearHook 与 SubScreenCenterApp 类名",
+      "affected": [
+        "ToolboxApp/androidApp/src/main/java/com/hyperos/xj/rear/RearHook.java:41"
+      ],
+      "fixed_in": "3.1.54（364，已发布）",
+      "verified_at": "2026-11-11",
+      "verified_by": "用户确认「背屏相关已真机验证可用」",
+      "resolution": "背屏链路在真机验证通过：LSPosed 加载本模块且 scope=com.xiaomi.subscreencenter 生效，RearHook 与 SubScreenCenterApp 类名匹配，背屏叠加与字段显示可用"
     }
   ],
   "cancelled": [
