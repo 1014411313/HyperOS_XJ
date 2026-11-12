@@ -1,11 +1,11 @@
 {
-  "version": "3.1.56",
-  "versionCode": 366,
+  "version": "3.1.57",
+  "versionCode": 367,
   "date": "2026-11-12",
   "url": "",
-  "notes": "诊断包上传改为国内直连 Gitee 私有收包仓库，Cloudflare 中转降为兜底；修复国内网络下上传失败的问题",
-  "download": "https://github.com/1014411313/HyperOS_XJ/releases/download/v3.1.56/rezhale_toolbox_v3.1.56.zip",
-  "download_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/download/v3.1.56/rezhale_toolbox_v3.1.56.zip",
-  "release": "https://github.com/1014411313/HyperOS_XJ/releases/tag/v3.1.56",
-  "release_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/tag/v3.1.56"
+  "notes": "诊断数据只保留最近 1 天：日志与采样按时间裁剪、本地诊断包超期删除，每天自动清一次；采样上限提到 4MiB 以容纳一整天，诊断包内含完整一天的采集",
+  "download": "https://github.com/1014411313/HyperOS_XJ/releases/download/v3.1.57/rezhale_toolbox_v3.1.57.zip",
+  "download_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/download/v3.1.57/rezhale_toolbox_v3.1.57.zip",
+  "release": "https://github.com/1014411313/HyperOS_XJ/releases/tag/v3.1.57",
+  "release_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/tag/v3.1.57"
 }

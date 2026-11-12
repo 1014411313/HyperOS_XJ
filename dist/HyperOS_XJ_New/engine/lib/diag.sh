@@ -165,10 +165,10 @@ diag_pack() {
   done
 
   # ---- charge_session.txt：从常驻采样日志提炼最近充电会话 ----
-  # 采样列（diag_log.sh）：soc cur_uA volt_uV temp_0.1C power_uW charging wired_chg_curr mode applied power_sig
-  # 只看最近 6000 行，避开历史数据；charging 为 1 的段即为充电会话。
+  # 采样列（diag_log.sh）：soc cur_uA volt_uV temp_0.1C power_uW charging wired_chg_curr charger_v_uV usb_cur_uA charger_pmax mode applied power_sig
+  # 保留窗口：采样日志本身只留最近 1 天（retention.sh），这里取全量即可覆盖一天。
   if [ -s "$LOGDIR/diag_samples.log" ]; then
-    tail -n 6000 "$LOGDIR/diag_samples.log" 2>/dev/null | awk '
+    tail -n 40000 "$LOGDIR/diag_samples.log" 2>/dev/null | awk '
       /^# [0-9]/ { ts = substr($0, 3); next }
       /^#/ { next }
       NF >= 10 {

@@ -11,6 +11,7 @@ DIR=$(cd "$(dirname "$0")" && pwd)
 . "$DIR/lib/battery.sh"
 . "$DIR/lib/apl.sh"
 . "$DIR/lib/diag_log.sh"
+. "$DIR/lib/retention.sh"
 
 # 电池子系统（BAA/PSS/fv/cycle/volt/cloud/APL）存在时，其守护负责这些节点；
 # 引擎只保留功率/温控/背屏，避免两边同时写 cycle/fv/term/pd_verifed。
@@ -219,6 +220,9 @@ run_tick() {
 
   hyperos_keepalive
   sample
+
+  # 诊断数据保留：只留最近 1 天，每天清一次（函数内自查时间戳，未到期直接返回）。
+  [ $((TICK_N % 60)) = 1 ] && retention_tick
 
   # 云控屏蔽：云端下发目录巡检隔离，约每 20 拍（1 分钟）一次。
   [ $((TICK_N % 20)) = 1 ] && cloud_tick

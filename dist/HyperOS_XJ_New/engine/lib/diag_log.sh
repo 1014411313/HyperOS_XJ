@@ -3,14 +3,15 @@
 # 参照 v3.12.9 diag_log.sh 的采样思路，但改为守护内嵌：每拍累积一行轻量采样到内存
 # 缓冲，满 DIAG_BUF_MAX 行或距上次落盘 ≥ DIAG_FLUSH_SEC 秒时整段落盘。
 # 采样只读 sample() 已有的全局变量 + 一个功率节点，不 fork dumpsys。
-# 超过 DIAG_MAX_BYTES 截尾保留末尾（tail -c），防止日志无限增长占满 DATA 分区。
+# 超过 DIAG_MAX_BYTES 截尾保留末尾（tail -c），防止日志无限增长占满 DATA 分区；
+# 按「只留最近 1 天」的裁剪由 lib/retention.sh 每天执行一次。
 
 DIAG_LOG="$LOGDIR/diag_samples.log"
 DIAG_NODE_WIRED_CURR=/sys/class/xm_power/charger/charger_thermal/wired_chg_curr
 DIAG_BUF_MAX=60          # 缓冲行数上限（3s/拍约 3 分钟、充电 1s/拍约 1 分钟必落一次）
 DIAG_FLUSH_SEC=30        # 两次落盘的最小间隔（秒）
-DIAG_MAX_BYTES=$((1024 * 1024))   # 体积上限
-DIAG_TAIL_BYTES=$((512 * 1024))   # 截尾后保留的末尾字节数
+DIAG_MAX_BYTES=$((4 * 1024 * 1024))   # 体积上限（约容纳 1 天采样；按天裁剪由 retention.sh 负责）
+DIAG_TAIL_BYTES=$((2 * 1024 * 1024))  # 截尾后保留的末尾字节数
 
 DIAG_BUF=""
 DIAG_BUF_N=0
