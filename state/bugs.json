@@ -12,9 +12,8 @@
       "version_seen": "3.1.54（364，已发布）",
       "device": "annibale / REDMI K90",
       "status": "待复测",
-      "evidence": "诊断包 2026-11-12 10:30:01 采集时为 Discharging（usb.present=0），无充电态数据；同包 module.prop 为 198 字节全 NUL，settings.conf 的 cycle_fake= 与 term_v= 为空值；日志 2026-11-10 17:45:06 有 fv_force=1 但 fv_v 非法（），回退原载荷",
-      "root_cause": "未定。已排除 BAA：annibale 载荷为提速（FFC mA_h 17600→24000、temp-max 48→58、vterm 4550→4580）。怀疑 settings.conf 丢失 term_v 导致充电策略参数缺失",
-      "fix_plan": "K90 重装 3.1.54 后插充电器采集诊断包，对比 wired_chg_curr 与 battery.current_now，确认后再定修改点",
+      "evidence": "2026-11-12 新增 3 个诊断包（14:42 84%/35.8℃/4.0A、14:53 93%/25.3℃/1.84A、15:20 Full 100%/0A）：均为高电量瞬间快照，充电器识别正常（PD_PPS、power_max=67/100）、模块目标电流不低（wired_chg_curr 12.4A/17.6A），但无采样曲线可判断降流发生在哪段；同时三个包 module.prop 仍为全 NUL（见 bug-124）。前期包 2026-11-12 10:30:01 采集时为 Discharging（usb.present=0），同样无充电态数据",
+      "fix_plan": "需 3.1.57+ 在低电量（<50%）插枪充电后采集：新采集含全天采样日志（charge_session 有功率峰值与跳变次数）、dmesg_charge（PD/PPS/FFC 协商）与 integrity（配置/载荷 md5），据此定位后再定修改点",
       "affected": []
     },
     {
@@ -24,8 +23,10 @@
       "type": "bug",
       "version_seen": "3.1.54（364，已发布）",
       "device": "annibale / REDMI K90（现象设备）",
-      "status": "待修",
-      "evidence": "K90 诊断包 module.prop 全 NUL（198 字节）、settings.conf 的 cycle_fake= 与 term_v= 空值；本机 haotian 同版本这两项分别为 1 / 3000",
+      "status": "已修待验证",
+      "fixed_in": "3.1.58（368）",
+      "resolution": "thermal.sh 的 module.prop 改写改为「临时文件 + mv」原子替换，并在文件已损坏（缺 id=）时跳过不改写；env.sh 的 cfg_set 同样改为 tmp + mv（原来用 cat 原地覆盖，被中断会截断）。单测：正常文件只改 description 行、全 NUL 文件跳过、无临时文件残留。",
+      "evidence": "K90 三个诊断包（14:42/14:53/15:20）的 module.prop 仍为 198 字节全 NUL；本机 haotian 同版本文件正常。注：settings.conf 的 cycle_fake=/term_v= 空值经核实是用户关闭功能的合法状态（xjctl.sh:274 即写空），不属于损坏",
       "root_cause": "thermal.sh:369 用 sed -i 原地改写模块目录的 module.prop；env.sh:93 cfg_set 用 awk > new && cat new > conf 原地覆盖 settings.conf，均为非原子写入，进程被打断会留下截断或全零文件",
       "fix_plan": "改为 tmp + mv 原子替换；module.prop 改写失败时保留原文件",
       "affected": [

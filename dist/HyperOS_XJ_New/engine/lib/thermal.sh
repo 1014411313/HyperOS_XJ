@@ -366,7 +366,20 @@ update_status() {
   else
     _desc="运行中 ｜ ${_label} ｜ --.-℃"
   fi
-  sed -i "s#^description=.*#description=$_desc#" "$MODDIR/module.prop" 2>/dev/null
+  # 改用「临时文件 + mv」原子替换：sed -i / 原地覆盖在写入被打断时会留下截断或全 NUL 的
+  # module.prop（实测事故：整文件变 0），而 mv 是原子的，要么旧内容要么新内容。
+  # 文件已损坏（缺 id=）时不改写，避免把版本行一并洗掉。
+  _mp="$MODDIR/module.prop"
+  if [ -f "$_mp" ] && grep -q '^id=' "$_mp" 2>/dev/null; then
+    if awk -v d="$_desc" '
+          /^description=/ { print "description=" d; next }
+          { print }
+        ' "$_mp" > "$_mp.new.$$" 2>/dev/null; then
+      mv -f "$_mp.new.$$" "$_mp" 2>/dev/null || rm -f "$_mp.new.$$" 2>/dev/null
+    else
+      rm -f "$_mp.new.$$" 2>/dev/null
+    fi
+  fi
 }
 
 write_status_json() {

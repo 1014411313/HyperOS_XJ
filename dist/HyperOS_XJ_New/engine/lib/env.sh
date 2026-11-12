@@ -103,10 +103,16 @@ cfg_set() {
     # awk 按键前缀（index==1）精确替换，不依赖任何分隔符：值里含 |/ @/ 等任意字符都原样输出。
     # 键值经环境变量传入而非 -v：awk 的 -v 会对值做反斜杠转义解释，ENVIRON 完全字面。
     # 所有同名键行都替换，与 cfg_get 的 tail -n1（读最后一行）语义对齐，顺带自愈历史重复键。
-    _cfg_k="$_k" _cfg_v="$_v" awk '
+    # 原子替换：原来用 cat 原地写回，写入被打断会把 settings.conf 截断（实测事故：键值丢失/文件截尾）。
+    _cfg_tmp="$BT_CONF.tmp.$$"
+    if _cfg_k="$_k" _cfg_v="$_v" awk '
       index($0, ENVIRON["_cfg_k"] "=") == 1 { print ENVIRON["_cfg_k"] "=" ENVIRON["_cfg_v"]; next }
       { print }
-    ' "$BT_CONF" > "$BT_CONF.new" 2>/dev/null && cat "$BT_CONF.new" > "$BT_CONF" && rm -f "$BT_CONF.new"
+    ' "$BT_CONF" > "$_cfg_tmp" 2>/dev/null; then
+      mv -f "$_cfg_tmp" "$BT_CONF" 2>/dev/null || rm -f "$_cfg_tmp" 2>/dev/null
+    else
+      rm -f "$_cfg_tmp" 2>/dev/null
+    fi
   else
     printf '%s=%s\n' "$_k" "$_v" >> "$BT_CONF"
   fi
