@@ -41,6 +41,20 @@ diag_node_line() {
   _sysfs_n=$((_sysfs_n + 1))
 }
 
+# 目录全量采集：遍历目录下所有可读属性文件，统一打上「前缀.属性名」标签。
+# 机型差异靠它兜底：不同机型节点名与目录结构不一，硬编码清单必然漏采。
+# 单值截断 200 字节，避免个别驱动节点输出超长行把包撑大。
+diag_walk_dir() {
+  [ -d "$2" ] || return 0
+  for _wd_f in "$2"/*; do
+    [ -f "$_wd_f" ] || continue
+    _wd_n=${_wd_f##*/}
+    _wd_v=$(timeout 2 head -c 200 "$_wd_f" 2>/dev/null | tr '\n' ' ')
+    echo "$1.$_wd_n = ${_wd_v:-<空>}"
+    _sysfs_n=$((_sysfs_n + 1))
+  done
+}
+
 # log/ 下按修改时间取最近的一个文件。
 diag_recent_log() {
   [ -d "$LOGDIR" ] || return 1
@@ -150,6 +164,42 @@ diag_pack() {
     cp -f "$_f" "$_stage/log/" 2>/dev/null && _n=$((_n + 1))
   done
 
+  # ---- charge_session.txt：从常驻采样日志提炼最近充电会话 ----
+  # 采样列（diag_log.sh）：soc cur_uA volt_uV temp_0.1C power_uW charging wired_chg_curr mode applied power_sig
+  # 只看最近 6000 行，避开历史数据；charging 为 1 的段即为充电会话。
+  if [ -s "$LOGDIR/diag_samples.log" ]; then
+    tail -n 6000 "$LOGDIR/diag_samples.log" 2>/dev/null | awk '
+      /^# [0-9]/ { ts = substr($0, 3); next }
+      /^#/ { next }
+      NF >= 10 {
+        n++
+        p = $5 + 0
+        if ($6 == 1) {
+          cn++
+          if (cfirst == "") cfirst = ts
+          clast = ts
+          if (p > pmax) pmax = p
+          if (pmin == "" || p < pmin) pmin = p
+          if (prev != "" && prevc == 1) {
+            d = p - prev; if (d < 0) d = -d
+            if (d >= 2000000) jumps++
+          }
+        }
+        prev = p; prevc = $6
+      }
+      END {
+        printf "samples=%d charging_samples=%d\n", n + 0, cn + 0
+        printf "charging_first=%s\ncharging_last=%s\n", (cfirst == "" ? "-" : cfirst), (clast == "" ? "-" : clast)
+        printf "power_max_uW=%d power_max_W=%.2f\n", pmax + 0, (pmax + 0) / 1000000
+        printf "power_min_uW=%d power_min_W=%.2f\n", pmin + 0, (pmin + 0) / 1000000
+        printf "jumps_over_2W=%d\n", jumps + 0
+      }
+    ' > "$_stage/charge_session.txt" 2>/dev/null
+  else
+    echo "（无采样日志：需 3.1.54 及以上 daemon，且至少经历一次充电）" > "$_stage/charge_session.txt"
+  fi
+  [ -s "$_stage/charge_session.txt" ] && _cs=ok || _cs=无
+
   _cn=0
   for _f in "$CONFDIR"/*; do
     [ -f "$_f" ] || continue
@@ -227,23 +277,48 @@ diag_pack() {
     echo "== 充电节点 =="
     [ -n "${CHARGE_NODE:-}" ] && diag_node_line "charge_node($CHARGE_NODE)" "$CHARGE_NODE"
     diag_node_line "rt_charge_orig($CONFDIR/rt_charge_orig)" "$CONFDIR/rt_charge_orig"
-    echo "== power_supply/battery =="
-    for _pn in temp current_now voltage_now capacity status health; do
+    echo "== power_supply/battery（关键项，供快速比对）=="
+    for _pn in temp current_now voltage_now capacity status health charge_full charge_full_design cycle_count; do
       diag_node_line "battery.$_pn" "/sys/class/power_supply/battery/$_pn"
     done
-    echo "== power_supply/usb =="
-    for _pn in voltage_max current_max input_power_limit real_type type online present; do
+    echo "== power_supply/usb（关键项）=="
+    for _pn in voltage_now voltage_max current_now current_max input_power_limit real_type type online present; do
       diag_node_line "usb.$_pn" "/sys/class/power_supply/usb/$_pn"
     done
     echo "== 充电器功率 =="
     diag_node_line "charger_common.power_max" "/sys/class/xm_power/charger/charger_common/power_max"
     echo "== qcom-battery（PD 验证/快充类型/认证）=="
-    for _pn in pd_verifed quick_charge_type real_type authentic power_max cid_status; do
+    for _pn in pd_verifed quick_charge_type real_type usb_real_type authentic power_max cid_status soh cycle_count charge_full; do
       diag_node_line "qcom.$_pn" "/sys/class/qcom-battery/$_pn"
     done
     echo "== 充电限流与温控接线 =="
     diag_node_line "wired_chg_curr" "/sys/class/xm_power/charger/charger_thermal/wired_chg_curr"
     diag_node_line "smart_fv" "/sys/class/xm_power/charger/smart_charge/smart_fv"
+    echo "== power_supply 全量（按设备遍历，机型无关）=="
+    for _ps_d in /sys/class/power_supply/*; do
+      [ -d "$_ps_d" ] || continue
+      diag_walk_dir "ps_${_ps_d##*/}" "$_ps_d"
+    done
+    echo "== qcom-battery 全量 =="
+    diag_walk_dir qcom_all /sys/class/qcom-battery
+    echo "== xm_power 全量 =="
+    for _ps_d in /sys/class/xm_power/charger/*; do
+      [ -d "$_ps_d" ] || continue
+      diag_walk_dir "xm_${_ps_d##*/}" "$_ps_d"
+    done
+    echo "== Charging_Adapter 全量 =="
+    for _ps_d in /sys/class/Charging_Adapter/*; do
+      [ -d "$_ps_d" ] || continue
+      diag_walk_dir "adapter_${_ps_d##*/}" "$_ps_d"
+    done
+    echo "== 充电相关 DT 节点（u32）=="
+    for _dt in /proc/device-tree/soc/mca_strategy_quick_charge/div_max_curr \
+               /proc/device-tree/soc/mca_strategy_buckchg_class/ffc_temp_high \
+               /proc/device-tree/soc/mca_strategy_quick_charge/max_vbat; do
+      [ -e "$_dt" ] || continue
+      printf '%s = %s\n' "${_dt#/proc/device-tree/}" "$(od -An -tu4 -N4 "$_dt" 2>/dev/null | tr -d ' \n')"
+      _sysfs_n=$((_sysfs_n + 1))
+    done
     echo "== APL 状态 =="
     diag_node_line "apl_state" "$STATE/apl_state"
     diag_node_line "apl_target_ma" "$STATE/apl_target_ma"
@@ -333,6 +408,64 @@ diag_pack() {
     fi
   fi
 
+  # ---- integrity.txt：关键文件/配置完整性 ----
+  # 排查「文件被写坏」「配置丢值」类问题靠它：module.prop 全 NUL、settings.conf 键值为空都能一眼看到。
+  {
+    echo "== module.prop =="
+    if [ -f "$MODDIR/module.prop" ]; then
+      _mp_bytes=$(stat -c %s "$MODDIR/module.prop" 2>/dev/null)
+      _mp_nul=$((${_mp_bytes:-0} - $(tr -d '\000' < "$MODDIR/module.prop" 2>/dev/null | wc -c)))
+      echo "bytes: ${_mp_bytes:-?}"
+      echo "nul_bytes: ${_mp_nul:-?}"
+      echo "md5: $(md5sum "$MODDIR/module.prop" 2>/dev/null | cut -d' ' -f1)"
+      [ "${_mp_nul:-0}" -gt 0 ] && echo "警告: 文件含 NUL 字节，已被写坏（重装模块可恢复）"
+    else
+      echo "（缺失）"
+    fi
+    echo "== settings.conf 键值（空值显式标注）=="
+    if [ -f "$BT_CONF" ]; then
+      awk '{
+        i = index($0, "=")
+        if (i == 0) { if ($0 != "") printf "%s=<无等号>\n", $0; next }
+        k = substr($0, 1, i - 1); v = substr($0, i + 1)
+        if (v == "") printf "%s=<空值>\n", k
+        else printf "%s=%s\n", k, v
+      }' "$BT_CONF" 2>/dev/null
+    else
+      echo "（缺失）$BT_CONF"
+    fi
+    echo "== 关键运行态文件 =="
+    for _if in "$STATE/daemon.pid" "$STATE/apl_state" "$STATE/apl_target_ma" \
+               "$BT_STATE/power_sig" "$BT_STATE/power_applied" "$BT_STATE/power_orig_curr" \
+               "$BT_STATE/cycle_real" "$BT_STATE/inf_settled" "$BT_STATE/inf_node_capped"; do
+      _if_n=${_if#"$DATA_DIR"/}
+      if [ -e "$_if" ]; then
+        printf '%s = %s\n' "$_if_n" "$(head -c 120 "$_if" 2>/dev/null | tr '\n' ' ')"
+      else
+        printf '%s = <缺失>\n' "$_if_n"
+      fi
+    done
+    echo "== BAA 载荷与挂载目标 =="
+    _baa_src="$MODDIR/battery/baa/payload_BAA_config_$(dev_code 2>/dev/null).json"
+    if [ -f "$_baa_src" ]; then
+      echo "src: $_baa_src"
+      echo "src_bytes: $(stat -c %s "$_baa_src" 2>/dev/null)"
+      echo "src_md5: $(md5sum "$_baa_src" 2>/dev/null | cut -d' ' -f1)"
+    else
+      echo "src: <缺失> $_baa_src"
+    fi
+    _baa_tgt="/odm/etc/charger/BAA_config_$(dev_code 2>/dev/null).json"
+    if [ -f "$_baa_tgt" ]; then
+      echo "target: $_baa_tgt"
+      echo "target_bytes: $(stat -c %s "$_baa_tgt" 2>/dev/null)"
+      echo "target_md5: $(md5sum "$_baa_tgt" 2>/dev/null | cut -d' ' -f1)"
+      echo "target_head: $(head -c 24 "$_baa_tgt" 2>/dev/null)"
+    else
+      echo "target: <不存在> $_baa_tgt"
+    fi
+  } > "$_stage/integrity.txt" 2>/dev/null
+  [ -s "$_stage/integrity.txt" ] && _ig=ok || _ig=失败
+
   # ---- dmesg_tail.txt：内核日志尾 200 行（无权限时如实标注，不报错） ----
   dmesg 2>/dev/null | tail -n 200 > "$_stage/dmesg_tail.txt" 2>/dev/null
   if [ -s "$_stage/dmesg_tail.txt" ]; then
@@ -340,6 +473,17 @@ diag_pack() {
   else
     echo "无权限或无 dmesg 输出" > "$_stage/dmesg_tail.txt" 2>/dev/null
     _dm=无权限
+  fi
+
+  # ---- dmesg_charge.txt：内核日志里的充电/PD 协议片段 ----
+  # 尾部 200 行在部分机型上会被 audit/drm 噪声满，充电异常的关键行被挤掉，这里单独按关键词过滤。
+  dmesg 2>/dev/null | grep -aiE "typec|usbpd|pd_class|apdo|pps|ffc|charg|chg_|battery|mca_|vbus|buck|cp_work" \
+    | tail -n 400 > "$_stage/dmesg_charge.txt" 2>/dev/null
+  if [ -s "$_stage/dmesg_charge.txt" ]; then
+    _dmc=ok
+  else
+    echo "无匹配或无权读取 dmesg" > "$_stage/dmesg_charge.txt" 2>/dev/null
+    _dmc=无匹配
   fi
 
   # ---- problem.txt：用户在 App 里填写的问题描述，随包一起带给作者 ----
@@ -360,7 +504,7 @@ diag_pack() {
     if [ "$_img_n" -gt 0 ]; then diag_clear_problem_images; fi
     echo "大小: ${_sz:-?} 字节   打包: $_how"
     echo "内容: 日志 $_n 个，配置 $_cn 个（settings.json 已脱敏）图片 $_img_n 张（${_img_kb:-0}KB）"
-    echo "采集: state $_sn / battery_state $_bsn / runtime ${_rt} / sysfs ${_sysfs_n} 项 / thermal ${_th} / module ${_mr} / settings ${_sc} / dmesg ${_dm} / procs ${_pr:-n/a}"
+    echo "采集: state $_sn / battery_state $_bsn / runtime ${_rt} / sysfs ${_sysfs_n} 项 / thermal ${_th} / module ${_mr} / settings ${_sc} / integrity ${_ig:-n/a} / session ${_cs:-n/a} / dmesg ${_dm} / dmesg充电 ${_dmc:-n/a} / procs ${_pr:-n/a}"
     return 0
   fi
 
@@ -376,7 +520,7 @@ diag_pack() {
     echo "说明: 设备无 zip 工具，已用 $_how 打包（扩展名 .tar.gz）"
     echo "大小: ${_sz:-?} 字节"
     echo "内容: 日志 $_n 个，配置 $_cn 个（settings.json 已脱敏）图片 $_img_n 张（${_img_kb:-0}KB）"
-    echo "采集: state $_sn / battery_state $_bsn / runtime ${_rt} / sysfs ${_sysfs_n} 项 / thermal ${_th} / module ${_mr} / settings ${_sc} / dmesg ${_dm} / procs ${_pr:-n/a}"
+    echo "采集: state $_sn / battery_state $_bsn / runtime ${_rt} / sysfs ${_sysfs_n} 项 / thermal ${_th} / module ${_mr} / settings ${_sc} / integrity ${_ig:-n/a} / session ${_cs:-n/a} / dmesg ${_dm} / dmesg充电 ${_dmc:-n/a} / procs ${_pr:-n/a}"
     return 0
   fi
 

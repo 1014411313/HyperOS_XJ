@@ -3,6 +3,17 @@
   "note": "版本历史。fixed_in 落在哪个版本，就登记在该版本下；未发布的版本统一标「未发布」。",
   "history": [
     {
+      "version": "3.1.55（365，已发布）",
+      "date": "2026-11-12",
+      "changes": [
+        {"id": "feat-017", "title": "诊断包新增机型无关全量充电节点采集（power_supply / qcom-battery / xm_power / Charging_Adapter / DT 充电节点）", "status": "已本地校验"},
+        {"id": "feat-018", "title": "诊断包新增 dmesg_charge.txt：PD/PPS/FFC/充电泵关键词最近 400 行，不再被 audit/drm 噪声淹没", "status": "已本地校验"},
+        {"id": "feat-019", "title": "诊断包新增 charge_session.txt：最近充电会话的最大/最小功率与跳变次数", "status": "已本地校验"},
+        {"id": "feat-020", "title": "诊断包新增 integrity.txt：module.prop NUL 字节检测、settings.conf 空值标注、BAA 载荷 md5 与挂载目标", "status": "已本地校验"},
+        {"id": "feat-021", "title": "常驻采样新增充电器侧电压/电流/标称功率三列（每 10 拍刷新缓存，不增加每拍 fork）", "status": "已本地校验"}
+      ]
+    },
+    {
       "version": "3.1.54（364，已发布）",
       "date": "2026-11-10",
       "changes": [

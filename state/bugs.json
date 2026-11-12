@@ -3,7 +3,37 @@
   "module_version": "3.1.54（364，已发布）",
   "device": "haotian / Xiaomi 15 Pro / Android 17",
   "note": "唯一台账。收到反馈只记录不动代码；用户明确说「修复」后才按 fix_plan 逐条改。",
-  "collecting": [],
+  "collecting": [
+    {
+      "id": "bug-123",
+      "title": "REDMI K90 充电没有之前快（待充电态复测）",
+      "reported": "2026-11-12",
+      "type": "bug",
+      "version_seen": "3.1.54（364，已发布）",
+      "device": "annibale / REDMI K90",
+      "status": "待复测",
+      "evidence": "诊断包 2026-11-12 10:30:01 采集时为 Discharging（usb.present=0），无充电态数据；同包 module.prop 为 198 字节全 NUL，settings.conf 的 cycle_fake= 与 term_v= 为空值；日志 2026-11-10 17:45:06 有 fv_force=1 但 fv_v 非法（），回退原载荷",
+      "root_cause": "未定。已排除 BAA：annibale 载荷为提速（FFC mA_h 17600→24000、temp-max 48→58、vterm 4550→4580）。怀疑 settings.conf 丢失 term_v 导致充电策略参数缺失",
+      "fix_plan": "K90 重装 3.1.54 后插充电器采集诊断包，对比 wired_chg_curr 与 battery.current_now，确认后再定修改点",
+      "affected": []
+    },
+    {
+      "id": "bug-124",
+      "title": "module.prop 与 settings.conf 非原子写入，被打断即损坏",
+      "reported": "2026-11-12",
+      "type": "bug",
+      "version_seen": "3.1.54（364，已发布）",
+      "device": "annibale / REDMI K90（现象设备）",
+      "status": "待修",
+      "evidence": "K90 诊断包 module.prop 全 NUL（198 字节）、settings.conf 的 cycle_fake= 与 term_v= 空值；本机 haotian 同版本这两项分别为 1 / 3000",
+      "root_cause": "thermal.sh:369 用 sed -i 原地改写模块目录的 module.prop；env.sh:93 cfg_set 用 awk > new && cat new > conf 原地覆盖 settings.conf，均为非原子写入，进程被打断会留下截断或全零文件",
+      "fix_plan": "改为 tmp + mv 原子替换；module.prop 改写失败时保留原文件",
+      "affected": [
+        "engine/lib/thermal.sh:369",
+        "engine/lib/env.sh:93"
+      ]
+    }
+  ],
   "fixed": [
     {
       "id": "bug-068",
