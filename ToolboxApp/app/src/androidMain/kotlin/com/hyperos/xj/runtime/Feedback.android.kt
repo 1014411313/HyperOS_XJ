@@ -6,8 +6,36 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
+import java.text.SimpleDateFormat
+import java.util.Locale
+import javax.crypto.Cipher
+import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 private const val FEEDBACK_REPO = "1014411313/HyperOS_XJ"
+
+// 国内首选通道：直连 Gitee 私有收包仓库（国内可达，不经第三方中转）。
+private const val GITEE_REPO = "xiaomirezhale/xj-feedback"
+private const val GITEE_CONTENTS_API = "https://gitee.com/api/v5/repos/$GITEE_REPO/contents"
+
+// 写入令牌以 AES-128-CBC 密文内置（前 16 字节为 IV），使用时才解密。
+// 说明：客户端加密只提高读取门槛，不能真正防逆向；权限侧靠「令牌只对私有收包仓库可写，可疑即吊销」。
+private const val TOKEN_ENC = "lmpOicj8eSEkIYEW8JG/v4AzXQM9RjxS99EUTyRZdD1bb3nOSKRTu9ciEJP7nZP61O7uUpYCbOsw0ephJ+uA2A=="
+
+// 密钥字节经异或保存，避免明文密钥与密文在产物里成对出现。
+private val KEY_MASK = byteArrayOf(
+    0x28.toByte(), 0x3F.toByte(), 0x20.toByte(), 0x32.toByte(), 0x3B.toByte(), 0x36.toByte(), 0x3F.toByte(), 0x77.toByte(),
+    0x29.toByte(), 0x3F.toByte(), 0x39.toByte(), 0x28.toByte(), 0x3F.toByte(), 0x2E.toByte(), 0x6B.toByte(), 0x6C.toByte(),
+)
+
+private fun builtinToken(): String = runCatching {
+    val raw = android.util.Base64.decode(TOKEN_ENC, android.util.Base64.DEFAULT)
+    if (raw.size <= 16) return@runCatching ""
+    val key = ByteArray(KEY_MASK.size) { (KEY_MASK[it].toInt() xor 0x5A).toByte() }
+    val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+    cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(raw, 0, 16))
+    String(cipher.doFinal(raw, 16, raw.size - 16), Charsets.UTF_8)
+}.getOrDefault("")
 
 // 内置默认中转地址：即使读不到 feedback_endpoint.json（缓存未刷新/网络受限）也能上传
 private const val DEFAULT_ENDPOINT = "https://xj-feedback.1014411313.workers.dev"
@@ -42,11 +70,64 @@ actual suspend fun uploadDiagnosticPackage(
 ): FeedbackUpload = withContext(Dispatchers.IO) {
     val file = resolvePackage(filePath)
     if (!file.isFile) return@withContext FeedbackUpload.Failed("找不到诊断包：$filePath")
+    // 1) 国内直连 Gitee 私有收包仓库
+    val gitee = uploadToGitee(file, note, device)
+    if (gitee is WorkerResult.Ok) return@withContext FeedbackUpload.Ok(gitee.path)
+    // 2) 兑底：Cloudflare 中转 → GitHub（部分网络仍可用）
     val endpoint = feedbackEndpoint()
-        ?: return@withContext FeedbackUpload.Failed("未配置上传地址")
+    if (endpoint == null) return@withContext FeedbackUpload.Failed((gitee as WorkerResult.Fail).reason)
     when (val r = postToWorker(endpoint, file, note, device)) {
         is WorkerResult.Ok -> FeedbackUpload.Ok(r.path)
-        is WorkerResult.Fail -> FeedbackUpload.Failed(r.reason)
+        is WorkerResult.Fail -> FeedbackUpload.Failed("$r; Gitee: ${(gitee as WorkerResult.Fail).reason}")
+    }
+}
+
+/** 直传 Gitee Contents API（国内可达）：先传包体，再传同名的机型/描述 txt。 */
+private fun uploadToGitee(file: File, note: String, device: String): WorkerResult {
+    if (file.length() > MAX_GITEE_BYTES) {
+        return WorkerResult.Fail("包体积 ${file.length() / 1024}KB 超出直传上限")
+    }
+    val token = builtinToken()
+    if (token.isBlank()) return WorkerResult.Fail("内置令牌不可用")
+    val stamp = SimpleDateFormat("yyyy-MM-dd'T'HH-mm-ss-SSS'Z'", Locale.US)
+        .format(java.util.Date())
+    val pkgPath = "feedback/${stamp}_${file.name}"
+    return try {
+        val r1 = giteePutContent(token, pkgPath, file.readBytes())
+        if (r1 is WorkerResult.Fail) return r1
+        val meta = "机型: $device\n上传: $stamp\n\n问题描述:\n${note.ifBlank { "（未填写）" }}\n"
+        val metaPath = pkgPath.substringBeforeLast('.') + ".txt"
+        val r2 = giteePutContent(token, metaPath, meta.toByteArray())
+        if (r2 is WorkerResult.Fail) return r2
+        WorkerResult.Ok(pkgPath)
+    } catch (t: Throwable) {
+        WorkerResult.Fail(t.javaClass.simpleName + " " + (t.message ?: ""))
+    }
+}
+
+private const val MAX_GITEE_BYTES = 8L * 1024 * 1024
+
+private fun giteePutContent(token: String, path: String, bytes: ByteArray): WorkerResult {
+    return try {
+        val payload = "{\"access_token\":\"$token\",\"content\":\"" +
+            android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP) +
+            "\",\"message\":\"feedback: $path\",\"branch\":\"master\"}"
+        val conn = (URL("$GITEE_CONTENTS_API/$path").openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            doOutput = true
+            connectTimeout = 15000
+            readTimeout = 120000
+            setRequestProperty("Content-Type", "application/json;charset=UTF-8")
+        }
+        conn.outputStream.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
+        val code = conn.responseCode
+        val body = (if (code in 200..299) conn.inputStream else conn.errorStream)
+            ?.bufferedReader()?.use { it.readText() }.orEmpty()
+        conn.disconnect()
+        if (code in 200..299) WorkerResult.Ok(path)
+        else WorkerResult.Fail("Gitee HTTP $code ${body.take(120)}")
+    } catch (t: Throwable) {
+        WorkerResult.Fail("Gitee " + t.javaClass.simpleName + " " + (t.message ?: ""))
     }
 }
 

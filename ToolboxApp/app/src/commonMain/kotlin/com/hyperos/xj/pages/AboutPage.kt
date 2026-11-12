@@ -362,8 +362,8 @@ private fun FeedbackPage(
                 failed = true
                 lines = lines + "自动上传不可用（${r.reason}）"
                 lines = lines + ""
-                lines = lines + "先试试开启代理（梯子）后点「重试上传」；"
-                lines = lines + "实在传不出去，再点「分享诊断包」用微信 / QQ 发给作者。"
+                lines = lines + "先点「重试上传」；网络不稳时多试一次通常就好。"
+                lines = lines + "仍传不出去，再点「分享诊断包」用微信 / QQ 发给作者。"
             }
         }
     }

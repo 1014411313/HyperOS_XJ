@@ -13,8 +13,8 @@ sealed interface FeedbackUpload {
 expect suspend fun feedbackEndpoint(): String?
 
 /**
- * 上传诊断包到中转。国内网络下 workers.dev 常被 DNS 污染，失败是常态——
- * 调用方应在失败时引导用户改用「分享诊断包」。
+ * 上传诊断包：国内优先直连 Gitee 私有收包仓库，失败才退回 Cloudflare 中转（→ GitHub）。
+ * 两条都不通时，调用方应引导用户改用「分享诊断包」。
  */
 expect suspend fun uploadDiagnosticPackage(filePath: String, note: String, device: String): FeedbackUpload
 
