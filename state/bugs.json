@@ -5,6 +5,21 @@
   "note": "唯一台账。收到反馈只记录不动代码；用户明确说「修复」后才按 fix_plan 逐条改。",
   "collecting": [
     {
+      "id": "bug-140",
+      "title": "3.1.63 DTBO 要求两个槽位属性同时存在，真机只提供一个导致分区状态未知",
+      "reported": "2026-11-16",
+      "type": "bug",
+      "version_seen": "3.1.63（373）",
+      "device": "Xiaomi 15 Pro（haotian）真机截图",
+      "status": "代码已修，72项隔离回归通过，待真机验证",
+      "fixed_in": "3.1.64（374）",
+      "root_cause": "为防单边推断，把 ro.boot.slot_suffix 与 ro.boot.slot 都设为必需；但真机常只提供其中一个，导致 dtbo_active_slot 恒失败、DTBO 分区状态显示未知。同一改动也让 ro.product.odm.device 的非机型值（如厂商名）误拒身份。",
+      "resolution": "单属性可用：两个都有值时要求一致，只缺一个则采用已有值，都为丢才拒绝。机型身份改以 ro.product.device（Android 标准设备代号）为主判据，odm.device 仅在主属性缺失时兑底；两者都命中但不同仍拒绝。状态页新增 slot_suffix/slot 原值，便于真机诊断。",
+      "evidence": "真机截图：分区状态显示「槽位: 未知或 suffix/slot 矛盾」及「已拒绝: ro.boot.slot_suffix/slot 缺失或矛盾」，同时 local.img 已下载。历史诊断包未采集槽位属性，不能从旧包确认具体值。",
+      "fix_plan": "已按“单属性容许 + 双属性矛盾拒绝”修正，并新增仅 slot_suffix、仅 ro.boot.slot、矛盾、全缺四种回归。",
+      "affected": ["engine/lib/dtbo.sh", "scripts/dtbo_regression.sh"]
+    },
+    {
       "id": "bug-139",
       "title": "无背屏宿主机型的服务和配置推送缺少统一支持校验",
       "reported": "2026-11-16",

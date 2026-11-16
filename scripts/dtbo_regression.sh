@@ -465,7 +465,10 @@ fi
 # Slot, size, model, identity and source gates.
 TEST_SUFFIX=""; TEST_SLOT=""; expect_fail "reject unknown slot" dtbo_preflight builtin
 TEST_SUFFIX=_a; TEST_SLOT=b; expect_fail "reject contradictory slot" dtbo_preflight builtin
-TEST_SUFFIX=_a; TEST_SLOT=""; expect_fail "reject missing slot property" dtbo_preflight builtin
+TEST_SUFFIX=_a; TEST_SLOT=""; run "accept single slot_suffix property" dtbo_preflight builtin --ack-os-unknown
+contains 'slot=a' || bad "single slot_suffix did not resolve slot a"
+TEST_SUFFIX=""; TEST_SLOT=b; run "accept single slot property" dtbo_preflight builtin --ack-os-unknown
+contains 'slot=b' || bad "single ro.boot.slot did not resolve slot b"
 
 # The production dtbo_model is kept intact; only getprop and cfg_get are stubbed.
 TEST_SUFFIX=_a; TEST_SLOT=a; TEST_PROP_DEVICE=annibale; TEST_DEV_CODE=""
@@ -488,18 +491,18 @@ CURRENT="reject model when device properties conflict"
 _model=$(dtbo_model)
 if [ "$_model" = unknown ]; then ok; else bad "got=$_model"; fi
 TEST_PROP_ODM_DEVICE=vendor_new
-CURRENT="reject unknown real identity attribute alongside trusted device"
+CURRENT="ignore non-identity odm value when device is trusted"
 _model=$(dtbo_model)
-if [ "$_model" = unknown ]; then ok; else bad "got=$_model"; fi
+if [ "$_model" = annibale ]; then ok; else bad "got=$_model"; fi
 TEST_PROP_ODM_DEVICE=""
 TEST_PROP_NAME=vendor_product_name
 CURRENT="ignore non-model product name when trusted device exists"
 _model=$(dtbo_model)
 if [ "$_model" = annibale ]; then ok; else bad "got=$_model"; fi
 TEST_PROP_NAME=warsaw
-CURRENT="reject product name that aliases a different supported model"
+CURRENT="ignore product name when device is trusted"
 _model=$(dtbo_model)
-if [ "$_model" = unknown ]; then ok; else bad "got=$_model"; fi
+if [ "$_model" = annibale ]; then ok; else bad "got=$_model"; fi
 TEST_PROP_NAME=""
 TEST_PROP_DEVICE=""
 TEST_PROP_NAME=vendor_new

@@ -34,9 +34,16 @@ dtbo_active_slot() {
   _suffix=$(dtbo_getprop ro.boot.slot_suffix)
   _slot=$(dtbo_getprop ro.boot.slot)
   case "$_suffix" in _a) _a=a ;; _b) _a=b ;; '') _a='' ;; *) return 1 ;; esac
-  case "$_slot" in a) _b=a ;; b) _b=b ;; '') _b='' ;; *) return 1 ;; esac
-  [ -n "$_a" ] && [ -n "$_b" ] && [ "$_a" = "$_b" ] || return 1
-  printf '%s' "$_a"
+  case "$_slot" in a) _b=a ;; b) _b=b ;; '' ) _b='' ;; *) return 1 ;; esac
+  # 真机常见只提供其中一个属性；两个都有时必须一致，只缺一个不算矛盾。
+  if [ -n "$_a" ] && [ -n "$_b" ]; then
+    [ "$_a" = "$_b" ] || return 1
+    printf '%s' "$_a"
+    return 0
+  fi
+  [ -n "$_a" ] && { printf '%s' "$_a"; return 0; }
+  [ -n "$_b" ] && { printf '%s' "$_b"; return 0; }
+  return 1
 }
 
 dtbo_slot_of() {
@@ -232,26 +239,31 @@ EOF
 }
 
 dtbo_model() {
-  local _configured _found _prop _value _name
+  local _configured _device _odm _name _found
   _configured=$(cfg_get dev_code "")
+
+  # ro.product.device 是 Android 标准设备代号，作为主判据；
+  # ro.product.odm.device 只在主属性缺失时兜底，避免厂商名（如 mivendor）误拒。
+  _device=$(dtbo_getprop ro.product.device)
+  _odm=$(dtbo_getprop ro.product.odm.device)
+  _name=$(dtbo_getprop ro.product.name)
+
   _found=""
-  for _prop in ro.product.device ro.product.odm.device; do
-    _value=$(dtbo_getprop "$_prop")
-    [ -n "$_value" ] || continue
-    dtbo_safe_field "$_value" && [ -n "$(dtbo_identity_record "$_value")" ] || { printf '%s' unknown; return 0; }
-    if [ -n "$_found" ] && [ "$_found" != "$_value" ]; then
+  if [ -n "$_device" ]; then
+    dtbo_safe_field "$_device" && [ -n "$(dtbo_identity_record "$_device")" ] || { printf '%s' unknown; return 0; }
+    _found=$_device
+    if [ -n "$_odm" ] && [ -n "$(dtbo_identity_record "$_odm")" ] && [ "$_odm" != "$_found" ]; then
       printf '%s' unknown
       return 0
     fi
-    _found=$_value
-  done
-  _name=$(dtbo_getprop ro.product.name)
-  if [ -n "$_name" ] && [ -n "$(dtbo_identity_record "$_name")" ]; then
-    [ -z "$_found" ] || [ "$_found" = "$_name" ] || { printf '%s' unknown; return 0; }
+  elif [ -n "$_odm" ]; then
+    dtbo_safe_field "$_odm" && [ -n "$(dtbo_identity_record "$_odm")" ] || { printf '%s' unknown; return 0; }
+    _found=$_odm
+  elif [ -n "$_name" ]; then
+    dtbo_safe_field "$_name" && [ -n "$(dtbo_identity_record "$_name")" ] || { printf '%s' unknown; return 0; }
     _found=$_name
-  elif [ -z "$_found" ] && [ -n "$_name" ]; then
-    dtbo_safe_field "$_name" || { printf '%s' unknown; return 0; }
   fi
+
   [ -n "$_found" ] || { printf '%s' unknown; return 0; }
   if [ -n "$_configured" ] && [ "$_configured" != "$_found" ]; then
     printf '%s' unknown
@@ -656,7 +668,10 @@ EOF
 }
 
 dtbo_status() {
-  _slot=$(dtbo_active_slot 2>/dev/null) || { echo "槽位: 未知或 suffix/slot 矛盾"; return 1; }
+  _suffix=$(dtbo_getprop ro.boot.slot_suffix)
+  _raw=$(dtbo_getprop ro.boot.slot)
+  echo "槽位属性: slot_suffix=${_suffix:-空} slot=${_raw:-空}"
+  _slot=$(dtbo_active_slot 2>/dev/null) || { echo "槽位: 无法确认（两个属性都为空或格式非法）"; return 1; }
   _dev=$(dtbo_dev 2>/dev/null) || { echo "DTBO分区: 当前槽 canonical block device 未找到"; return 1; }
   _size=$(dtbo_size "$_dev" 2>/dev/null || true)
   _model=$(dtbo_model)
