@@ -1,11 +1,11 @@
 {
-  "version": "3.1.58",
-  "versionCode": 368,
-  "date": "2026-11-12",
+  "version": "3.1.63",
+  "versionCode": 373,
+  "date": "2026-11-16",
   "url": "",
-  "notes": "修 module.prop 与 settings.conf 的非原子写入：改写被打断会留下全 NUL 或截断文件（多份诊断包实证），现改为临时文件 + 原子替换",
-  "download": "https://github.com/1014411313/HyperOS_XJ/releases/download/v3.1.58/rezhale_toolbox_v3.1.58.zip",
-  "download_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/download/v3.1.58/rezhale_toolbox_v3.1.58.zip",
-  "release": "https://github.com/1014411313/HyperOS_XJ/releases/tag/v3.1.58",
-  "release_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/tag/v3.1.58"
+  "notes": "充电/APL 目标受控下发与保护锁修复；K70 拒绝枚举型充电节点；安装版本身份核对；无背屏与 selfcheck 判据修复；DTBO 身份、确认凭证与备份恢复加固",
+  "download": "https://github.com/1014411313/HyperOS_XJ/releases/download/v3.1.63/rezhale_toolbox_v3.1.63.zip",
+  "download_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/download/v3.1.63/rezhale_toolbox_v3.1.63.zip",
+  "release": "https://github.com/1014411313/HyperOS_XJ/releases/tag/v3.1.63",
+  "release_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/tag/v3.1.63"
 }
