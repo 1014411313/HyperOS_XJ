@@ -69,12 +69,22 @@ fun BatteryPage(
     var dtboHint by remember { mutableStateOf("") }
     var dtboBusy by remember { mutableStateOf(false) }
     var showDtboConfirm by remember { mutableStateOf(false) }
+    var showDtboOsConfirm by remember { mutableStateOf(false) }
+    var showDtboDownloadOsConfirm by remember { mutableStateOf(false) }
+    var showDtboRestoreConfirm by remember { mutableStateOf(false) }
+    var dtboBackups by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
+    var dtboSelectedBackup by remember { mutableStateOf("") }
+    var dtboPendingRestore by remember { mutableStateOf("") }
+    var dtboPendingSource by remember { mutableStateOf("") }
+    var dtboPendingAction by remember { mutableStateOf("flash") }
+    var dtboPendingToken by remember { mutableStateOf("") }
+    var dtboPendingAckOs by remember { mutableStateOf(false) }
+    var dtboPreflightSummary by remember { mutableStateOf("") }
     var dtboDir by remember { mutableStateOf("") }
     var dtboDirs by remember { mutableStateOf<List<String>>(emptyList()) }
     var dtboImages by remember { mutableStateOf<List<DtboImage>>(emptyList()) }
     var dtboHasLocal by remember { mutableStateOf(false) }
     var dtboLibraryMsg by remember { mutableStateOf("") }
-    var showLocalConfirm by remember { mutableStateOf(false) }
     var cycleTarget by remember { mutableStateOf(status.cycleFake) }
     var shutdownVoltage by remember { mutableStateOf(status.termV) }
     var loaded by remember { mutableStateOf(false) }
@@ -121,6 +131,12 @@ fun BatteryPage(
     fun dtboTargetName(): String =
         dtboTargetPath().substringAfterLast('/').ifBlank { "未识别到镜像" }
 
+    fun dtboTargetBytes(): Long = if (dtboImg.isNotBlank()) {
+        dtboImages.firstOrNull { it.path == dtboImg }?.bytes ?: 0L
+    } else {
+        dtboAutoSize
+    }
+
     fun dtboSizeText(bytes: Long): String = when {
         bytes >= 1_048_576 -> "${tenthOf(bytes, 1_048_576)} MB"
         bytes >= 1_024 -> "${bytes / 1_024} KB"
@@ -144,10 +160,135 @@ fun BatteryPage(
         }
     }
 
-    fun flashLocal() {
+    suspend fun refreshDtboBackups() {
+        dtboBackups = bridge.exec(Engine.dtboBackups()).lineSequence().mapNotNull { line ->
+            val parts = line.split('|')
+            if (parts.size == 3 && parts[0].startsWith('/')) parts[0] to parts[1] else null
+        }.toList()
+        if (dtboBackups.none { it.first == dtboSelectedBackup }) dtboSelectedBackup = ""
+    }
+
+    fun dtboActionPending(): Boolean =
+        dtboBusy || showDtboConfirm || showDtboOsConfirm || showDtboDownloadOsConfirm || showDtboRestoreConfirm
+
+    fun startDtboPreflight(source: String) {
+        if (dtboActionPending()) {
+            dtboStatusDetail = "上一条 DTBO 指令仍在执行。"
+            return
+        }
+        dtboBusy = true
+        dtboPendingAction = "flash"
+        dtboPendingSource = source
+        dtboPendingAckOs = false
+        dtboPreflightSummary = "预检中…"
         scope.launch {
-            dtboHasLocal = bridge.exec(Engine.dtboHasLocal()).trim() == "yes"
-            if (dtboHasLocal) showLocalConfirm = true else dtboLibraryMsg = "未找到 local.img"
+            val result = bridge.execResult(Engine.dtboPreflight(source))
+            val kv = parseKv(result.output)
+            dtboPreflightSummary = kv["summary"].orEmpty().ifBlank { result.output }
+            dtboPendingToken = kv["snapshot_token"].orEmpty()
+            dtboStatusDetail = result.output
+            dtboPendingAction = kv["preflight_action"] ?: "flash"
+            when {
+                kv["requires_os_ack"] == "1" -> showDtboOsConfirm = true
+                result.success && dtboPendingToken.isNotBlank() && dtboPendingAction == "restore" -> showDtboRestoreConfirm = true
+                result.success && dtboPendingToken.isNotBlank() -> showDtboConfirm = true
+                else -> dtboStatusDetail = result.output.ifBlank { "DTBO 预检失败。" }
+            }
+            dtboBusy = false
+        }
+    }
+
+    fun acknowledgeUnknownOs() {
+        showDtboOsConfirm = false
+        dtboBusy = true
+        dtboPendingAckOs = true
+        scope.launch {
+            val result = bridge.execResult(Engine.dtboPreflight(dtboPendingSource, true))
+            val kv = parseKv(result.output)
+            dtboPreflightSummary = kv["summary"].orEmpty().ifBlank { result.output }
+            dtboPendingToken = kv["snapshot_token"].orEmpty()
+            dtboPendingAction = kv["preflight_action"] ?: "flash"
+            dtboStatusDetail = result.output
+            if (result.success && dtboPendingToken.isNotBlank()) {
+                if (dtboPendingAction == "restore") showDtboRestoreConfirm = true else showDtboConfirm = true
+            }
+            dtboBusy = false
+        }
+    }
+
+    fun executeDtboFlash() {
+        val source = dtboPendingSource
+        val token = dtboPendingToken
+        showDtboConfirm = false
+        dtboBusy = true
+        dtboStatus = "刷入中…"
+        scope.launch {
+            val result = bridge.execResult(Engine.dtboFlash(source, token, dtboPendingAckOs))
+            dtboStatusDetail = result.output
+            dtboStatus = result.output.lineSequence().firstOrNull { it.isNotBlank() }?.take(24) ?: "刷入完成"
+            showToast(if (result.success) "DTBO 已刷入，不会自动重启" else "失败：DTBO 刷入")
+            dtboBusy = false
+        }
+    }
+
+    fun startRestorePreflight(backup: String) {
+        if (dtboActionPending() || backup !in dtboBackups.map { it.first }) return
+        dtboBusy = true
+        dtboPendingRestore = backup
+        dtboPreflightSummary = "恢复预检中…"
+        scope.launch {
+            try {
+                val result = bridge.execResult(Engine.dtboRestorePreflight(backup))
+                val kv = parseKv(result.output)
+                dtboPreflightSummary = kv["summary"].orEmpty().ifBlank { result.output }
+                dtboPendingToken = kv["snapshot_token"].orEmpty()
+                dtboPendingAction = kv["preflight_action"].orEmpty()
+                dtboStatusDetail = result.output
+                if (result.success && dtboPendingToken.isNotBlank() && dtboPendingAction == "restore") {
+                    showDtboRestoreConfirm = true
+                }
+            } finally {
+                dtboBusy = false
+            }
+        }
+    }
+
+    fun executeDtboRestore() {
+        val backup = dtboPendingRestore
+        val token = dtboPendingToken
+        showDtboRestoreConfirm = false
+        dtboBusy = true
+        dtboStatus = "恢复中…"
+        scope.launch {
+            try {
+                val result = bridge.execResult(Engine.dtboRestore(backup, token))
+                dtboStatusDetail = result.output
+                dtboStatus = result.output.lineSequence().firstOrNull { it.isNotBlank() }?.take(24) ?: "恢复完成"
+                showToast(if (result.success) "DTBO备份已恢复，不会自动重启" else "失败：DTBO恢复")
+                refreshDtboBackups()
+            } finally {
+                dtboBusy = false
+            }
+        }
+    }
+
+    fun downloadDtbo(acknowledgeUnknownOs: Boolean) {
+        showDtboDownloadOsConfirm = false
+        dtboBusy = true
+        scope.launch {
+            val result = bridge.execResult(Engine.dtboDownload(acknowledgeUnknownOs))
+            val kv = parseKv(result.output)
+            dtboStatusDetail = result.output
+            if (kv["requires_os_ack"] == "1") {
+                showDtboDownloadOsConfirm = true
+            } else {
+                showToast(if (result.success) "DTBO 下载完成" else "失败：DTBO 下载")
+                if (result.success) {
+                    dtboHasLocal = bridge.exec(Engine.dtboHasLocal()).trim() == "yes"
+                    refreshDtboResolve()
+                }
+            }
+            dtboBusy = false
         }
     }
 
@@ -158,6 +299,7 @@ fun BatteryPage(
         dtboHasLocal = bridge.exec(Engine.dtboHasLocal()).trim() == "yes"
         refreshDtboResolve()
         refreshDtboLibrary()
+        refreshDtboBackups()
         loaded = true
     }
 
@@ -199,7 +341,7 @@ fun BatteryPage(
                     text = if (dtboTarget.isBlank()) {
                         dtboHint.ifBlank { "未找到可用镜像" }
                     } else {
-                        "自动识别：${dtboTargetName()}（${dtboSizeText(dtboAutoSize)}，${dtboTargetSource()}）"
+                        "已选镜像：${dtboTargetName()}（${dtboSizeText(dtboTargetBytes())}，${dtboTargetSource()}）"
                     },
                     style = TextStyle(
                         color = if (dtboTarget.isBlank()) XJ.TextSecondary else XJ.TextPrimary,
@@ -223,20 +365,11 @@ fun BatteryPage(
                     backdrop,
                     "在线下载当前手机 DTBO",
                     {
-                        if (dtboBusy) {
-                            dtboStatusDetail = "上一条指令仍在执行。"
+                        if (dtboActionPending()) {
+                            dtboStatusDetail = "上一条 DTBO 指令或确认仍在处理。"
                         } else {
-                            dtboBusy = true
-                            scope.launch {
-                                val code = status.deviceCode.ifBlank { "未知机型" }
-                                dtboStatusDetail = "下载中…（$code）"
-                                val result = bridge.execResult(Engine.dtboDownload())
-                                dtboStatusDetail = result.output.ifBlank { if (result.success) "下载指令已结束。" else "下载失败。" }
-                                showToast(if (result.success) "DTBO 下载完成" else "失败：DTBO 下载")
-                                dtboHasLocal = bridge.exec(Engine.dtboHasLocal()).trim() == "yes"
-                                refreshDtboResolve()
-                                dtboBusy = false
-                            }
+                            dtboStatusDetail = "下载中…（${status.deviceCode.ifBlank { "未知机型" }}）"
+                            downloadDtbo(false)
                         }
                     },
                     Modifier.fillMaxWidth()
@@ -244,41 +377,78 @@ fun BatteryPage(
                 Spacer(Modifier.height(8.dp))
                 ActionButton(
                     backdrop,
-                    "刷入并重启生效",
+                    "刷入 DTBO",
                     {
                         when {
-                            dtboBusy -> dtboStatusDetail = "上一条刷入指令仍在执行。"
+                            dtboActionPending() -> dtboStatusDetail = "上一条 DTBO 指令或确认仍在处理。"
                             dtboTargetPath().isBlank() -> dtboStatusDetail = dtboHint.ifBlank { "未找到可用镜像，请先在线下载或到镜像库选择。" }
-                            else -> showDtboConfirm = true
+                            else -> startDtboPreflight(if (dtboImg.isNotBlank()) dtboImg else if (dtboAutoSource == "local") "local" else "builtin")
                         }
                     },
                     Modifier.fillMaxWidth(),
                     danger = true
                 )
+                if (showDtboDownloadOsConfirm) {
+                    Spacer(Modifier.height(10.dp))
+                    ConfirmCard(
+                        backdrop,
+                        title = "下载镜像的 OS 范围未知，仍要继续？",
+                        detail = "远端身份清单没有提供可验证的 OS 范围。下载仍会严格校验文件名、大小和 SHA；继续只确认允许下载，不代表刷入兼容性已验证。",
+                        confirmText = "确认 OS 未知并下载",
+                        onConfirm = { downloadDtbo(true) },
+                        onDismiss = { showDtboDownloadOsConfirm = false }
+                    )
+                }
+                if (showDtboOsConfirm) {
+                    Spacer(Modifier.height(10.dp))
+                    ConfirmCard(
+                        backdrop,
+                        title = "OS 范围未知，仍要继续预检？",
+                        detail = "身份清单没有提供可验证的 OS 范围。当前机型、活动槽、分区大小、镜像大小和 SHA 已显示在下方摘要；继续只代表你单独确认 OS 未知，不代表兼容性已验证。",
+                        confirmText = "确认 OS 未知",
+                        onConfirm = ::acknowledgeUnknownOs,
+                        onDismiss = { showDtboOsConfirm = false }
+                    )
+                }
+                if (showDtboRestoreConfirm) {
+                    Spacer(Modifier.height(10.dp))
+                    ConfirmCard(
+                        backdrop,
+                        title = "确认恢复 DTBO 备份？",
+                        detail = "固定恢复摘要：\n$dtboPreflightSummary\n\n只会恢复刚才明确选择且校验过的本机、槽位和分区备份；目标变化会拒绝执行，不会自动重启。",
+                        confirmText = "确认恢复备份",
+                        onConfirm = ::executeDtboRestore,
+                        onDismiss = { showDtboRestoreConfirm = false }
+                    )
+                }
                 if (showDtboConfirm) {
                     Spacer(Modifier.height(10.dp))
                     ConfirmCard(
                         backdrop,
-                        title = "刷入 DTBO 镜像？",
-                        detail = "将向当前 DTBO 分区写入 ${dtboTargetName()}（${dtboSizeText(dtboAutoSize)}）。\n\n风险：DTBO 是系统分区，写入错误镜像或错误槽位可能让设备无法开机（变砖），操作不可撤销。刷入前会自动备份当前分区到 /sdcard/Download/dtbo_backup，刷入后需重启生效。请确认电量充足、重要数据已备份。",
+                        title = "确认刷入 DTBO？",
+                        detail = "固定对象摘要：\n$dtboPreflightSummary\n\n刷入前会完整备份当前分区并校验；确认后若活动槽、目标分区、分区内容、机型或镜像快照变化将拒绝执行。不会自动重启。",
                         confirmText = "确认刷入",
-                        onConfirm = {
-                            val dtboFlashImg = dtboTargetPath()
-                            val dtboViaLocal = dtboImg.isBlank() && dtboAutoSource == "local"
-                            showDtboConfirm = false
-                            dtboBusy = true
-                            dtboStatus = "刷入中…"
-                            scope.launch {
-                                val result = bridge.execResult(if (dtboViaLocal) Engine.dtboFlashLocal() else Engine.dtboFlash(dtboFlashImg))
-                                dtboStatusDetail = result.output
-                                dtboStatus = result.output.lineSequence().firstOrNull { it.isNotBlank() }?.take(24) ?: "已下发，重启生效"
-                                showToast(if (result.success) "DTBO 已刷入，重启生效" else "失败：DTBO 刷入")
-                                dtboBusy = false
-                            }
-                        },
+                        onConfirm = ::executeDtboFlash,
                         onDismiss = { showDtboConfirm = false }
                     )
                 }
+            }
+
+            GlassCard(backdrop, Modifier.fillMaxWidth()) {
+                SectionLabel("恢复 DTBO 备份")
+                ActionButton(backdrop, "刷新可用备份", { if (!dtboActionPending()) { dtboBusy = true; scope.launch { try { refreshDtboBackups() } finally { dtboBusy = false } } } }, Modifier.fillMaxWidth())
+                dtboBackups.forEach { (path, size) ->
+                    Row(
+                        Modifier.fillMaxWidth().clickable { if (!dtboActionPending()) dtboSelectedBackup = if (dtboSelectedBackup == path) "" else path }.padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        BasicText(path, Modifier.weight(1f), style = TextStyle(color = if (dtboSelectedBackup == path) accent else XJ.TextPrimary, fontSize = 11.sp))
+                        BasicText("${dtboSizeText(size.toLongOrNull() ?: 0L)}${if (dtboSelectedBackup == path) " · 已选" else ""}", style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp))
+                    }
+                }
+                if (dtboBackups.isEmpty()) BasicText("没有当前机型、槽位和分区匹配的有效备份", style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp))
+                ActionButton(backdrop, "预检并恢复所选备份", { if (dtboSelectedBackup.isBlank()) dtboStatusDetail = "请先从校验列表明确选择一个备份。" else startRestorePreflight(dtboSelectedBackup) }, Modifier.fillMaxWidth(), danger = true)
             }
 
             GlassCard(backdrop, Modifier.fillMaxWidth()) {
@@ -376,7 +546,9 @@ fun BatteryPage(
                         Row(
                             Modifier
                                 .fillMaxWidth()
-                                .clickable { dtboImg = if (dtboImg == img.path) "" else img.path }
+                                .clickable {
+                                    if (!dtboActionPending()) dtboImg = if (dtboImg == img.path) "" else img.path
+                                }
                                 .padding(vertical = 4.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
@@ -411,8 +583,8 @@ fun BatteryPage(
                     "刷本地镜像",
                     {
                         when {
-                            dtboBusy -> dtboLibraryMsg = "上一条刷入指令仍在执行。"
-                            else -> flashLocal()
+                            dtboActionPending() -> dtboLibraryMsg = "上一条 DTBO 指令或确认仍在处理。"
+                            else -> startDtboPreflight("local")
                         }
                     },
                     Modifier.fillMaxWidth(),
@@ -425,28 +597,7 @@ fun BatteryPage(
                         style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp)
                     )
                 }
-                if (showLocalConfirm) {
-                    Spacer(Modifier.height(10.dp))
-                    ConfirmCard(
-                        backdrop,
-                        title = "刷入本地镜像",
-                        detail = "将向当前 DTBO 分区写入模块内置镜像 local.img。\n\n风险：DTBO 是系统分区，写入错误镜像或错误槽位可能让设备无法开机（变砖）。刷入前会自动备份当前分区，刷入后需重启生效。",
-                        confirmText = "确认刷入",
-                        onConfirm = {
-                            showLocalConfirm = false
-                            dtboBusy = true
-                            dtboStatus = "刷入中…"
-                            scope.launch {
-                                val result = bridge.execResult(Engine.dtboFlashLocal())
-                                dtboStatusDetail = result.output
-                                dtboStatus = result.output.lineSequence().firstOrNull { it.isNotBlank() }?.take(24) ?: "已下发，重启生效"
-                                showToast(if (result.success) "DTBO 已刷入，重启生效" else "失败：DTBO 刷入")
-                                dtboBusy = false
-                            }
-                        },
-                        onDismiss = { showLocalConfirm = false }
-                    )
-                }
+
             }
 
             GlassCard(backdrop, Modifier.fillMaxWidth()) {

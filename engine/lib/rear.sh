@@ -11,15 +11,46 @@ CARD_SERVICE="$CARD_PKG/com.hyperos.xj.rear.RearService"
 CARD_RECEIVER="$CARD_PKG/com.hyperos.xj.rear.ControlReceiver"
 CARD_CONF_DIR="/storage/emulated/0/Android/data/com.hyperos.xj/files"
 CARD_CONF="$CARD_CONF_DIR/rear.conf"
+# hook 侧读取的兜底配置（外部目录不可用时用）。
+RS_HOOK_CONF=/data/local/tmp/xj_rear.conf
 SUB_PKG=com.xiaomi.subscreencenter
+# 支持判据缓存：测温/状态/守护共用一份，避免每拍 fork pm。
+RS_SUP="$RS_STATE/supported"
+RS_SUP_TS="$RS_STATE/supported.ts"
 
-mkdir -p "$RS_STATE" 2>/dev/null
+[ "$XJ_READONLY" = "1" ] || mkdir -p "$RS_STATE" 2>/dev/null
 
 say() { echo "$(date '+%F %T') $*" >> "$RS_LOG" 2>/dev/null; }
 
+# 唯一判据：com.xiaomi.subscreencenter 在装。dumpsys 的 Display #1 可能来自外接屏/
+# 投屏，不能当背屏硬件依据；也不看屏幕亮灭（熄屏时照样有硬件）。
 has_subscreen() {
-  pm path "$SUB_PKG" >/dev/null 2>&1 && return 0
-  dumpsys display 2>/dev/null | grep -q 'Display #1'
+  pm path "$SUB_PKG" >/dev/null 2>&1
+}
+
+# 现探一次并写缓存：用户点开关时用，不吃缓存里的旧值。
+subscreen_probe() {
+  if has_subscreen; then _rsp=1; else _rsp=0; fi
+  if [ "$XJ_READONLY" != "1" ]; then
+    mkdir -p "$RS_STATE" 2>/dev/null
+    printf '%s' "$_rsp" > "$RS_SUP" 2>/dev/null
+    printf '%s' "$(date +%s)" > "$RS_SUP_TS" 2>/dev/null
+  fi
+  printf '%s' "$_rsp"
+}
+
+# 无背屏是常态：0 只缓存 60 秒，既省掉每拍 pm，又能在装机后自动重探；
+# 1 缓存 600 秒，装机/卸载由 subscreen_probe 立即刷新。
+subscreen_supported_cached() {
+  _rsv=$(cat "$RS_SUP" 2>/dev/null)
+  case "$_rsv" in 1) _rsttl=600 ;; 0) _rsttl=60 ;; *) _rsv=""; _rsttl=0 ;; esac
+  _rsnow=$(date +%s); _rslast=$(cat "$RS_SUP_TS" 2>/dev/null)
+  case "$_rslast" in ''|*[!0-9]*) _rslast=0 ;; esac
+  if [ -z "$_rsv" ] || [ $((_rsnow - _rslast)) -ge "$_rsttl" ]; then
+    subscreen_probe
+    return 0
+  fi
+  printf '%s' "$_rsv"
 }
 
 apk_ok() { pm path "$CARD_PKG" >/dev/null 2>&1; }
@@ -28,14 +59,6 @@ card_uid() {
   _u=$(dumpsys package "$CARD_PKG" 2>/dev/null | grep -m1 'userId=' | sed 's/.*userId=//')
   case "$_u" in ''|*[!0-9]*) _u=0 ;; esac
   echo "$_u"
-}
-
-# 找到原生背屏时钟组件，仅用于清理旧版本遗留的 pm disable。
-sub_launcher_component() {
-  _c=$(dumpsys package "$SUB_PKG" 2>/dev/null | grep -i 'SubScreenLauncher' \
-    | grep -oE '[A-Za-z0-9_.]+/[A-Za-z0-9_.]*SubScreenLauncher[A-Za-z0-9_.]*' | head -1)
-  [ -n "$_c" ] && { echo "$_c"; return 0; }
-  echo "$SUB_PKG/.SubScreenLauncher"
 }
 
 enable_clock() {
@@ -47,16 +70,17 @@ enable_clock() {
   say "native clock restored: $_c"
 }
 
-# 开机恢复：清掉旧版（禁时钟+推任务）可能留下的持久禁用状态。
+# 开机恢复：只清旧版（禁时钟+推任务）真实留下的残留：有 clock_disabled 才 pm enable，
+# 有旧开态才收尾；不无条件动包管理器，也不写伪成功日志。
 rear_boot_recover() {
-  _c=$(cat "$RS_STATE/clock_disabled" 2>/dev/null)
-  [ -n "$_c" ] || _c=$(sub_launcher_component)
-  [ -n "$_c" ] && pm enable --user 0 "$_c" >/dev/null 2>&1
-  rm -f "$RS_STATE/clock_disabled" "$RS_STATE/on" "$RS_STATE/push_fail" 2>/dev/null
-  say "boot recover: native clock restored ($_c)"
+  rear_cleanup_pending && rear_cleanup_once
+  rear_cleanup_pending || rm -f "$RS_STATE/on" "$RS_STATE/retry" "$RS_STATE/push_fail" 2>/dev/null
+  enable_clock
+  return 0
 }
 
 ensure_data_dir() {
+  [ "$(subscreen_supported_cached)" = "1" ] || return 1
   [ -d "$CARD_CONF_DIR" ] && return 0
   # 让 App 自己创建外部目录，FUSE 属主才正确。
   am start-foreground-service -n "$CARD_SERVICE" >/dev/null 2>&1
@@ -75,10 +99,10 @@ ensure_data_dir() {
 
 write_config() {
   _enabled="$1" _keep="$2"
-  [ -d "$CARD_CONF_DIR" ] || return 1
-  # 仅刷新展示配置时（参数为空）沿用 rear.conf 现值，避免把开关状态重置成默认。
+  # 仅刷新展示配置时（参数为空）沿用现值，主副本不可用时读 hook 兜底副本。
   if [ -z "$_enabled" ] || [ -z "$_keep" ]; then
     _cur=$(cat "$CARD_CONF" 2>/dev/null)
+    [ -n "$_cur" ] || _cur=$(cat "$RS_HOOK_CONF" 2>/dev/null)
     [ -z "$_enabled" ] && _enabled=$(printf '%s\n' "$_cur" | grep -a '^enabled=' | tail -n1 | cut -d= -f2)
     [ -z "$_keep" ] && _keep=$(printf '%s\n' "$_cur" | grep -a '^keep_on=' | tail -n1 | cut -d= -f2)
     case "$_enabled" in 0|1) ;; *) _enabled=$(cfg_get rearscreen 0) ;; esac
@@ -94,14 +118,20 @@ write_config() {
     "$_enabled" "$_keep" "$_accent" "$_font" "$_fields")
   [ -n "$_bg" ] && _body="$_body
 bg=$_bg"
-  printf '%s\n' "$_body" > "$CARD_CONF.tmp" 2>/dev/null
-  mv -f "$CARD_CONF.tmp" "$CARD_CONF" 2>/dev/null
-  printf '%s\n' "$_body" > /data/local/tmp/xj_rear.conf 2>/dev/null
-  chmod 0644 /data/local/tmp/xj_rear.conf 2>/dev/null
-  _uid=$(card_uid)
-  [ "$_uid" != "0" ] && chown "$_uid:$_uid" "$CARD_CONF" 2>/dev/null
-  chmod 0660 "$CARD_CONF" 2>/dev/null
-  [ -s "$CARD_CONF" ]
+  if [ -d "$CARD_CONF_DIR" ]; then
+    printf '%s\n' "$_body" > "$CARD_CONF.tmp" 2>/dev/null
+    mv -f "$CARD_CONF.tmp" "$CARD_CONF" 2>/dev/null
+    _uid=$(card_uid)
+    [ "$_uid" != "0" ] && chown "$_uid:$_uid" "$CARD_CONF" 2>/dev/null
+    chmod 0660 "$CARD_CONF" 2>/dev/null
+  fi
+  # hook 兜底副本：App 无支持 stop 时不会自己写配置，壳必须把已有的改成 enabled=0；
+  # 两份都不存在时不创建（无背屏设备不产生新配置）。
+  if [ -d "$CARD_CONF_DIR" ] || [ -s "$RS_HOOK_CONF" ]; then
+    printf '%s\n' "$_body" > "$RS_HOOK_CONF" 2>/dev/null
+    chmod 0644 "$RS_HOOK_CONF" 2>/dev/null
+  fi
+  [ -s "$CARD_CONF" ] || [ -s "$RS_HOOK_CONF" ]
 }
 
 send_control() {
@@ -125,34 +155,128 @@ rear_push_config() {
 }
 
 rear_ensure() {
-  has_subscreen || return 1
+  [ "$(subscreen_probe)" = "1" ] || return 1
   if ! apk_ok; then
     pm install -r "$RS_APK" >/dev/null 2>&1
     apk_ok || { say "install failed"; return 1; }
     say "RearScreen APK installed"
   fi
-  ensure_data_dir || { say "data dir unavailable"; return 1; }
-  write_config 1 1 || true
+  # 先广播开态：已验证宿主上的 ControlReceiver 会写 Prefs.enabled=true 并 sync/建外部
+  # 目录；先拉 FGS 会被「Prefs 未开」的 Java 侧早停，目录白白等不到。
   send_control 1 1
+  ensure_data_dir || { say "data dir unavailable"; return 1; }
+  write_config 1 1 || { say "config write failed"; return 1; }
   enable_clock
+  rm -f "$RS_STATE/off" "$RS_STATE/unsupported" 2>/dev/null
   say "lsposed overlay ready"
   return 0
 }
 
+# xjctl rear on 入口：先验硬件再写配置，避免无背屏设备先落 rearscreen=1 再失败。
+rear_enable() {
+  if [ "$(subscreen_probe)" != "1" ]; then
+    echo "该机型无背屏组件（$SUB_PKG），不支持背屏卡片"
+    return 4
+  fi
+  cfg_set rearscreen 1
+  rear_ensure
+}
+
+# 主副本或 hook 兜底副本是否仍为 enabled=1（App 无支持 stop 时不写配置，靠壳清）。
+rear_conf_enabled() {
+  grep -q '^enabled=1' "$CARD_CONF" 2>/dev/null && return 0
+  grep -q '^enabled=1' "$RS_HOOK_CONF" 2>/dev/null
+}
+
+# 是否还有活动开态：on 标记或任一配置副本仍 enabled=1。
+rear_active_leftover() {
+  [ -f "$RS_STATE/on" ] && return 0
+  rear_conf_enabled
+}
+
+# 幂等关闭：已关且无残留（on 标记 / 配置 enabled=1）时静默返回，重复 off 不再广播/写日志。
 rear_stop() {
-  write_config 0 0 || true
-  send_control 0 0
+  _sup=$(subscreen_supported_cached)
+  _on=0; [ -f "$RS_STATE/on" ] && _on=1
+  _conf=0; rear_conf_enabled && _conf=1
+  if [ -f "$RS_STATE/off" ] && [ "$_on" = "0" ] && [ "$_conf" = "0" ]; then
+    return 0
+  fi
+  _acted=0; _fail=0
+  if [ "$_sup" = "1" ] || [ "$_conf" = "1" ]; then
+    write_config 0 0 || _fail=1
+    _acted=1
+  fi
+  # 无背屏且没旧配置时只收 on 标记，不广播 off。
+  [ "$_on" = "1" ] && _acted=1
+  if [ "$_acted" = "1" ]; then
+    send_control 0 0 || _fail=1
+  fi
+  [ "$_on" = "1" ] && am stopservice -n "$CARD_SERVICE" >/dev/null 2>&1
   rm -f "$RS_STATE/on" "$RS_STATE/retry" 2>/dev/null
+  : > "$RS_STATE/off" 2>/dev/null
   enable_clock
-  say "lsposed overlay disabled"
+  [ "$_acted" = "1" ] && say "lsposed overlay disabled"
+  [ "$_fail" = "1" ] && return 1
+  return 0
+}
+
+# 还有待收尾：残留开态，或上次收尾失败（配置写/广播失败）未补。
+rear_cleanup_pending() {
+  [ -f "$RS_STATE/cleanup_retry" ] && return 0
+  rear_active_leftover
+}
+
+# 一次收尾：失败保留残留与 retry 标记，60 秒内不重试，避每拍广播。
+rear_cleanup_once() {
+  if [ -f "$RS_STATE/cleanup_retry" ]; then
+    _t=$(cat "$RS_STATE/cleanup_retry" 2>/dev/null)
+    case "$_t" in ''|*[!0-9]*) _t=0 ;; esac
+    [ $(( $(date +%s) - _t )) -lt 60 ] && return 2
+    _first=0
+  else
+    _first=1
+  fi
+  _ok=1
+  if rear_active_leftover; then
+    rear_stop || _ok=0
+  else
+    # 上次广播失败但配置已写回：补一次 off 下发。
+    send_control 0 0 || _ok=0
+  fi
+  rear_active_leftover && _ok=0
+  if [ "$_ok" = "0" ]; then
+    printf '%s' "$(date +%s)" > "$RS_STATE/cleanup_retry" 2>/dev/null
+    [ "$_first" = "1" ] && say "cleanup incomplete: retry in 60s"
+    return 1
+  fi
+  rm -f "$RS_STATE/cleanup_retry" 2>/dev/null
+  return 0
+}
+
+# 无背屏：确认没残留后才落 unsupported 标记，清理失败就留待 tick 重试，不丢失败。
+rear_unsupported_cleanup() {
+  [ -f "$RS_STATE/unsupported" ] && return 0
+  if rear_cleanup_pending; then
+    rear_cleanup_once
+    rear_cleanup_pending && return 0
+  fi
+  : > "$RS_STATE/unsupported" 2>/dev/null
+  say "subscreen not supported: overlay skipped"
 }
 
 rear_tick() {
   [ "$(cfg_get rearscreen 0)" = "1" ] || {
-    [ -f "$RS_STATE/on" ] && rear_stop
+    rear_cleanup_pending && rear_cleanup_once
     rm -f "$RS_STATE/on" 2>/dev/null
     return 0
   }
+
+  if [ "$(subscreen_supported_cached)" != "1" ]; then
+    rear_unsupported_cleanup
+    return 0
+  fi
+  rm -f "$RS_STATE/unsupported" 2>/dev/null
 
   if [ ! -f "$RS_STATE/on" ]; then
     if [ -f "$RS_STATE/retry" ]; then
@@ -180,7 +304,7 @@ rear_tick() {
 
 rear_status() {
   echo "rearscreen=$(cfg_get rearscreen 0)"
-  echo "device=$(has_subscreen && echo 1 || echo 0)"
+  echo "device=$(subscreen_supported_cached)"
   echo "apk=$(apk_ok && echo 1 || echo 0)"
   [ -f "$RS_STATE/on" ] && echo "on=1" || echo "on=0"
   echo "mode=lsposed"

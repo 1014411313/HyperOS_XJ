@@ -74,12 +74,21 @@ detect_thermal_path() {
   fi
 }
 
+charge_node_supported() {
+  case "$1" in
+    /sys/class/xm_power/charger/charger_thermal/wired_chg_curr|\
+    /sys/class/power_supply/battery/constant_charge_current_max|\
+    /sys/class/power_supply/battery/constant_charge_current|\
+    /sys/class/power_supply/battery/input_current_limit) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 detect_charge_node() {
   _ov=$(profile_get charge_node "")
-  if [ -n "$_ov" ] && [ -f "$_ov" ] && [ -w "$_ov" ]; then echo "$_ov"; return 0; fi
+  if charge_node_supported "$_ov" && [ -f "$_ov" ] && [ -w "$_ov" ]; then echo "$_ov"; return 0; fi
   for _n in /sys/class/xm_power/charger/charger_thermal/wired_chg_curr \
             /sys/class/power_supply/battery/constant_charge_current_max \
-            /sys/class/power_supply/battery/charge_control_limit \
             /sys/class/power_supply/battery/constant_charge_current \
             /sys/class/power_supply/battery/input_current_limit; do
     [ -f "$_n" ] && [ -w "$_n" ] && { echo "$_n"; return 0; }
@@ -122,6 +131,23 @@ bootstrap() {
   THERMAL_DAEMON=$(cat "$CONFDIR/rt_thermal_daemon" 2>/dev/null)
   THERMAL_PATH=$(cat "$CONFDIR/rt_thermal_path" 2>/dev/null)
   CHARGE_NODE=$(cat "$CONFDIR/rt_charge_node" 2>/dev/null)
+  if [ -n "$CHARGE_NODE" ]; then
+    if [ "$CHARGE_NODE" = "/sys/class/power_supply/battery/charge_control_limit" ]; then
+      log "忽略不支持的充电节点: $CHARGE_NODE"
+      rm -f "$CONFDIR/rt_charge_node" "$CONFDIR/rt_charge_orig" 2>/dev/null
+      CHARGE_NODE=""
+    elif charge_node_supported "$CHARGE_NODE"; then
+      if [ ! -f "$CHARGE_NODE" ] || [ ! -w "$CHARGE_NODE" ]; then
+        log "忽略不可用的充电节点: $CHARGE_NODE"
+        rm -f "$CONFDIR/rt_charge_node" 2>/dev/null
+        CHARGE_NODE=""
+      fi
+    else
+      log "忽略未知充电节点缓存: $CHARGE_NODE"
+      rm -f "$CONFDIR/rt_charge_node" 2>/dev/null
+      CHARGE_NODE=""
+    fi
+  fi
   VOLTAGE_NODE=$(cat "$CONFDIR/rt_voltage_node" 2>/dev/null)
   if [ -z "$THERMAL_DAEMON" ] || [ -z "$THERMAL_PATH" ] || [ ! -d "$THERMAL_PATH" ]; then
     probe || return 1
@@ -275,6 +301,7 @@ save_charge_orig() {
   [ "$MTK_MODE" = "1" ] && return 0
   [ -s "$CONFDIR/rt_charge_orig" ] && return 0
   [ -n "$CHARGE_NODE" ] || CHARGE_NODE=$(detect_charge_node)
+  charge_node_supported "$CHARGE_NODE" || return 1
   _v=$(cat "$CHARGE_NODE" 2>/dev/null)
   case "$_v" in ''|*[!0-9]*|0) return 1 ;; esac
   printf '%s' "$_v" > "$CONFDIR/rt_charge_orig"
@@ -285,6 +312,7 @@ set_charge_current() {
   [ "$MTK_MODE" = "1" ] && return 0
   case "$1" in ''|*[!0-9]*) return 1 ;; esac
   [ -n "$CHARGE_NODE" ] || CHARGE_NODE=$(detect_charge_node)
+  charge_node_supported "$CHARGE_NODE" || return 1
   [ -f "$CHARGE_NODE" ] && [ -w "$CHARGE_NODE" ] || return 1
   [ "$(cat "$CHARGE_NODE" 2>/dev/null)" = "$1" ] && return 0
   chmod 0644 "$CHARGE_NODE" 2>/dev/null
@@ -390,18 +418,6 @@ write_status_json() {
   write_app_status_json
 }
 
-# subscreencenter 在装与否变化极少，缓存 60 秒避免每拍 fork pm。
-_subscreen_supported_cached() {
-  _f="$STATE/subscreen_ok"; _ts="$STATE/subscreen_ok.ts"
-  _now=$(date +%s); _last=$(cat "$_ts" 2>/dev/null)
-  case "$_last" in ''|*[!0-9]*) _last=0 ;; esac
-  if [ ! -s "$_f" ] || [ $((_now - _last)) -ge 60 ]; then
-    pm path com.xiaomi.subscreencenter >/dev/null 2>&1 && echo 1 > "$_f" || echo 0 > "$_f"
-    printf '%s' "$_now" > "$_ts"
-  fi
-  cat "$_f" 2>/dev/null
-}
-
 # App uid 仅重装才变，缓存 10 分钟避免每拍 fork dumpsys。
 _app_uid_cached() {
   _f="$STATE/app_uid"; _ts="$STATE/app_uid.ts"
@@ -435,7 +451,7 @@ write_app_status_json() {
   js_line term_v "$(cfg_get term_v "")" str >> "$_frag"
   js_line bypass_manual "$([ -f "$CONFDIR/bypass_manual" ] && echo 1 || echo 0)" str >> "$_frag"
   js_line rearscreen "$(cfg_get rearscreen 0)" str >> "$_frag"
-  js_line rearscreen_supported "$(_subscreen_supported_cached)" str >> "$_frag"
+  js_line rearscreen_supported "$(subscreen_supported_cached)" str >> "$_frag"
   js_line module_version "$(mod_version)" str >> "$_frag"
   js_line kernel "$(uname -r 2>/dev/null)" str >> "$_frag"
   js_line date "$(date +%F)" str >> "$_frag"

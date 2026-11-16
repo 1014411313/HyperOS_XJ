@@ -2,13 +2,13 @@
 # engine/lib/power.sh — 充电功率档执行。逻辑整理自解容工具箱的 power_limit /
 # charge_power 与 common.sh 的直接控制节点，写节点全部在本进程内完成。
 
-WIRED_CURR=/sys/class/xm_power/charger/charger_thermal/wired_chg_curr
-WIRED_CURR2=/sys/class/xm_power/charger/charger_thermal/wired_chg_curr2
-WIRELESS_CURR=/sys/class/xm_power/charger/charger_thermal/wireless_chg_curr
-WIRED_CTRL=/sys/class/xm_power/charger/charger_thermal/wired_ctrl_limit
-WIRELESS_CTRL=/sys/class/xm_power/charger/charger_thermal/wireless_ctrl_limit
-WIRED_TH=/sys/class/xm_power/charger/charger_thermal/wired_thermal_remove
-WIRELESS_TH=/sys/class/xm_power/charger/charger_thermal/wireless_thermal_remove
+WIRED_CURR=${WIRED_CURR:-/sys/class/xm_power/charger/charger_thermal/wired_chg_curr}
+WIRED_CURR2=${WIRED_CURR2:-/sys/class/xm_power/charger/charger_thermal/wired_chg_curr2}
+WIRELESS_CURR=${WIRELESS_CURR:-/sys/class/xm_power/charger/charger_thermal/wireless_chg_curr}
+WIRED_CTRL=${WIRED_CTRL:-/sys/class/xm_power/charger/charger_thermal/wired_ctrl_limit}
+WIRELESS_CTRL=${WIRELESS_CTRL:-/sys/class/xm_power/charger/charger_thermal/wireless_ctrl_limit}
+WIRED_TH=${WIRED_TH:-/sys/class/xm_power/charger/charger_thermal/wired_thermal_remove}
+WIRELESS_TH=${WIRELESS_TH:-/sys/class/xm_power/charger/charger_thermal/wireless_thermal_remove}
 
 max_ma() {
   _m=$(cfg_get max_ma "")
@@ -264,6 +264,7 @@ nodes_ok() {
   if [ -n "$_ma" ]; then
     # 电流节点回读容差 2%（下限 100µA）：驱动会对写入值做量化/裁剪（如 20000→19700），
     #   要求完全相等会每拍判「未生效」→ 每拍重写 → PD 重协商锯齿。
+    [ -e "$WIRED_CURR" ] || _ok=0
     _want_uv=$((_ma * 1000))
     _tol_uv=$((_ma * 1000 / 50))
     [ "$_tol_uv" -lt 100 ] && _tol_uv=100
@@ -297,14 +298,26 @@ nodes_ok() {
 # 其余档：th=0 + ctrl 阶梯 + 按瓦数换算电流。
 power_apply() {
   _tier=$(norm_power "$1")
-  _th=1 _lv=0 _ma=""
+  _th=1 _lv=0 _ma="" _apl_active=0
   if [ "$_tier" = "inf" ]; then
     power_boot_clear_stale
-    _ma=$(apl_target_ma) || _ma=$(apl_ceiling_ma)
+    if _ma=$(apl_target_ma); then
+      _apl_active=1
+      rm -f "$BT_STATE/inf_settled" "$BT_STATE/inf_node_capped" "$BT_STATE/inf_settle_fail" 2>/dev/null
+    else
+      _ma=$(apl_ceiling_ma)
+    fi
     case "$_ma" in ''|*[!0-9]*) _ma="" ;; esac
     _th=$(power_thermal_target)
-    _sig="inf|${_th}|0|"
+    # APL 目标属于 inf 控制状态；无 APL 时才使用一次性安顿语义。
+    _sig="inf|${_th}|0|${_ma}|${_apl_active}"
     _chk=""
+    if [ "$_apl_active" = "1" ]; then
+      _chk="$_ma"
+      if [ "$(cat "$BT_STATE/apl_target_fail" 2>/dev/null)" != "$_ma" ]; then
+        rm -f "$BT_STATE/apl_target_fail" "$BT_STATE/apl_target_fail_count" "$BT_STATE/apl_target_fail_log" 2>/dev/null
+      fi
+    fi
   else
     # 离开 inf 档就清「已安顿」与失败计数，让下次回到全速重新算一次（生效档位已含 power_limit 约束）。
     rm -f "$BT_STATE/inf_settled" "$BT_STATE/inf_settle_fail" 2>/dev/null
@@ -319,12 +332,18 @@ power_apply() {
   fi
 
   _prev=$(cat "$BT_STATE/power_sig" 2>/dev/null)
+  _was_apl=0
+  case "$_prev" in inf\|*\|*\|*\|1) _was_apl=1 ;; esac
+  [ "$_tier" = "inf" ] && [ "$_apl_active" = "0" ] && [ "$_was_apl" = "1" ] && \
+    rm -f "$BT_STATE/inf_settled" "$BT_STATE/inf_node_capped" "$BT_STATE/inf_settle_fail" 2>/dev/null
   _need=1
   if [ "$_prev" = "$_sig" ] && [ "$(nodes_ok "$_th" "$_lv" "$_chk")" = "1" ]; then
     _need=0
     if [ "$_tier" = "inf" ]; then
-      # inf 还要确认电流节点已放行（≥10A）；已落「已安顿 / 已封顶」标志时视为已放行，不再补写。
-      if [ ! -f "$BT_STATE/inf_settled" ] && [ ! -f "$BT_STATE/inf_node_capped" ]; then
+      # 无 APL 时仅在首次达到可用上限后安顿；APL 运行时始终按目标回读。
+      if [ "$_apl_active" = "1" ]; then
+        [ -f "$STATE/apl_urgent" ] && _need=1
+      elif [ ! -f "$BT_STATE/inf_settled" ] && [ ! -f "$BT_STATE/inf_node_capped" ]; then
         _cur=$(cat "$WIRED_CURR" 2>/dev/null)
         case "$_cur" in ''|*[!0-9]*) _cur=0 ;; esac
         [ "$_cur" -ge 10000000 ] || _need=1
@@ -374,7 +393,10 @@ power_apply() {
   #   只有真正充电（Charging/Full）才安顿：拔枪时驱动给的默认值插枪后保不住，落旗会永久卡低功率。
   _cur_write=0
   if [ "$_tier" = "inf" ]; then
-    if [ "$_th" = "1" ] && [ ! -f "$BT_STATE/inf_settled" ] && [ ! -f "$BT_STATE/inf_node_capped" ]; then
+    if [ "$_apl_active" = "1" ] && [ "$_th" = "1" ]; then
+      # APL 目标变化或回读不符时允许受控更新；紧急标志再额外放行一次。
+      _cur_write=1
+    elif [ "$_th" = "1" ] && [ ! -f "$BT_STATE/inf_settled" ] && [ ! -f "$BT_STATE/inf_node_capped" ]; then
       case "$(cat "${BAT:-/sys/class/power_supply/battery}/status" 2>/dev/null)" in
         *Charging*|Full) _cur_write=1 ;;
       esac
@@ -399,26 +421,57 @@ power_apply() {
     fi
   fi
 
-  if [ "$_tier" = "inf" ] && [ "$_th" = "1" ] && [ "$_ma_written" = "1" ]; then
-    # 写入后回读确认：达到「可用上限」（≥10A）才落安顿标志；未达则不落，下轮（60 秒后）重试。
+  if [ "$_tier" = "inf" ] && [ "$_apl_active" = "1" ] && [ "$_th" = "1" ] && [ "$_ma_written" = "1" ]; then
     _after=$(cat "$WIRED_CURR" 2>/dev/null)
     case "$_after" in ''|*[!0-9]*) _after=0 ;; esac
-    if [ "$_after" -ge 10000000 ]; then
-      rm -f "$BT_STATE/inf_settle_fail" 2>/dev/null
-      date +%s > "$BT_STATE/inf_settled" 2>/dev/null
-      log "power: inf 安顿成功（节点 ${_after}µA，不再写电流节点）"
+    _want_uv=$((_ma * 1000))
+    _tol_uv=$((_ma * 20))
+    [ "$_tol_uv" -lt 100 ] && _tol_uv=100
+    _delta=$((_after - _want_uv)); [ "$_delta" -lt 0 ] && _delta=$((0 - _delta))
+    if [ "$_delta" -le "$_tol_uv" ]; then
+      rm -f "$BT_STATE/apl_target_fail" "$BT_STATE/apl_target_fail_count" "$BT_STATE/apl_target_fail_log" 2>/dev/null
     else
-      _fn=$(cat "$BT_STATE/inf_settle_fail" 2>/dev/null)
-      case "$_fn" in ''|*[!0-9]*) _fn=0 ;; esac
-      _fn=$((_fn + 1))
-      printf '%s' "$_fn" > "$BT_STATE/inf_settle_fail" 2>/dev/null
-      if [ "$_fn" -ge 3 ]; then
-        # 连试 3 次都抬不到 10A → 本机型该节点物理上限就低于 10A（或该列是适配器输入侧，
-        #   快充时本就 500~8000mA）。继续重写只会持续触发 PD 重协商 —— 本次开机停手。
-        printf '%s' "$_after" > "$BT_STATE/inf_node_capped" 2>/dev/null
-        log "power: inf 电流节点上限 ${_after}µA(<10A)，本次开机不再写电流节点"
+      _failed_target=$(cat "$BT_STATE/apl_target_fail" 2>/dev/null)
+      _fail_count=$(cat "$BT_STATE/apl_target_fail_count" 2>/dev/null)
+      case "$_fail_count" in ''|*[!0-9]*) _fail_count=0 ;; esac
+      if [ "$_failed_target" != "$_ma" ]; then
+        _failed_target=$_ma
+        _fail_count=0
+        rm -f "$BT_STATE/apl_target_fail_log" 2>/dev/null
+      fi
+      _fail_count=$((_fail_count + 1))
+      printf '%s' "$_failed_target" > "$BT_STATE/apl_target_fail" 2>/dev/null
+      printf '%s' "$_fail_count" > "$BT_STATE/apl_target_fail_count" 2>/dev/null
+      _now=$(date +%s)
+      _last=$(cat "$BT_STATE/apl_target_fail_log" 2>/dev/null)
+      case "$_last" in ''|*[!0-9]*) _last=0 ;; esac
+      if [ "$_last" = "0" ] || [ $((_now - _last)) -ge 60 ]; then
+        log "power: APL 目标 ${_ma}mA 回读未生效（节点 ${_after}µA，连续 ${_fail_count} 次）"
+        printf '%s' "$_now" > "$BT_STATE/apl_target_fail_log" 2>/dev/null
+      fi
+    fi
+  fi
+
+  if [ "$_tier" = "inf" ] && [ "$_th" = "1" ] && [ "$_ma_written" = "1" ]; then
+    if [ "$_tier" = "inf" ] && [ "$_apl_active" = "0" ]; then
+      # 无 APL 时才把一次性安顿的回读结果锁定为本次开机状态。
+      _after=$(cat "$WIRED_CURR" 2>/dev/null)
+      case "$_after" in ''|*[!0-9]*) _after=0 ;; esac
+      if [ "$_after" -ge 10000000 ]; then
+        rm -f "$BT_STATE/inf_settle_fail" 2>/dev/null
+        date +%s > "$BT_STATE/inf_settled" 2>/dev/null
+        log "power: inf 安顿成功（节点 ${_after}µA，不再写电流节点）"
       else
-        log "power: inf 安顿未生效（节点 ${_after}µA），60 秒后重试(${_fn}/3)"
+        _fn=$(cat "$BT_STATE/inf_settle_fail" 2>/dev/null)
+        case "$_fn" in ''|*[!0-9]*) _fn=0 ;; esac
+        _fn=$((_fn + 1))
+        printf '%s' "$_fn" > "$BT_STATE/inf_settle_fail" 2>/dev/null
+        if [ "$_fn" -ge 3 ]; then
+          printf '%s' "$_after" > "$BT_STATE/inf_node_capped" 2>/dev/null
+          log "power: inf 电流节点上限 ${_after}µA(<10A)，本次开机不再写电流节点"
+        else
+          log "power: inf 安顿未生效（节点 ${_after}µA），60 秒后重试(${_fn}/3)"
+        fi
       fi
     fi
   fi

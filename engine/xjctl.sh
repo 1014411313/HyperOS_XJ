@@ -4,6 +4,10 @@
 
 DIR=$(cd "$(dirname "$0")" && pwd)
 
+# selfcheck 是只读自检：必须在 source lib/env.sh 之前就置位，否则本进程加载 lib 时
+# 就已经 mkdir / seed 配置了。子进程（含 battery 的 nsenter 重开）靠 export 继承。
+[ "$1" = "selfcheck" ] && export XJ_READONLY=1
+
 # BAA 必须挂载在 PID1 mount namespace 才能被 batteryantiaging 看到。
 if [ "$1" = "battery" ] && [ "$XJ_IN_PID1" != "1" ]; then
   for _ns in /system/bin/nsenter /system/xbin/nsenter \
@@ -19,6 +23,8 @@ fi
 . "$DIR/lib/power.sh"
 . "$DIR/lib/battery.sh"
 . "$DIR/lib/apl.sh"
+# 背屏支持判据与各入口守卫在 lib/rear.sh，status 输出也用它（status_json 里的 rearscreen_supported）。
+. "$DIR/lib/rear.sh"
 
 usage() {
   cat <<'EOF'
@@ -33,10 +39,15 @@ usage() {
   setting get <键>|set <键> <值>|dump
   bypass on|off|status
   rear on|off|set key=value...|status
-  dtbo status|backup [目录]|resolve|flash <镜像>|flashlocal|haslocal
+  dtbo status|backup [目录]|backups|resolve|haslocal|download [--ack-os-unknown]
+  dtbo preflight <镜像> [--ack-os-unknown]
+  dtbo preflight --restore <备份路径>
+  dtbo flash <镜像> --confirm <确认token> [--ack-os-unknown]
+  dtbo restore <备份路径> --confirm <确认token>
   dtbo list|dirs|adddir <绝对目录>|deldir <绝对目录>
   log [行数]             查看最近日志（默认 200 行）
   diag pack              打包日志与脱敏配置到 /sdcard/Download/
+  selfcheck              只读自检（PASS/FAIL/HUMAN），有 FAIL 时退出码 3
   apply                  立即跑一轮主循环（单次）
 档位: inf fast mid slow；温控档位: default unlimited level_1..level_5
 EOF
@@ -122,20 +133,21 @@ battery_cycle_clear() {
   fi
 }
 
-status_json() {
-  _tmp="$STATE/status.$$.frag"; : > "$_tmp"
+# status 片段：一行一条 tsv（键\t值\t类型）输出到 stdout。
+# XJ_READONLY=1 时由调用方直接管道给 js_emit，不落 frag；sysinfo 缓存也不改写。
+status_frags() {
   data_read 2>/dev/null | while IFS= read -r _l; do
     _k=${_l%%=*}; _v=${_l#*=}
-    js_line "$_k" "$_v" str >> "$_tmp"
+    js_line "$_k" "$_v" str
   done
-  js_line thermal_mode "$(cat "$CONFDIR/current_mode" 2>/dev/null)" str >> "$_tmp"
-  js_line thermal_default "$(json_get default_mode default)" str >> "$_tmp"
-  js_line power_tier "$(power_tier)" str >> "$_tmp"
-  js_line power_applied "$(cat "$BT_STATE/power_applied" 2>/dev/null)" str >> "$_tmp"
-  js_line unlock "$(cfg_get unlock 1)" str >> "$_tmp"
-  js_line freepps "$(cfg_get freepps 0)" str >> "$_tmp"
-  js_line cloud_guard "$(cfg_get cloud_guard 1)" str >> "$_tmp"
-  js_line apl_enable "$(cfg_get apl_enable 0)" str >> "$_tmp"
+  js_line thermal_mode "$(cat "$CONFDIR/current_mode" 2>/dev/null)" str
+  js_line thermal_default "$(json_get default_mode default)" str
+  js_line power_tier "$(power_tier)" str
+  js_line power_applied "$(cat "$BT_STATE/power_applied" 2>/dev/null)" str
+  js_line unlock "$(cfg_get unlock 1)" str
+  js_line freepps "$(cfg_get freepps 0)" str
+  js_line cloud_guard "$(cfg_get cloud_guard 1)" str
+  js_line apl_enable "$(cfg_get apl_enable 0)" str
   # ---- 守护/功能存活上报（参照 v3.12.9 status_kv.sh）：
   #      让「开关开着但功能实际没跑」可见。读不到（进程不在/文件不存在）给空串，不报错。 ----
   _dpid=$(cat "$STATE/daemon.pid" 2>/dev/null)
@@ -148,36 +160,56 @@ status_json() {
     _mt=$(stat -c %Y "/proc/$_dpid" 2>/dev/null)
     case "$_mt" in ''|*[!0-9]*) ;; *) _dup=$(( $(date +%s) - _mt )) ;; esac
   fi
-  js_line daemon_pid "$_dpid" str >> "$_tmp"
-  js_line daemon_uptime "$_dup" str >> "$_tmp"
-  js_line power_last_write "$(cat "$BT_STATE/cg_last_write_ts" 2>/dev/null)" str >> "$_tmp"
-  js_line power_sig "$(cat "$BT_STATE/power_sig" 2>/dev/null)" str >> "$_tmp"
-  js_line apl_target_ma "$(cat "$STATE/apl_target_ma" 2>/dev/null)" str >> "$_tmp"
-  js_line apl_state_mtime "$(stat -c %Y "$STATE/apl_state" 2>/dev/null)" str >> "$_tmp"
-  js_line baa_state "$(baa_state)" str >> "$_tmp"
-  js_line battery_state_mtime "$(stat -c %Y "$BT_STATE/cloud_guard.state" 2>/dev/null)" str >> "$_tmp"
-  js_line cycle_fake "$(cfg_get cycle_fake "")" str >> "$_tmp"
-  js_line term_v "$(cfg_get term_v "")" str >> "$_tmp"
-  js_line bypass_manual "$([ -f "$CONFDIR/bypass_manual" ] && echo 1 || echo 0)" str >> "$_tmp"
-  js_line rearscreen "$(cfg_get rearscreen 0)" str >> "$_tmp"
-  js_line rearscreen_supported "$(pm path com.xiaomi.subscreencenter >/dev/null 2>&1 && echo 1 || echo 0)" str >> "$_tmp"
-  js_line module_version "$(mod_version)" str >> "$_tmp"
-  js_line kernel "$(uname -r 2>/dev/null)" str >> "$_tmp"
-  js_line date "$(date +%F)" str >> "$_tmp"
+  js_line daemon_pid "$_dpid" str
+  js_line daemon_uptime "$_dup" str
+  js_line power_last_write "$(cat "$BT_STATE/cg_last_write_ts" 2>/dev/null)" str
+  js_line power_sig "$(cat "$BT_STATE/power_sig" 2>/dev/null)" str
+  js_line apl_target_ma "$(cat "$STATE/apl_target_ma" 2>/dev/null)" str
+  js_line apl_state_mtime "$(stat -c %Y "$STATE/apl_state" 2>/dev/null)" str
+  js_line baa_state "$(baa_state)" str
+  js_line battery_state_mtime "$(stat -c %Y "$BT_STATE/cloud_guard.state" 2>/dev/null)" str
+  js_line cycle_fake "$(cfg_get cycle_fake "")" str
+  js_line term_v "$(cfg_get term_v "")" str
+  js_line bypass_manual "$([ -f "$CONFDIR/bypass_manual" ] && echo 1 || echo 0)" str
+  js_line rearscreen "$(cfg_get rearscreen 0)" str
+  js_line rearscreen_supported "$(subscreen_supported_cached)" str
+  js_line module_version "$(mod_version)" str
+  js_line kernel "$(uname -r 2>/dev/null)" str
+  js_line date "$(date +%F)" str
   _st="$STATE/sysinfo.txt"; _ts="$STATE/sysinfo.ts"
   _now=$(date +%s); _last=$(cat "$_ts" 2>/dev/null)
   case "$_last" in ''|*[!0-9]*) _last=0 ;; esac
-  if [ ! -s "$_st" ] || [ $((_now - _last)) -ge 60 ]; then
-    # 临时名带 pid：daemon 与 xjctl status 可能并发进入此分支，固定名会互相踩
-    _stmp="$_st.$$.tmp"
-    data_sysinfo > "$_stmp" 2>/dev/null && mv -f "$_stmp" "$_st"
-    rm -f "$_stmp" 2>/dev/null
-    printf '%s' "$_now" > "$_ts"
+  if [ "$XJ_READONLY" = "1" ]; then
+    # 只读：缓存新鲜就复用，过期则现算到内存，不改写 sysinfo.txt / sysinfo.ts
+    if [ -s "$_st" ] && [ $((_now - _last)) -lt 60 ]; then
+      _si=$(cat "$_st" 2>/dev/null)
+    else
+      _si=$(data_sysinfo 2>/dev/null)
+    fi
+  else
+    if [ ! -s "$_st" ] || [ $((_now - _last)) -ge 60 ]; then
+      # 临时名带 pid：daemon 与 xjctl status 可能并发进入此分支，固定名会互相踩
+      _stmp="$_st.$$.tmp"
+      data_sysinfo > "$_stmp" 2>/dev/null && mv -f "$_stmp" "$_st"
+      rm -f "$_stmp" 2>/dev/null
+      printf '%s' "$_now" > "$_ts"
+    fi
+    _si=$(cat "$_st" 2>/dev/null)
   fi
-  js_line device_name "$(sed -n 1p "$_st")" str >> "$_tmp"
-  js_line device_code "$(sed -n 2p "$_st")" str >> "$_tmp"
-  js_line os_version "$(sed -n 3p "$_st")" str >> "$_tmp"
-  js_line base_firmware "$(sed -n 4p "$_st")" str >> "$_tmp"
+  _si_line() { printf '%s\n' "$_si" | sed -n "${1}p"; }
+  js_line device_name "$(_si_line 1)" str
+  js_line device_code "$(_si_line 2)" str
+  js_line os_version "$(_si_line 3)" str
+  js_line base_firmware "$(_si_line 4)" str
+}
+
+status_json() {
+  if [ "$XJ_READONLY" = "1" ]; then
+    status_frags | js_emit
+    return 0
+  fi
+  _tmp="$STATE/status.$$.frag"
+  status_frags > "$_tmp"
   js_emit "$_tmp"
   rm -f "$_tmp"
 }
@@ -318,10 +350,9 @@ case "$1" in
     esac ;;
 
   rear)
-    . "$DIR/lib/rear.sh"
     case "$2" in
-      on) cfg_set rearscreen 1; rear_ensure ;;
-      off) cfg_set rearscreen 0; rear_stop; echo off ;;
+      on) rear_enable ;;
+      off) [ "$(cfg_get rearscreen 0)" = "1" ] && cfg_set rearscreen 0; rear_stop; echo off ;;
       status) rear_status ;;
       set)
         shift 2
@@ -367,18 +398,24 @@ case "$1" in
 
   dtbo)
     . "$DIR/lib/dtbo.sh"
-    case "$2" in
-      status) dtbo_status; exit $? ;;
-      backup) dtbo_backup "$3"; exit $? ;;
-      flash)  dtbo_flash "$3"; exit $? ;;
-      flashlocal) dtbo_flashlocal; exit $? ;;
-      download)   dtbo_download; exit $? ;;
-      haslocal)   dtbo_haslocal; exit $? ;;
-      resolve)    dtbo_resolve; exit $? ;;
-      list)   dtbo_scan_list; exit $? ;;
-      dirs)   dtbo_dirs_show; exit $? ;;
-      adddir) dtbo_dirs_add "$3"; exit $? ;;
-      deldir) dtbo_dirs_del "$3"; exit $? ;;
+    _dtbo_cmd="$2"
+    [ $# -ge 2 ] || { usage; exit 9; }
+    shift 2
+    case "$_dtbo_cmd" in
+      status) dtbo_status "$@"; exit $? ;;
+      backup) dtbo_backup "$@"; exit $? ;;
+      backups) dtbo_backup_list "$@"; exit $? ;;
+      preflight) dtbo_preflight "$@"; exit $? ;;
+      flash) dtbo_flash "$@"; exit $? ;;
+      flashlocal) dtbo_flashlocal "$@"; exit $? ;;
+      restore) dtbo_restore "$@"; exit $? ;;
+      download) dtbo_download "$@"; exit $? ;;
+      haslocal) dtbo_haslocal "$@"; exit $? ;;
+      resolve) dtbo_resolve "$@"; exit $? ;;
+      list) dtbo_scan_list "$@"; exit $? ;;
+      dirs) dtbo_dirs_show "$@"; exit $? ;;
+      adddir) dtbo_dirs_add "$@"; exit $? ;;
+      deldir) dtbo_dirs_del "$@"; exit $? ;;
       *) usage; exit 9 ;;
     esac ;;
 
@@ -399,6 +436,11 @@ case "$1" in
       pack) diag_pack; exit $? ;;
       *) usage; exit 9 ;;
     esac ;;
+
+  selfcheck)
+    [ $# -gt 1 ] && { usage; exit 9; }
+    . "$DIR/lib/selfcheck.sh"
+    selfcheck_main; exit $? ;;
 
   apply) sh "$DIR/xjdaemon.sh" --once ;;
   help|"") usage ;;

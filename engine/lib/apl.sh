@@ -141,14 +141,57 @@ apl_adp_check() {
   apl_prof_set adpn "$_n"
 }
 
-# dmesg 增量里出现充电泵硬故障
+# dmesg 增量里出现充电泵硬故障。游标按启动标识、事件时间和摘要保存；
+# 只保留最近 300 行的索引，不复制或累积整份内核日志。
+apl_boot_id() {
+  cat "${APL_BOOT_ID_FILE:-/proc/sys/kernel/random/boot_id}" 2>/dev/null
+}
+
 apl_hard_fault() {
   _mark="$STATE/apl_dmesg_mark"
-  _last=$(apl_num "$(cat "$_mark" 2>/dev/null)")
-  _hit=$(dmesg 2>/dev/null | tail -n 300 | grep -acE "open path fail|cp work abnormal|monitor charge abnormal")
-  _hit=$(apl_num "$_hit")
-  printf '%s' "$_hit" > "$_mark" 2>/dev/null
-  [ "$_hit" -gt "$_last" ]
+  _dmesg=$(dmesg 2>/dev/null) || return 2
+  _dmesg=$(printf '%s\n' "$_dmesg" | tail -n 300)
+  _boot=$(apl_boot_id)
+  [ -n "$_boot" ] || _boot=$(printf '%s\n' "$_dmesg" | head -n 1 | cksum 2>/dev/null | cut -d' ' -f1)
+  [ -n "$_boot" ] || return 2
+
+  _stored_boot=""; _stored_ts=""; _stored_hash=""; _stored_occ=0
+  if [ -f "$_mark" ]; then
+    IFS='|' read -r _stored_boot _stored_ts _stored_hash _stored_occ < "$_mark" 2>/dev/null
+    case "$_stored_occ" in ''|*[!0-9]*) _stored_occ=0 ;; esac
+  else
+    _stored_boot="__missing__"
+  fi
+  _events=$(printf '%s\n' "$_dmesg" | grep -aE "open path fail|cp work abnormal|monitor charge abnormal" | while IFS= read -r _line; do
+    _ts=$(printf '%s\n' "$_line" | sed -n 's/^\[\([^]]*\)\].*/\1/p')
+    [ -n "$_ts" ] || _ts=0
+    _hash=$(printf '%s' "$_line" | cksum 2>/dev/null | cut -d' ' -f1)
+    printf '%s|%s\n' "$_ts" "$_hash"
+  done)
+  if [ -z "$_events" ]; then
+    [ "$_stored_boot" = "$_boot" ] || printf '%s|0|0|0\n' "$_boot" > "$_mark" 2>/dev/null
+    return 1
+  fi
+
+  _current=$(printf '%s\n' "$_events" | tail -n 1)
+  _current_ts=${_current%%|*}
+  _current_hash=${_current#*|}
+  _current_occ=$(printf '%s\n' "$_events" | awk -F'|' -v t="$_current_ts" -v h="$_current_hash" '$1 == t && $2 == h { n++ } END { print n + 0 }')
+  printf '%s|%s|%s|%s\n' "$_boot" "$_current_ts" "$_current_hash" "$_current_occ" > "$_mark" 2>/dev/null
+
+  [ "$_stored_boot" = "$_boot" ] || return 1
+  [ -n "$_stored_ts" ] || return 1
+  if awk -v a="$_current_ts" -v b="$_stored_ts" 'BEGIN { exit !(a > b) }' 2>/dev/null; then
+    return 0
+  fi
+  if [ "$_current_ts" = "$_stored_ts" ] && [ "$_current_hash" != "$_stored_hash" ]; then
+    return 0
+  fi
+  if [ "$_current_ts" = "$_stored_ts" ] && [ "$_current_hash" = "$_stored_hash" ] \
+     && [ "$_current_occ" -gt "$_stored_occ" ] 2>/dev/null; then
+    return 0
+  fi
+  return 1
 }
 
 # 运行态：一行 8 个字段，read 读回（无 fork）
@@ -268,11 +311,15 @@ apl_tick() {
   fi
 
   # ---- A 档：硬故障 ----
-  if apl_hard_fault; then
+  _apl_hard_fault=0
+  apl_hard_fault
+  _apl_fault_rc=$?
+  if [ "$_apl_fault_rc" = "0" ]; then
+    _apl_hard_fault=1
     _apl_new=$(( _apl_ma * 80 / 100 ))
     _apl_fl=$(( _apl_cap * 50 / 100 ))
-    [ "$_apl_new" -lt "$_apl_fl" ] && _apl_new="$_apl_fl"
-    [ "$_apl_new" -gt "$_apl_cap" ] && _apl_new="$_apl_cap"
+    [ "$_apl_tgt" -gt "$_apl_fl" ] && [ "$_apl_new" -lt "$_apl_fl" ] && _apl_new="$_apl_fl"
+    [ "$_apl_new" -gt "$_apl_tgt" ] && _apl_new="$_apl_tgt"
     _apl_tgt="$_apl_new"
     blog "APL 硬故障：降 ${_apl_tgt}mA，锁 30s"
     # 硬故障要立刻退让：写 state/apl_urgent，power.sh 下次写电流节点时绕过 60 秒全局限流，
@@ -305,6 +352,9 @@ apl_tick() {
     apl_low_cnt=0
   fi
 
+  _apl_locked=0
+  [ "$_apl_now" -lt "$apl_lock_until" ] && _apl_locked=1
+
   # ---- 温度保护（连续调节）----
   # 温控档位只定义温度阈值：超过上限就按斜率缓慢降功率（最低 5W）；
   # 回落到「上限 − 2℃」以下再按斜率缓慢回升；两者之间是死区，保持不动，避免一上一下。
@@ -321,7 +371,7 @@ apl_tick() {
       [ "$_apl_d" -lt 150 ] && _apl_d=150
       _apl_new=$(( _apl_tgt - _apl_d ))
       [ "$_apl_new" -lt "$_apl_min_ma" ] && _apl_new="$_apl_min_ma"
-    elif [ "$_apl_tb" -le "$_apl_tup" ]; then
+    elif [ "$_apl_locked" = "0" ] && [ "$_apl_tb" -le "$_apl_tup" ]; then
       _apl_rcap="$_apl_cap"
       if [ "$apl_thermal_prev" -gt 0 ] && [ "$apl_thermal_prev" -lt "$_apl_cap" ]; then
         _apl_rcap="$apl_thermal_prev"
@@ -337,9 +387,6 @@ apl_tick() {
       blog "APL 电池 ${_apl_tb}℃（上限 ${_apl_lt}℃）→ 目标 ${_apl_tgt}mA"
     fi
   fi
-
-  _apl_locked=0
-  [ "$_apl_now" -lt "$apl_lock_until" ] && _apl_locked=1
 
   # 上探温度门限：有档位线时到上限为止；无档位线（无限制/系统默认）退回 DTBO 阈值
   _apl_up_ok=0
@@ -400,6 +447,7 @@ apl_tick() {
 
   # ---- 落盘 ----
   _apl_fl=$(( _apl_cap * 50 / 100 ))
+  [ "$_apl_hard_fault" = "1" ] && [ "$_apl_tgt" -lt "$_apl_fl" ] && _apl_fl="$_apl_tgt"
   # 有档位温度线时允许降到 5W（~1250mA），否则温度保护降不下去
   [ -n "$_apl_lt" ] && _apl_fl=300
   [ "$_apl_tgt" -lt "$_apl_fl" ] && _apl_tgt="$_apl_fl"

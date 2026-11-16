@@ -77,8 +77,11 @@ rm -rf "$DATA_DIR/battery/state/fv_force.applied" "$DATA_DIR/battery/state/fv_fo
 
 # 旧数据根 /data/adb/HyperOS_XJ 与旧版引擎路径混在一起（旧 daemon 会持续报路径不存在）；
 # 数据已在 rezhale_toolbox 下，这里清掉旧运行目录（_backup/_data 历史备份保留）。
+# 新数据目录已存在时，旧数据目录里可能有没迁移过去的用户数据：只提示不删，
+# 不自动删除/覆盖旧目录（迁移只在全新安装时做）。
 if [ -d "$DATA_DIR" ] && [ -d /data/adb/HyperOS_XJ ]; then
-    rm -rf /data/adb/HyperOS_XJ 2>/dev/null && print " - 已清理旧数据目录（/data/adb/HyperOS_XJ）"
+    print " [!] 检测到旧数据目录 /data/adb/HyperOS_XJ（新目录已存在）：已保留，未自动删除"
+    print "     确认不需要时可手动删；需要迁移时先备份再手动处理"
 fi
 
 _plat=$(getprop ro.board.platform 2>/dev/null)
@@ -95,17 +98,42 @@ case "$_plat" in
 esac
 
 _apk="$MODPATH/app/rezhale_toolbox.apk"
+_apk_ok=0
 if [ -f "$_apk" ]; then
-    if ! pm install -r "$_apk" >/dev/null 2>&1; then
-        pm uninstall --user 0 com.hyperos.xj >/dev/null 2>&1
-        pm install "$_apk" >/dev/null 2>&1
+    # -r 覆盖安装保留旧数据；失败不先卸载绕签名（那会丢数据，也可能被当成绕过签名限制）。
+    _out=$(pm install -r "$_apk" 2>&1)
+    _rc=$?
+    if [ "$_rc" -eq 0 ]; then
+        _apk_ok=1
+    else
+        print " [!] App 安装失败（pm install 退出码 $_rc）：$(printf '%s\n' "$_out" | sed -n '1,2p' | tr '\n' ' ')"
+        print " [!] 常见原因：新旧包签名不一致、系统拒绝降级、空间不足"
+        print "     手动处理（模块数据保留）：备份后卸载 com.hyperos.xj，再安装 $_apk"
     fi
-fi
-if pm path com.hyperos.xj >/dev/null 2>&1; then
-    print " - App 已安装（UI + 背屏 LSP 接口一体）"
-    print " - 请在 LSPosed 中启用 com.hyperos.xj，scope 勾选 com.xiaomi.subscreencenter"
 else
-    print " [!] App 安装失败，可手动安装 $MODPATH/app/rezhale_toolbox.apk"
+    print " [!] 模块内缺少 APK：$_apk（包不完整，App 不会装上）"
+fi
+
+# 安装结果以「已装包 vs 模块 module.prop」核对；设备上不假设有 aapt，只用 dumpsys。
+# 只有版本对得上才报成功，安装失败或包没被替换时给可执行信息。
+_mod_vc=$(sed -n 's/^versionCode=//p' "$MODPATH/module.prop" 2>/dev/null | head -n 1)
+_mod_vn=$(sed -n 's/^version=//p' "$MODPATH/module.prop" 2>/dev/null | head -n 1)
+_inst_vc=$(dumpsys package com.hyperos.xj 2>/dev/null | sed -n 's/.*versionCode=\([0-9][0-9]*\).*/\1/p' | head -n 1)
+_inst_vn=$(dumpsys package com.hyperos.xj 2>/dev/null | sed -n 's/.*versionName=\([^ ]*\).*/\1/p' | head -n 1)
+if [ -f "$_apk" ]; then
+    if [ "$_apk_ok" != "1" ]; then
+        print " [!] 本次没能装上 App（原因见上），模块其余功能照常。"
+    elif ! pm path com.hyperos.xj >/dev/null 2>&1; then
+        print " [!] pm 报告安装成功但查不到 com.hyperos.xj，请手动安装 $_apk"
+    elif [ -z "$_inst_vc" ] || [ -z "$_inst_vn" ]; then
+        print " [!] App 已安装，但读不到已装版本（dumpsys 不可用）：请到系统设置确认是 $_mod_vn ($_mod_vc)，否则手动安装 $_apk"
+    elif [ "$_inst_vc" = "$_mod_vc" ] && [ "$_inst_vn" = "$_mod_vn" ]; then
+        print " - App 已安装：$_inst_vn ($_inst_vc)，与模块版本一致（UI + 背屏 LSP 接口一体）"
+        print " - 请在 LSPosed 中启用 com.hyperos.xj，scope 勾选 com.xiaomi.subscreencenter"
+    else
+        print " [!] App 版本与模块不一致：已装 $_inst_vn ($_inst_vc)，模块 $_mod_vn ($_mod_vc)"
+        print "     多为系统没替换包（签名/降级限制）：手动安装 $_apk；仍失败则备份数据后卸载 com.hyperos.xj 再装"
+    fi
 fi
 
 set_perm_recursive "$MODPATH" 0 0 0755 0644 2>/dev/null

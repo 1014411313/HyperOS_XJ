@@ -11,7 +11,7 @@ PSS_COMPONENT=com.miui.securitycenter/com.miui.powercenter.provider.PowerSaveSer
 # BAA 巡检拍数计数器（xjdaemon battery_guard_tick 每 100 拍巡检一次 BAA 挂载）
 BT_BAA_TICK_N=0
 
-mkdir -p "$BAT_STATE" 2>/dev/null
+[ "$XJ_READONLY" = "1" ] || mkdir -p "$BAT_STATE" 2>/dev/null
 
 blog() { echo "$(date '+%F %T') [battery] $*" >> "$LOGDIR/battery.log" 2>/dev/null; }
 

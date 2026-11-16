@@ -14,6 +14,11 @@ public class ControlReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {
         if (intent == null || !ACTION.equals(intent.getAction())) return;
+        if (!RearSupport.isSupported(context)) {
+            // 无背屏宿主：拒绝配置写入，只清理旧版本可能残留的服务。
+            RearService.stop(context);
+            return;
+        }
         RearConfig old = Prefs.read(context);
         boolean enabled = intent.hasExtra("enabled")
                 ? intent.getBooleanExtra("enabled", old.enabled) : old.enabled;

@@ -43,9 +43,14 @@ sample() {
 }
 
 # 一次性扫描详情节点，写 detail.list + ps.cache（原 base.apk detect.sh）。
+# XJ_READONLY=1 时两份内容只留在进程变量里，不落盘（selfcheck 只读自检用）。
 data_detect() {
   find_ps
-  _out="$CACHE/detail.list"; : > "$_out"
+  _out="$CACHE/detail.list"
+  [ "$XJ_READONLY" = "1" ] || : > "$_out"
+  _dl=""
+  _dl_add() { _dl="$_dl$1
+"; }
   _dirs="$BAT /sys/class/power_supply/battery /sys/class/power_supply/bms /sys/class/qcom-battery /sys/class/xm_power /sys/class/power_supply/batt_verify /sys/class/power_supply/fuelgauge"
   _add() {
     _lab=$1; shift
@@ -53,7 +58,7 @@ data_detect() {
       [ -d "$_d" ] || continue
       for _n in "$@"; do
         if [ -f "$_d/$_n" ] && _v=$(cat "$_d/$_n" 2>/dev/null) && [ -n "$_v" ]; then
-          echo "$_lab|$_d/$_n" >> "$_out"; return
+          _dl_add "$_lab|$_d/$_n"; return
         fi
       done
     done
@@ -69,7 +74,7 @@ data_detect() {
   _add "充电电流上限" constant_charge_current_max fcc
   _add "预计充满" time_to_full_now
 
-  _pf() { [ -f "$2" ] && _v=$(cat "$2" 2>/dev/null) && [ -n "$_v" ] && echo "P:$1|$2" >> "$_out"; }
+  _pf() { [ -f "$2" ] && _v=$(cat "$2" 2>/dev/null) && [ -n "$_v" ] && _dl_add "P:$1|$2"; }
   _Q=/sys/class/qcom-battery; _T=/sys/class/typec/port0; _PT=/sys/class/power_supply/typec
   _pf "快充类型" "$_Q/quick_charge_type"
   _pf "实际充电器类型" "$_Q/real_type"
@@ -86,7 +91,7 @@ data_detect() {
     for _x in $_f; do _pf "xm ${_x##*/}" "$_x"; done
   done
 
-  {
+  _cache_txt=$(
     echo "CV=60"; echo "BAT='$BAT'"; echo "USB='$USB'"
     _ps=""
     for _p in /sys/class/power_supply/*; do
@@ -126,8 +131,15 @@ data_detect() {
     fi
     [ -f /sys/class/qcom-battery/power_max ] && echo "PMX=/sys/class/qcom-battery/power_max"
     [ -f /sys/class/qcom-battery/ibus_total ] && echo "IBT=/sys/class/qcom-battery/ibus_total"
-  } > "$CACHE/ps.cache"
-  cat "$_out"
+  )
+  if [ "$XJ_READONLY" = "1" ]; then
+    XJ_DETAIL_LIST="$_dl"
+    XJ_PS_CACHE="$_cache_txt"
+  else
+    printf '%s' "$_dl" > "$_out"
+    printf '%s\n' "$_cache_txt" > "$CACHE/ps.cache"
+  fi
+  printf '%s' "$_dl"
 }
 
 # 单串电芯电压（µV）；双电芯机型 voltage_now 可能是串联总压。
@@ -143,11 +155,22 @@ cell_uv() {
   case "$_v" in ''|*[!0-9]*) echo 0 ;; *) echo $((_v / 2)) ;; esac
 }
 
+# ps.cache 的键值装进当前 shell：正常模式 source 缓存文件；只读模式缓存不落盘，
+# 内容在 XJ_PS_CACHE 变量里，只能 eval（与 source 同一份内容，风险不新增）。
+_data_cache_load() {
+  if [ "$XJ_READONLY" = "1" ]; then
+    [ -n "$XJ_PS_CACHE" ] || data_detect >/dev/null 2>&1
+    [ -n "$XJ_PS_CACHE" ] && eval "$XJ_PS_CACHE"
+  else
+    [ -f "$CACHE/ps.cache" ] || data_detect >/dev/null 2>&1
+    . "$CACHE/ps.cache"
+  fi
+}
+
 # 每秒读取（原 base.apk read.sh）：零 fork 读节点，输出 KEY=value 行。
 data_read() {
-  [ -f "$CACHE/ps.cache" ] || data_detect >/dev/null 2>&1
-  . "$CACHE/ps.cache"
-  [ "$CV" = 60 ] || { data_detect >/dev/null 2>&1; . "$CACHE/ps.cache"; }
+  _data_cache_load
+  [ "$CV" = 60 ] || { XJ_PS_CACHE=""; data_detect >/dev/null 2>&1; _data_cache_load; }
   _rd() { [ -r "$2" ] && { IFS= read -r _v < "$2"; echo "$1=$_v"; }; }
   _rd cap "$BAT/capacity"; _rd status "$BAT/status"; _rd temp "$BAT/temp"
   _rd volt "$BAT/voltage_now"
@@ -172,10 +195,17 @@ data_read() {
   _rd c1v "$C1V"; _rd c2v "$C2V"; _rd c1i "$C1I"; _rd c2i "$C2I"
   _rd c1q "$C1Q"; _rd c2q "$C2Q"; _rd pmax "$PMX"
   [ -n "$FGL" ] && echo "fgl=$FGL"
-  if [ -f "$CACHE/detail.list" ]; then
-    while IFS='|' read -r _lab _path; do
+  if [ "$XJ_READONLY" = "1" ]; then
+    _detail="$XJ_DETAIL_LIST"
+  elif [ -f "$CACHE/detail.list" ]; then
+    _detail=$(cat "$CACHE/detail.list" 2>/dev/null)
+  else
+    _detail=""
+  fi
+  if [ -n "$_detail" ]; then
+    printf '%s\n' "$_detail" | while IFS='|' read -r _lab _path; do
       [ -r "$_path" ] && { IFS= read -r _v < "$_path"; case "$_path" in *charge_counter) case "$_v" in *[!0-9-]*|"") ;; *) _v=$((_v / 1000)) ;; esac ;; esac; echo "dt|$_lab=$_v"; }
-    done < "$CACHE/detail.list"
+    done
   fi
   for _e in $TZ; do _n=${_e%%:*}; _f=${_e#*:}; [ -r "$_f" ] && { IFS= read -r _v < "$_f"; echo "tz|$_n=$_v"; }; done
 }

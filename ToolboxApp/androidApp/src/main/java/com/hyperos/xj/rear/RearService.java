@@ -17,6 +17,11 @@ public class RearService extends Service {
     private PowerManager.WakeLock wakeLock;
 
     public static void start(Context ctx) {
+        if (!RearSupport.isSupported(ctx)) {
+            // 无背屏宿主：不拉 FGS，只清掉旧版本可能残留的服务与唤醒锁。
+            stop(ctx);
+            return;
+        }
         try {
             Intent intent = new Intent(ctx, RearService.class);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -36,6 +41,15 @@ public class RearService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        if (!RearSupport.isSupported(this)) {
+            stopSelf();
+            return;
+        }
+        RearConfig cfg = Prefs.read(this);
+        if (!cfg.enabled) {
+            stopSelf();
+            return;
+        }
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
@@ -69,13 +83,24 @@ public class RearService extends Service {
             }
         } catch (Throwable t) {
             stopSelf();
+            return;
         }
-        Prefs.sync(this, Prefs.read(this));
+        Prefs.sync(this, cfg);
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        if (!RearSupport.isSupported(this)) {
+            releaseWakeLock();
+            stopSelf(startId);
+            return START_NOT_STICKY;
+        }
         RearConfig cfg = Prefs.read(this);
+        if (!cfg.enabled) {
+            releaseWakeLock();
+            stopSelf(startId);
+            return START_NOT_STICKY;
+        }
         Prefs.sync(this, cfg);
         if (cfg.keepOn) {
             acquireWakeLock();

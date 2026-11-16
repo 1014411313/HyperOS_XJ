@@ -14,7 +14,9 @@ LOGDIR="$DATA_DIR/log"
 BT_CONF="$DATA_DIR/battery/settings.conf"
 BT_STATE="$DATA_DIR/battery/state"
 
-mkdir -p "$CONFDIR" "$CACHE" "$STATE" "$LOGDIR" "$BT_STATE" 2>/dev/null
+# 只读开关：XJ_READONLY=1 时本文件与各 lib 不做任何落盘（selfcheck 只读自检用）。
+# 未设该变量时行为与原来完全一致。
+[ "$XJ_READONLY" = "1" ] || mkdir -p "$CONFDIR" "$CACHE" "$STATE" "$LOGDIR" "$BT_STATE" 2>/dev/null
 
 log() { echo "$(date '+%F %T') [engine] $*" >> "$LOGDIR/engine.log" 2>/dev/null; }
 
@@ -24,6 +26,7 @@ mod_version() {
 
 # ---------- 首次 seed：配置从模块内模板复制（settings.conf 模板含机型 dev_code） ----------
 seed_settings() {
+  [ "$XJ_READONLY" = "1" ] && return 0
   [ -s "$CONFDIR/settings.json" ] && return 0
   mkdir -p "$CONFDIR" 2>/dev/null
   cp -f "$MODDIR/default_settings.json" "$CONFDIR/settings.json" 2>/dev/null \
@@ -31,6 +34,7 @@ seed_settings() {
 }
 
 seed_bt_conf() {
+  [ "$XJ_READONLY" = "1" ] && return 0
   [ -s "$BT_CONF" ] && return 0
   mkdir -p "$(dirname "$BT_CONF")" 2>/dev/null
   cp -f "$MODDIR/battery/config/settings.conf" "$BT_CONF" 2>/dev/null
@@ -143,6 +147,7 @@ power_rank() {
 js_line() { printf '%s\t%s\t%s\n' "$1" "$2" "$3"; }
 
 js_emit() {
+  # 无参数时 awk 从 stdin 读：只读 status 不落 frag 文件，片段走管道直接组装
   awk -F'\t' '
     {
       if (NR > 1) printf ","
@@ -151,5 +156,5 @@ js_emit() {
       printf "\"%s\":%s", $1, v
     }
     END { printf "\n" }
-  ' "$1" | sed 's/^/{/; s/$/}/'
+  ' ${1:+"$1"} | sed 's/^/{/; s/$/}/'
 }

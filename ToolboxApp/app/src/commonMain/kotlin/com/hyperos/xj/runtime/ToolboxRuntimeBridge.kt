@@ -101,7 +101,7 @@ object Engine {
     private fun quote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
 
     fun build(vararg args: String): String =
-        "sh " + quote(SCRIPT) + " " + args.joinToString(" ") { quote(it) }
+        "sh " + quote(SCRIPT) + " " + args.filter { it.isNotEmpty() }.joinToString(" ") { quote(it) }
 
     fun status(): String = build("status")
 
@@ -131,7 +131,21 @@ object Engine {
 
     fun dtboStatus(): String = build("dtbo", "status")
 
-    fun dtboFlash(img: String): String = build("dtbo", "flash", img)
+    fun dtboPreflight(source: String, acknowledgeUnknownOs: Boolean = false): String =
+        build("dtbo", "preflight", source, if (acknowledgeUnknownOs) "--ack-os-unknown" else "")
+
+    fun dtboFlash(source: String, snapshotToken: String, acknowledgeUnknownOs: Boolean = false): String =
+        build("dtbo", "flash", source, "--confirm", snapshotToken, if (acknowledgeUnknownOs) "--ack-os-unknown" else "")
+
+    fun dtboBackup(): String = build("dtbo", "backup")
+
+    fun dtboBackups(): String = build("dtbo", "backups")
+
+    fun dtboRestorePreflight(backup: String): String =
+        build("dtbo", "preflight", "--restore", backup)
+
+    fun dtboRestore(backup: String, snapshotToken: String): String =
+        build("dtbo", "restore", backup, "--confirm", snapshotToken)
 
     fun dtboList(): String = build("dtbo", "list")
 
@@ -147,7 +161,8 @@ object Engine {
 
     fun dtboFlashLocal(): String = build("dtbo", "flashlocal")
 
-    fun dtboDownload(): String = build("dtbo", "download")
+    fun dtboDownload(acknowledgeUnknownOs: Boolean = false): String =
+        build("dtbo", "download", if (acknowledgeUnknownOs) "--ack-os-unknown" else "")
 
     fun checkUpdate(): String = build("update", "check")
 }
