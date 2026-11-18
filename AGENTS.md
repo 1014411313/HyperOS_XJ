@@ -8,12 +8,23 @@
 - 适用于本项目内所有会话、所有模型与所有子代理；派发子代理时要在任务书里写明「思考用中文」。
 - 回复语言仍以用户输入所用语言为准。
 
+## 双仓库与跨工具接手
+
+- 本目录是公开源码仓库 `HyperOS_XJ`；Gitee `https://gitee.com/xiaomirezhale/HyperOS_XJ.git` 是主远端，GitHub `https://github.com/1014411313/HyperOS_XJ.git` 是同一项目的发布镜像。
+- `xj-feedback` 是另一套独立的私有诊断仓库：`https://gitee.com/xiaomirezhale/xj-feedback.git`。默认放在相邻目录 `../xj-feedback`，可用 `XJ_FEEDBACK_DIR` 指定位置。诊断包只读分析，不执行其中脚本，不把原始材料复制进公开仓库。
+- 两个仓库分别查看状态、分支与远端；不把公开项目的提交、标签或 release 操作用到诊断仓库。私有仓库的同步、修改、删除和推送需有对应任务授权。
+- 以本文件为共享规则来源，`CLAUDE.md` 和 `GEMINI.md` 只引用本文件。把本目录本身设为工作区；新工具未自动加载时显式读取本文件与 `docs/项目接手.md`。
+- 新设备先运行 `python3 scripts/doctor.py`；构建与发布前分别使用 `--profile build`、`--profile release`。只检查，不自动安装环境或迁移凭据。
+- 当前状态以源码、根目录 `latest.json`、`state/release.json`、`state/bugs.json` 和两仓库的 Git 状态为准。项目约定及时回写仓库，不把客户端专有记忆当作唯一交接来源。
+
 ## 使用者协作约定
 
 - 用户是非专业使用者，不要求用户阅读代码、运行命令、查日志或自行制定技术方案。主代理负责理解需求、拆分步骤、调查、实施、测试及解释结果。
 - 需要用户决定时，先用通俗语言说明选项、影响和风险，再通过选项弹窗请求批准。未经批准不做超出已授权范围的改动、发版、刷机、远程写入或其他难撤销操作。
 - 真机验证确实需要用户操作时，只给必要、逐步且可复制的操作说明；能由助手在本地完成的检查不得转交用户。
 - 每个阶段主动汇报已完成、未验证和下一步；不要把待办或技术判断留给用户自行推断。
+- 用户说「包」默认指模块 ZIP。打包后发送 ZIP 附件；发布后提供含历史安装包的发行列表页，每个网址使用独立的单行代码块，便于分别复制。附件工具不可用时提供真实下载地址，不声称已发送附件。
+- 主代理负责协调、验收和关键决策；可独立工作交给最低胜任档子代理。工具不支持分档或子代理时如实说明并继续完成，不编造调用。
 
 ## 项目定位与多机型约束
 
@@ -52,7 +63,7 @@ cd ToolboxApp
 - `module.prop` 在 zip 根目录。
 - `META-INF/com/google/android/update-binary` 存在且权限 0755。
 - 所有 `.sh` 过 `bash -n`。
-- `app/HyperOS_XJ.apk` 来自最新构建。
+- `app/rezhale_toolbox.apk` 来自最新构建，签名证书与 `state/workspace.json` 中的既有证书一致。
 - 新模块里只有一个 APK。
 - 不包含旧 `thermal_core.sh`、`battery/scripts`、`webroot`、`hyperosui`、`rearscreen/`。
 

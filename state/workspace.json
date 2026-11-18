@@ -1,0 +1,21 @@
+{
+  "repositories": {
+    "source": {
+      "directory": ".",
+      "visibility": "public",
+      "origin": "https://gitee.com/xiaomirezhale/HyperOS_XJ.git",
+      "mirror": "https://github.com/1014411313/HyperOS_XJ.git"
+    },
+    "feedback": {
+      "directory": "../xj-feedback",
+      "directory_env": "XJ_FEEDBACK_DIR",
+      "visibility": "private",
+      "origin": "https://gitee.com/xiaomirezhale/xj-feedback.git"
+    }
+  },
+  "android_signing": {
+    "variant": "debug",
+    "keystore": "~/.android/debug.keystore",
+    "certificate_sha256": "67ad9eb6abecaca135ef1b26845fc554b50b9534dc60a3e58eced4b0bff720c1"
+  }
+}

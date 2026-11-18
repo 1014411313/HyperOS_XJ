@@ -5,7 +5,8 @@
 #   scripts/release_module.sh --local                        # 只打包当前版本，不提交、不推送
 #   scripts/release_module.sh 3.1.67 --notes "..." --dry-run # 只打印将要执行的动作
 #
-# 依赖：git、zip、python3、curl、JDK/SDK（gradlew --offline）。凭据取自 git 凭据助手，脚本不保存也不回显任何密钥。
+# 依赖：Bash、git、zip、python3、curl、JDK/SDK；Windows 在 WSL 中运行。
+# 首次构建加 --online；发布令牌取自 GITEE_TOKEN/GITHUB_TOKEN 或已配置的 Git credential helper。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -13,21 +14,24 @@ GITEE_REPO="${GITEE_REPO:-xiaomirezhale/HyperOS_XJ}"
 GITHUB_REPO="${GITHUB_REPO:-1014411313/HyperOS_XJ}"
 GITEE_URL="https://gitee.com/${GITEE_REPO}.git"
 GITHUB_URL="https://github.com/${GITHUB_REPO}.git"
-AICODE_DIR="${AICODE_DIR:-$HOME/.aicode}"
 MODULE_DIR="$ROOT/dist/HyperOS_XJ_New"
 PROP="$MODULE_DIR/module.prop"
 
 usage() {
-    sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'
+    echo '  --online：联网下载首次构建所需依赖；默认使用离线缓存'
+    echo '  --check：只检查双仓库及发布环境，不构建、不推送'
 }
 
-VERSION=""; NOTES=""; CODE=""; DRY_RUN=0; LOCAL=0
+VERSION=""; NOTES=""; CODE=""; DRY_RUN=0; LOCAL=0; ONLINE=0
 while [ $# -gt 0 ]; do
     case "$1" in
         -n|--dry-run) DRY_RUN=1; shift ;;
         --local)      LOCAL=1; shift ;;
-        --notes)      NOTES="${2:-}"; shift 2 ;;
-        --code)       CODE="${2:-}"; shift 2 ;;
+        --online)     ONLINE=1; shift ;;
+        --check)      exec python3 "$ROOT/scripts/doctor.py" --profile release ;;
+        --notes)      [ $# -ge 2 ] || { echo '--notes 缺少说明' >&2; exit 2; }; NOTES="$2"; shift 2 ;;
+        --code)       [ $# -ge 2 ] || { echo '--code 缺少数值' >&2; exit 2; }; CODE="$2"; shift 2 ;;
         -h|--help)    usage; exit 0 ;;
         -*)           echo "未知参数: $1" >&2; usage >&2; exit 2 ;;
         *)            [ -z "$VERSION" ] || { echo "只接受一个版本号" >&2; exit 2; }; VERSION="$1"; shift ;;
@@ -42,14 +46,23 @@ if [ "$LOCAL" = 1 ] && [ -z "$VERSION" ]; then
     VERSION="$CUR_VER"
 fi
 [ -n "$VERSION" ] || { echo "缺少版本号（如 3.1.67）" >&2; usage >&2; exit 2; }
-case "$VERSION" in
-    [0-9]*.[0-9]*.[0-9]*) ;;
-    *) echo "版本号格式应为 X.Y.Z，收到: $VERSION" >&2; exit 2 ;;
-esac
+[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+    echo "版本号格式应为 X.Y.Z，收到: $VERSION" >&2; exit 2; }
+for repo in "$GITEE_REPO" "$GITHUB_REPO"; do
+    [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || {
+        echo '仓库必须为 owner/repository' >&2; exit 2; }
+done
+python3 - "$ROOT/state/workspace.json" "$GITEE_URL" "$GITHUB_URL" <<'PY'
+import json, sys
+source = json.load(open(sys.argv[1], encoding='utf-8'))['repositories']['source']
+if (sys.argv[2], sys.argv[3]) != (source['origin'], source['mirror']):
+    raise SystemExit('发行目标与源码仓库清单不符，请核对 state/workspace.json；不得向诊断仓库发布')
+PY
 [ -n "$CODE" ] || { if [ "$LOCAL" = 1 ]; then CODE="$CUR_CODE"; else CODE=$((CUR_CODE + 1)); fi; }
 case "$CODE" in ''|*[!0-9]*) echo "versionCode 必须是整数: $CODE" >&2; exit 2 ;; esac
 if [ "$LOCAL" = 1 ]; then
-    [ "$CODE" -ge "$CUR_CODE" ] || { echo "versionCode $CODE 小于当前 $CUR_CODE" >&2; exit 2; }
+    [ "$CODE" -eq "$CUR_CODE" ] && [ "$VERSION" = "$CUR_VER" ] || {
+        echo '--local 只打包当前版本，不接受另一个版本或 versionCode' >&2; exit 2; }
 else
     [ "$CODE" -gt "$CUR_CODE" ] || { echo "versionCode $CODE 必须大于当前 $CUR_CODE" >&2; exit 2; }
 fi
@@ -74,7 +87,7 @@ if [ "$DRY_RUN" = 1 ]; then
 fi
 
 if [ "$LOCAL" != 1 ]; then
-git -C "$ROOT" rev-parse -q --verify "refs/tags/$TAG" >/dev/null && {
+    git -C "$ROOT" rev-parse -q --verify "refs/tags/$TAG" >/dev/null && {
         echo "标签 $TAG 已存在" >&2; exit 2; }
     git -C "$ROOT" config user.name >/dev/null 2>&1 && git -C "$ROOT" config user.email >/dev/null 2>&1 || {
         echo "未配置 git 身份，先执行：" >&2
@@ -83,6 +96,44 @@ git -C "$ROOT" rev-parse -q --verify "refs/tags/$TAG" >/dev/null && {
         exit 2; }
 fi
 
+cred_for() {
+    local token=""
+    case "$1" in
+        gitee.com) token="${GITEE_TOKEN:-}" ;;
+        github.com) token="${GITHUB_TOKEN:-}" ;;
+    esac
+    if [ -n "$token" ]; then
+        printf '%s' "$token"
+    else
+        printf 'protocol=https\nhost=%s\n\n' "$1" \
+            | GIT_TERMINAL_PROMPT=0 git -C "$ROOT" credential fill 2>/dev/null \
+            | sed -n 's/^password=//p'
+    fi
+}
+if [ "$LOCAL" != 1 ]; then
+    GT="$(cred_for gitee.com)" || { echo 'Gitee 发布凭据不可用' >&2; exit 1; }
+    GH="$(cred_for github.com)" || { echo 'GitHub 发布凭据不可用' >&2; exit 1; }
+    [ -n "$GT" ] && [ -n "$GH" ] || { echo '两个源码发行端均需配置发布凭据' >&2; exit 1; }
+    RELEASE_TMP="$(mktemp -d)"
+    trap 'rm -r -- "$RELEASE_TMP"' EXIT
+    cat > "$RELEASE_TMP/askpass" <<'SH'
+#!/bin/sh
+case "$1" in
+    *Username*gitee.com*) printf '%s\n' "$XJ_GITEE_USER" ;;
+    *Username*github.com*) printf '%s\n' 'x-access-token' ;;
+    *Password*gitee.com*) printf '%s\n' "$GT" ;;
+    *Password*github.com*) printf '%s\n' "$GH" ;;
+    *) exit 1 ;;
+esac
+SH
+    chmod 700 "$RELEASE_TMP/askpass"
+    XJ_GITEE_USER="${GITEE_USERNAME:-${GITEE_REPO%%/*}}"
+    GIT_ASKPASS="$RELEASE_TMP/askpass"
+    export GT GH XJ_GITEE_USER GIT_ASKPASS
+    export GIT_TERMINAL_PROMPT=0 LC_ALL=C
+fi
+
+python3 "$ROOT/scripts/doctor.py" --profile build
 step "1/7 构建 App ($VERSION/$CODE)"
 if [ "$LOCAL" != 1 ]; then
     python3 - "$PROP" "$VERSION" "$CODE" <<'PY'
@@ -94,7 +145,10 @@ text = re.sub(r'^versionCode=.*$', f'versionCode={code}', text, count=1, flags=r
 open(path, 'w', encoding='utf-8').write(text)
 PY
 fi
-( cd "$ROOT/ToolboxApp" && ./gradlew :androidApp:assembleDebug --offline --console=plain )
+GRADLE_ARGS=(--offline)
+[ "$ONLINE" = 0 ] || GRADLE_ARGS=()
+( cd "$ROOT/ToolboxApp" && ./gradlew :androidApp:assembleDebug "${GRADLE_ARGS[@]}" --console=plain )
+python3 "$ROOT/scripts/doctor.py" --profile build
 
 step "2/7 同步模块树"
 mkdir -p "$MODULE_DIR/app"
@@ -189,49 +243,53 @@ git -C "$ROOT" tag -a "$TAG" -m "$TAG"
 git -C "$ROOT" log --oneline -1
 
 step "6/7 推送 master 与 $TAG"
-git -C "$ROOT" push "$GITEE_URL" master
-git -C "$ROOT" push "$GITEE_URL" "$TAG"
-git -C "$ROOT" push "$GITHUB_URL" master
-git -C "$ROOT" push "$GITHUB_URL" "$TAG"
+git -C "$ROOT" -c credential.helper= push "$GITEE_URL" master
+git -C "$ROOT" -c credential.helper= push "$GITEE_URL" "$TAG"
+git -C "$ROOT" -c credential.helper= push "$GITHUB_URL" master
+git -C "$ROOT" -c credential.helper= push "$GITHUB_URL" "$TAG"
 
 step "7/7 创建 release 并上传 $ASSET"
-cred_for() {
-    printf 'protocol=https\nhost=%s\n\n' "$1" \
-        | "$AICODE_DIR/git-credential-aicode" get 2>/dev/null \
-        | sed -n 's/^password=//p'
-}
 ZIP="$ROOT/dist/$ASSET"
-python3 -c 'import json,sys;json.dump({"tag_name":sys.argv[1],"name":sys.argv[1],"body":sys.argv[2],"target_commitish":"master","prerelease":False},open("/tmp/rel-body.json","w"),ensure_ascii=False)' "$TAG" "$NOTES"
+python3 -c 'import json,sys;json.dump({"tag_name":sys.argv[1],"name":sys.argv[1],"body":sys.argv[2],"target_commitish":"master","prerelease":False},open(sys.argv[3],"w"),ensure_ascii=False)' "$TAG" "$NOTES" "$RELEASE_TMP/rel-body.json"
 
-GT="$(cred_for gitee.com)"
-[ -n "$GT" ] || { echo "取不到 Gitee 凭据，无法创建 release" >&2; exit 1; }
-curl -sS -o /tmp/rel-gitee.json -w 'gitee release http=%{http_code}\n' -X POST \
+curl -fsS --connect-timeout 30 --max-time 900 -o "$RELEASE_TMP"/rel-gitee.json -w 'gitee release http=%{http_code}\n' -X POST \
     -H "Authorization: token $GT" -H 'Content-Type: application/json' \
-    --data-binary @/tmp/rel-body.json \
+    --data-binary "@$RELEASE_TMP/rel-body.json" \
     "https://gitee.com/api/v5/repos/$GITEE_REPO/releases"
-GID="$(python3 -c 'import json;print(json.load(open("/tmp/rel-gitee.json")).get("id",""))')"
-[ -n "$GID" ] || { echo "Gitee release 创建失败，见 /tmp/rel-gitee.json" >&2; exit 1; }
-curl -sS -o /tmp/rel-gitee-asset.json -w 'gitee asset   http=%{http_code}\n' -X POST \
+GID="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("id",""))' "$RELEASE_TMP/rel-gitee.json")"
+[ -n "$GID" ] || { echo 'Gitee release 响应缺少 id，未继续上传' >&2; exit 1; }
+curl -fsS --connect-timeout 30 --max-time 900 -o "$RELEASE_TMP"/rel-gitee-asset.json -w 'gitee asset   http=%{http_code}\n' -X POST \
     -H "Authorization: token $GT" -F "file=@$ZIP" \
     "https://gitee.com/api/v5/repos/$GITEE_REPO/releases/$GID/attach_files"
+python3 - "$RELEASE_TMP/rel-gitee-asset.json" "$ASSET" "$ZIP" <<'PY'
+import json, os, sys
+d = json.load(open(sys.argv[1]))
+assert d.get('name') == sys.argv[2] and d.get('size') == os.path.getsize(sys.argv[3]), 'Gitee 资产校验失败'
+PY
 
-GH="$(cred_for github.com)"
 if [ -n "$GH" ]; then
-    curl -sS -o /tmp/rel-github.json -w 'github release http=%{http_code}\n' -X POST \
+    curl -fsS --connect-timeout 30 --max-time 900 -o "$RELEASE_TMP"/rel-github.json -w 'github release http=%{http_code}\n' -X POST \
         -H "Authorization: Bearer $GH" -H 'Accept: application/vnd.github+json' \
-        -H 'Content-Type: application/json' --data-binary @/tmp/rel-body.json \
+        -H 'Content-Type: application/json' --data-binary "@$RELEASE_TMP/rel-body.json" \
         "https://api.github.com/repos/$GITHUB_REPO/releases"
-    HGID="$(python3 -c 'import json;print(json.load(open("/tmp/rel-github.json")).get("id",""))')"
+    HGID="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("id",""))' "$RELEASE_TMP/rel-github.json")"
     if [ -n "$HGID" ]; then
-        curl -sS -o /tmp/rel-github-asset.json -w 'github asset   http=%{http_code}\n' -X POST \
+        curl -fsS --connect-timeout 30 --max-time 900 -o "$RELEASE_TMP"/rel-github-asset.json -w 'github asset   http=%{http_code}\n' -X POST \
             -H "Authorization: Bearer $GH" -H 'Accept: application/vnd.github+json' \
             -H 'Content-Type: application/zip' --data-binary "@$ZIP" \
             "https://uploads.github.com/repos/$GITHUB_REPO/releases/$HGID/assets?name=$ASSET"
+        python3 - "$RELEASE_TMP/rel-github-asset.json" "$ASSET" "$ZIP" <<'PY'
+import json, os, sys
+d = json.load(open(sys.argv[1]))
+assert d.get('name') == sys.argv[2] and d.get('size') == os.path.getsize(sys.argv[3]) and d.get('state') == 'uploaded', 'GitHub 资产校验失败'
+PY
     else
-        echo "GitHub release 创建失败，见 /tmp/rel-github.json（Gitee 已发布）" >&2
+        echo "GitHub release 创建失败（Gitee 已发布）" >&2
+        exit 1
     fi
 else
-    echo "未取到 GitHub 凭据，跳过 GitHub 发布" >&2
+    echo "GitHub 发布凭据不可用" >&2
+    exit 1
 fi
 
 printf '\n========== 链接文件（纯地址，可跨设备/模型）==========\n'

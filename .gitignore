@@ -12,6 +12,9 @@ dist/*.apk
 dist/*.bundle
 *.apk
 *.idsig
+*.keystore
+*.jks
+CLAUDE.local.md
 
 # Third-party reference material (local only)
 references/
