@@ -59,8 +59,6 @@ fi
 # 迁移来的 state/ 可能带旧 daemon.pid（bug-056）：安装后必重启、旧 pid 已无意义，
 # 清掉避免人工排查时误信；存活判定已改为按真实进程（boot.sh daemon_alive）。
 rm -f "$DATA_DIR/state"/*.pid 2>/dev/null
-[ -s "$DATA_DIR/config/settings.json" ] || \
-    cp -f "$MODPATH/default_settings.json" "$DATA_DIR/config/settings.json" 2>/dev/null
 [ -s "$DATA_DIR/battery/settings.conf" ] || \
     cp -f "$MODPATH/battery/config/settings.conf" "$DATA_DIR/battery/settings.conf" 2>/dev/null
 if [ -n "$_dev" ] && [ -f "$DATA_DIR/battery/settings.conf" ] && ! grep -q '^dev_code=' "$DATA_DIR/battery/settings.conf" 2>/dev/null; then
@@ -96,6 +94,8 @@ case "$_plat" in
     *)
         rm -f "$DATA_DIR/config/mtk_fix" 2>/dev/null ;;
 esac
+[ -s "$DATA_DIR/config/settings.json" ] || \
+    cp -f "$MODPATH/default_settings.json" "$DATA_DIR/config/settings.json" 2>/dev/null
 
 _apk="$MODPATH/app/rezhale_toolbox.apk"
 _apk_ok=0

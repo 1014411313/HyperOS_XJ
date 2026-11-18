@@ -70,12 +70,12 @@
       "type": "bug",
       "version_seen": "3.1.60（370）/ 3.1.61（371）及当前工作区",
       "device": "haotian / Xiaomi 15 Pro / Android 17",
-      "status": "控制逻辑已修，模拟回归通过；实际功率稳定性待真机验证",
+      "status": "代码已修，APL回归通过；实际功率稳定性待真机验证",
       "fixed_in": "3.1.63（373）",
-      "root_cause": "APL故障事件识别不稳定，锁定期温度回升分支仍可上调；APL目标需写入但无回读失败诊断。",
-      "resolution": "采用事件游标，故障降档不高于故障前目标；塌陷/硬故障锁定期不执行温度回升或上探；过热交还DT温控时不写电流；APL目标回读失败按相同目标累计并限频记录，仍受控重试。模拟控制回归通过；原诊断包中的整机功率震荡是否完全消除需真机采样，不宣称已证实根因全解。",
-      "evidence": "原日志证明历史目标反复降档/锁定及安顿重试，不能区分电源能力与采样/节点表现；scripts/charge_control_regression.py覆盖硬故障不升目标、锁期不回升、高温不写节点及回读失败限频。",
-      "affected": ["engine/lib/apl.sh", "engine/lib/power.sh", "scripts/charge_control_regression.py"]
+      "root_cause": "APL故障事件识别不稳定，锁定期温度回升分支仍可上调；档案判定适配器变化时将目标恢复至上限，绕过塌陷锁定；硬故障检测把完整dmesg作为外部printf参数后才截取，日志过大触发Argument list too long并静默漏判。APL目标需写入但无回读失败诊断。",
+      "resolution": "采用事件游标，故障降档不高于故障前目标；塌陷/硬故障锁定期不执行温度回升或上探；适配器档案重置先读取锁定状态，锁内保留已降目标；硬故障检测改为先限取最近300行及64KiB再解析，超大日志回归确认仍能识别新增故障；过热交还DT温控时不写电流；APL目标回读失败按相同目标累计并限频记录，仍受控重试。scripts/charge_control_regression.py通过；实际功率稳定性仍待真机采样。",
+      "evidence": "2026-11-16 20:15诊断包APL日志反复记载适配器变更后塌陷降档；同段采样20:08:13显示APL目标由20000mA变10000mA、20:08:52采样节点回读10000000µA，表明降档曾生效但不排除重置导致再次升目标。daemon.log多条printf Argument list too long与APL将整份dmesg传给printf后才截300行的代码路径吻合，原始行无时间戳，不能确认错误频率及实际影响。scripts/charge_control_regression.py覆盖锁内档案重置保持目标、超大dmesg识别事件、游标、高温及节点边界。",
+      "affected": ["engine/lib/apl.sh", "dist/HyperOS_XJ_New/engine/lib/apl.sh", "engine/lib/power.sh", "scripts/charge_control_regression.py"]
     },
     {
       "id": "bug-137",
@@ -263,6 +263,81 @@
     }
   ],
   "fixed": [
+    {
+      "id": "bug-141",
+      "title": "电压采样失败被当成零电压触发关机",
+      "reported": "2026-11-18",
+      "type": "bug",
+      "version_seen": "3.1.65 当前工作区",
+      "device": "隔离模拟，未操作真实设备",
+      "status": "代码已修，隔离回归通过，待真机验证",
+      "evidence": "无诊断包；voltage_now 缺失、非法或为零且 term_v=3400 时旧代码请求关机，修复后均不请求；有效 3300000µV 仍请求关机。",
+      "fix_plan": "关机判断仅接受当前拍有效正电压。",
+      "root_cause": "sample 将读取失败归零，关机守卫未排除零电压。",
+      "fixed_in": "3.1.66（376）",
+      "resolution": "关机比较增加 BAT_VOLT>0 条件，覆盖缺失、非法、零、高于阈值及低于阈值。",
+      "affected": ["engine/xjdaemon.sh", "scripts/charge_control_regression.py"]
+    },
+    {
+      "id": "bug-142",
+      "title": "原厂温控备份失败仍标完成且还原先删除配置",
+      "reported": "2026-11-18",
+      "type": "bug",
+      "version_seen": "3.1.65 当前工作区",
+      "device": "隔离模拟，未操作真实设备",
+      "status": "代码已修，隔离回归通过，待真机验证",
+      "evidence": "无诊断包；注入 cp 失败后旧代码写 .done 并返回成功，还原删除临时目录原配置；修复后复制失败保留原配置，提交失败回滚。",
+      "fix_plan": "备份成功后才提交标记，还原先准备完整副本，失败不改状态，不允许无备份覆盖。",
+      "root_cause": "备份未检查复制返回码，还原未验证备份且先清空目标，调用方吞掉失败。",
+      "fixed_in": "3.1.66（376）",
+      "resolution": "检查备份复制及标记写入，拒绝只有标记的空备份；还原临时副本完成权限准备后交换目录并支持失败回滚；档位和旁路应用需先备份；还原失败不更新模式，--once 透传失败。",
+      "affected": ["engine/lib/thermal.sh", "engine/xjdaemon.sh", "scripts/charge_control_regression.py"]
+    },
+    {
+      "id": "bug-143",
+      "title": "APL 持续超温时低于 2000mA 的历史目标被丢弃",
+      "reported": "2026-11-18",
+      "type": "bug",
+      "version_seen": "3.1.65 当前工作区",
+      "device": "隔离模拟，未操作真实设备",
+      "status": "代码已修，隔离回归通过，待真机验证",
+      "evidence": "无诊断包；相同超温读数的两拍目标从1848mA反弹5280mA；修复后连续四拍超温目标不回升。",
+      "fix_plan": "历史目标与功率层使用相同的300mA有效下限。",
+      "root_cause": "APL 写出低于2000mA的目标后，下一拍起始目标拒绝沿用并回到高目标。",
+      "fixed_in": "3.1.66（376）",
+      "resolution": "历史目标下限改为300mA，保留现有温度斜率、功率下限和恢复策略。",
+      "affected": ["engine/lib/apl.sh", "scripts/charge_control_regression.py"]
+    },
+    {
+      "id": "bug-144",
+      "title": "联发科首装先写入通用设置再选择平台模板",
+      "reported": "2026-11-18",
+      "type": "bug",
+      "version_seen": "3.1.65 当前工作区",
+      "device": "mt6989/sm8750 属性桩，未安装真实模块",
+      "status": "代码已修，隔离回归通过，待真机验证",
+      "evidence": "无诊断包；旧代码联发科首装实际配置charge_mode=true/charge_level=unlimited，模板却为false/level_1。",
+      "fix_plan": "平台模板选择后再初始化缺失配置，升级保留用户配置。",
+      "root_cause": "settings.json 首次复制早于平台识别和模板替换。",
+      "fixed_in": "3.1.66（376）",
+      "resolution": "后移配置初始化，覆盖联发科首装、升级保留和高通首装。",
+      "affected": ["dist/HyperOS_XJ_New/customize.sh", "scripts/app_status_install_regression.py"]
+    },
+    {
+      "id": "bug-145",
+      "title": "卸载还原命令失败仍报告已还原",
+      "reported": "2026-11-18",
+      "type": "bug",
+      "version_seen": "3.1.65 当前工作区",
+      "device": "隔离命令桩，未卸载真实模块",
+      "status": "代码已修，隔离回归通过，待真机验证",
+      "evidence": "无诊断包；七条还原命令注入非零退出码后旧报告仍显示全部已还原。",
+      "fix_plan": "逐项记录命令结果，失败保留配置和备份，返回非零，应用前禁用引擎。",
+      "root_cause": "未检查还原命令状态且成功提示为固定文本；thermal set default 后 apply 仍可能选中充电或游戏场景。",
+      "fixed_in": "3.1.66（376）",
+      "resolution": "报告区分命令完成与失败，失败保留数据；禁用后应用使还原不重新进入充电场景；命令完成不等同硬件回读验证，报告保留节点值。",
+      "affected": ["dist/HyperOS_XJ_New/uninstall.sh", "engine/xjdaemon.sh", "scripts/app_status_install_regression.py"]
+    },
     {
       "id": "bug-068",
       "title": "增强诊断包采集范围（一次带齐排查所需数据）",
@@ -1003,16 +1078,16 @@
       "type": "bug",
       "version_seen": "3.1.1 (311)",
       "device": "haotian",
-      "status": "已修待复测",
-      "evidence": "真机：面板数值约 3 秒才跳一次。App 已每 0.7s 轮询读 status.json，但守护 poll_interval=3 才写一次快照；守护掉线时还会每 0.7 秒 fork 一次 su 采样造成卡顿",
+      "status": "已真机验证",
+      "evidence": "首次反馈主页读数偶发1秒或3-4秒更新。根因：非充电守护周期3秒，Root兜底缓存3秒，App轮询在读取结束后再等待导致周期漂移。用户安装3.1.65候选包后确认刷新稳定，无问题。",
       "root_cause": "刷新率瓶颈在写端：xjdaemon 每 3 秒才写一次 status.json，App 读端再快也只能 3 秒一跳",
       "fix_plan": "App 免 root 直读 /sys/class/power_supply/battery/* 实时字段，status.json 只补齐其余字段",
       "affected": [
         "ToolboxApp/app/src/androidMain/kotlin/com/hyperos/xj/runtime/ToolboxRuntimeBridge.android.kt:19"
       ],
-      "fixed_in": "3.1.2（312，未发布）",
-      "resolution": "readStatus 先读 sysfs（capacity/status/temp/voltage_now/current_now，cell 取 voltage_avg→cell1_volt→voltage_now），再叠加 status.json 的其余字段；status.json 过期/缺失时用 sysfs 兜底而不是 fork su。容器 :androidApp:assembleDebug BUILD SUCCESSFUL in 51s",
-      "fixed_note": "待真机复测"
+      "fixed_in": "3.1.65（375）",
+      "resolution": "主页状态按单调时钟维持1秒轮询节奏，读取耗时从周期预算中扣除；非充电守护采样默认及模块配置从3秒调整到1秒；Root兜底状态缓存从3秒调整到1秒。用户真机复测确认刷新稳定。离线 APK 构建通过。",
+      "fixed_note": "用户真机验证通过"
     },
     {
       "id": "bug-003",

@@ -149,8 +149,8 @@ apl_boot_id() {
 
 apl_hard_fault() {
   _mark="$STATE/apl_dmesg_mark"
-  _dmesg=$(dmesg 2>/dev/null) || return 2
-  _dmesg=$(printf '%s\n' "$_dmesg" | tail -n 300)
+  _dmesg=$(dmesg 2>/dev/null | tail -n 300 | tail -c 65536)
+  [ -n "$_dmesg" ] || return 2
   _boot=$(apl_boot_id)
   [ -n "$_boot" ] || _boot=$(printf '%s\n' "$_dmesg" | head -n 1 | cksum 2>/dev/null | cut -d' ' -f1)
   [ -n "$_boot" ] || return 2
@@ -260,6 +260,8 @@ apl_tick() {
   _apl_gap=$(apl_num "$(cfg_get cg_min_write_gap 60)")
   [ "$_apl_gap" -lt 15 ] && _apl_gap=15
 
+  apl_state_load
+
   # ---- 学习档案：适配器变更（去抖）/ 超过 7 天 → 作废重学 ----
   _apl_fp=$(apl_adp_fp)
   _apl_seen=$(apl_num "$(apl_prof_get seen)")
@@ -271,11 +273,12 @@ apl_tick() {
     apl_prof_set adp "$_apl_fp"
     apl_prof_set seen "$_apl_now"
     blog "APL 档案重置: $_apl_why"
+    if [ "$_apl_now" -lt "$apl_lock_until" ]; then
+      _apl_why=""
+    fi
   elif [ "$_apl_seen" = "0" ] || [ $(( _apl_now - _apl_seen )) -gt 600 ]; then
     apl_prof_set seen "$_apl_now"
   fi
-
-  apl_state_load
 
   # ---- 让路：不写目标，power.sh 读不到文件时退回原有 inf 行为 ----
   _apl_let=""
@@ -298,7 +301,7 @@ apl_tick() {
   [ "$_apl_tgt" -lt "$_apl_floor" ] && _apl_tgt="$_apl_floor"
   _apl_prev=$(cat "$APL_TGT" 2>/dev/null)
   case "$_apl_prev" in ''|*[!0-9]*) _apl_prev="" ;; esac
-  [ -n "$_apl_prev" ] && [ "$_apl_prev" -ge 2000 ] && _apl_tgt="$_apl_prev"
+  [ -n "$_apl_prev" ] && [ "$_apl_prev" -ge 300 ] && _apl_tgt="$_apl_prev"
   [ -n "$_apl_why" ] && _apl_tgt="$_apl_cap"
   [ "$_apl_tgt" -gt "$_apl_cap" ] && _apl_tgt="$_apl_cap"
 

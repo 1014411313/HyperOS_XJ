@@ -148,7 +148,7 @@ battery_guard_tick() {
   _tv=$(cfg_get term_v "")
   if [ -n "$_tv" ] && [ "$IS_CHARGING" != "1" ]; then
     case "$_tv" in ''|*[!0-9]*) _tv="" ;; esac
-    [ -n "$_tv" ] && [ $((BAT_VOLT / 1000)) -le "$_tv" ] && { log "电压 $((BAT_VOLT / 1000))mV ≤ 关机阈值 ${_tv}mV，执行关机"; reboot -p 2>/dev/null || svc power shutdown 2>/dev/null; }
+    [ -n "$_tv" ] && [ "${BAT_VOLT:-0}" -gt 0 ] && [ $((BAT_VOLT / 1000)) -le "$_tv" ] && { log "电压 $((BAT_VOLT / 1000))mV ≤ 关机阈值 ${_tv}mV，执行关机"; reboot -p 2>/dev/null || svc power shutdown 2>/dev/null; }
   fi
   # 公版 PPS：验证节点与 freepps 开关保持一致（两节点 + 回读校验在 pps_apply 里）。
   pps_tick
@@ -211,7 +211,7 @@ run_tick() {
     release_charge
     rear_stop
     if [ "$(cat "$CONFDIR/current_mode" 2>/dev/null)" != "$_label" ]; then
-      apply_default
+      apply_default || return 1
       printf '%s' "$_label" > "$CONFDIR/current_mode"
       update_status "$_label"
     fi
@@ -248,7 +248,7 @@ run_tick() {
   fi
   if [ "$_want_bypass" = "1" ]; then
     printf '1' > "$CONFDIR/bypass_active"
-    apply_bypass
+    apply_bypass || return 1
     write_status_json
     diag_log_tick
     [ "$BT_GUARDS_EXTERNAL" = "1" ] || battery_guard_tick
@@ -328,12 +328,14 @@ run_tick() {
       ;;
     *) apply_default ;;
   esac
+  _thermal_rc=$?
 
   [ "$BT_GUARDS_EXTERNAL" = "1" ] || battery_guard_tick
   rear_tick
   update_status "$(cat "$CONFDIR/current_mode" 2>/dev/null)"
   write_status_json
   diag_log_tick
+  return "$_thermal_rc"
 }
 
 bootstrap || log "初始化失败，稍后重试"
@@ -344,7 +346,7 @@ data_detect >/dev/null 2>&1
 TICK_N=0
 if [ "$1" = "--once" ]; then
   run_tick
-  exit 0
+  exit $?
 fi
 
 # 单实例：mkdir 原子锁 + pid 存活校验。

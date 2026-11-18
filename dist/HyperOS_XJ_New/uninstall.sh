@@ -34,19 +34,25 @@ uninstall_pack_backup() {
 uninstall_pack_backup
 echo "$_backup_msg"
 
-# 先关闭背屏并恢复旧版可能禁用的原生时钟
-[ -f "$MODDIR/engine/xjctl.sh" ] && sh "$MODDIR/engine/xjctl.sh" rear off >/dev/null 2>&1
-# 卸载 BAA、恢复 PSS
-[ -f "$MODDIR/engine/xjctl.sh" ] && sh "$MODDIR/engine/xjctl.sh" battery unlock off >/dev/null 2>&1
-# 还原 smart_fv 与循环计数（写回模块接管前的值）
-[ -f "$MODDIR/engine/xjctl.sh" ] && sh "$MODDIR/engine/xjctl.sh" battery restore >/dev/null 2>&1
-# 归还公版 PPS 验证节点（否则会停在 1）
-[ -f "$MODDIR/engine/xjctl.sh" ] && sh "$MODDIR/engine/xjctl.sh" battery pps off >/dev/null 2>&1
-# 交回充电节点
-[ -f "$MODDIR/engine/xjctl.sh" ] && sh "$MODDIR/engine/xjctl.sh" power restore >/dev/null 2>&1
-# 恢复温控默认配置
-[ -f "$MODDIR/engine/xjctl.sh" ] && sh "$MODDIR/engine/xjctl.sh" thermal set default >/dev/null 2>&1
-[ -f "$MODDIR/engine/xjctl.sh" ] && sh "$MODDIR/engine/xjctl.sh" apply >/dev/null 2>&1
+_restore_ok=""
+_restore_failed=""
+uninstall_restore() {
+  _step="$1"
+  shift
+  if [ -f "$MODDIR/engine/xjctl.sh" ] && sh "$MODDIR/engine/xjctl.sh" "$@" >/dev/null 2>&1; then
+    _restore_ok="${_restore_ok}${_restore_ok:+、}$_step"
+  else
+    _restore_failed="${_restore_failed}${_restore_failed:+、}$_step"
+  fi
+}
+uninstall_restore "背屏叠加/时钟" rear off
+uninstall_restore "BAA 挂载与 PSS" battery unlock off
+uninstall_restore "smart_fv 与循环计数" battery restore
+uninstall_restore "公版 PPS 验证节点" battery pps off
+uninstall_restore "充电节点" power restore
+# 禁用后再应用，避免充电/游戏场景覆盖默认温控并重新接管已还原的节点。
+uninstall_restore "禁用引擎" setting set enabled false
+uninstall_restore "温控默认" apply
 
 # 停看护与守护：不使用 pkill/pgrep -f 按脚本名匹配（有误匹配风险且设备上行为不稳），
 # 改为 /proc 扫描精确匹配本模块绝对路径后 kill。必须先杀看护 boot.sh 再杀 xjdaemon.sh，
@@ -74,7 +80,7 @@ rm -f "$DATA_DIR/state/daemon.pid" "$DATA_DIR/state/daemon.lock.d/pid" 2>/dev/nu
 pm uninstall --user 0 com.hyperos.xj >/dev/null 2>&1
 
 # 卸载时清掉模块目录外的用户数据（精确路径）
-rm -rf "$DATA_DIR" 2>/dev/null
+[ -z "$_restore_failed" ] && rm -rf "$DATA_DIR" 2>/dev/null
 
 case "$MODDIR" in
     /data/adb/modules/*|/data/adb/modules_update/*)
@@ -89,7 +95,8 @@ _rep="/sdcard/Download/rezhale_toolbox_uninstall_${_ts}_report.txt"
 command -v tee >/dev/null 2>&1 || _rep=""
 _body=$( {
   echo "===== 还原说明 ====="
-  echo "已还原: 背屏叠加/时钟、BAA 挂载与 PSS、smart_fv 与循环计数、公版 PPS 验证节点、充电节点、温控默认"
+  [ -n "$_restore_ok" ] && echo "还原命令完成（节点值见下方）: $_restore_ok"
+  [ -n "$_restore_failed" ] && echo "还原失败: $_restore_failed；已保留 $DATA_DIR 中的配置与备份"
   echo "不自动回滚: DTBO 分区。如曾刷入模块镜像，请用备份刷回后重启:"
   echo "  备份目录: /sdcard/Download/dtbo_backup/（主；不可写时自动落在 $DATA_DIR/battery/state/dtbo_backup/，已随本次备份包带走）"
   echo "  其中 manifest.txt 记录每份备份的 sha256 与槽位，before_flash/auto_backup 行即刷入前的分区内容"
@@ -106,10 +113,10 @@ _body=$( {
     [ -e "$_n" ] && echo "  $_n = $(cat "$_n" 2>/dev/null)"
   done
   echo "[文件]"
-  if [ -d "$DATA_DIR" ]; then echo "  $DATA_DIR 仍存在（本次清理未删除成功）"; else echo "  $DATA_DIR 已清除"; fi
+  if [ -d "$DATA_DIR" ]; then echo "  $DATA_DIR 仍存在（还原失败时保留，或清理未成功）"; else echo "  $DATA_DIR 已清除"; fi
   if [ -e "$MODDIR/module.prop" ]; then echo "  $MODDIR 仍存在（由后台延迟删除）"; else echo "  $MODDIR 已清除"; fi
 } 2>/dev/null )
 printf '%s\n' "$_body"
 [ -n "$_rep" ] && printf '%s\n' "$_body" > "$_rep" 2>/dev/null
 
-exit 0
+[ -z "$_restore_failed" ]

@@ -12,6 +12,7 @@
 用法：python3 scripts/app_status_install_regression.py
 """
 
+import json
 import os
 import shutil
 import subprocess
@@ -54,6 +55,7 @@ exit 0
 """
 
 GETPROP_STUB = """#!/bin/sh
+case "$1" in ro.board.platform) echo "${TEST_PLATFORM:-}";; esac
 exit 0
 """
 
@@ -82,7 +84,6 @@ STUBS = {
 
 MODULE_PROP = "id=rezhale_toolbox\nname=热炸了工具箱\nversion=3.1.58\nversionCode=368\n"
 SETTINGS_CONF = "dev_code=\n"
-DEFAULT_SETTINGS = "{}\n"
 
 
 class Case:
@@ -108,7 +109,7 @@ class Case:
             self.fails.append("%s（期望 %s，实际 %s）" % (what, want, got))
 
 
-def run_installer(name, env_extra=None, drop_apk=False):
+def run_installer(name, env_extra=None, drop_apk=False, existing_settings=None):
     sb = SESSION_ROOT / name
     if sb.exists():
         shutil.rmtree(sb)
@@ -122,7 +123,12 @@ def run_installer(name, env_extra=None, drop_apk=False):
         p.chmod(0o755)
     (sb / "moddir" / "module.prop").write_text(MODULE_PROP)
     (sb / "moddir" / "battery/config/settings.conf").write_text(SETTINGS_CONF)
-    (sb / "moddir" / "default_settings.json").write_text(DEFAULT_SETTINGS)
+    for template in ("default_settings.json", "default_settings.mtk.json"):
+        shutil.copyfile(CUSTOMIZE.parent / template, sb / "moddir" / template)
+    if existing_settings is not None:
+        config = sb / "data/adb/rezhale_toolbox/config"
+        config.mkdir(parents=True)
+        (config / "settings.json").write_text(existing_settings)
     if not drop_apk:
         (sb / "moddir/app/rezhale_toolbox.apk").write_text("fake apk")
 
@@ -267,6 +273,56 @@ def _run_cases():
     c.lacks("与模块版本一致", "pm path 查不到：不能报成功")
     results.append(("pm 报成功但查不到包", c))
 
+    for name, platform, existing in [
+        ("mtk_first", "mt6989", None),
+        ("mtk_upgrade", "mt6989", '{"charge_mode":true,"charge_level":"level_4"}'),
+        ("qcom_first", "sm8750", None),
+    ]:
+        c = run_installer(name, {"TEST_PLATFORM": platform}, existing_settings=existing)
+        settings = (c.sb / "data/adb/rezhale_toolbox/config/settings.json").read_text()
+        expected = existing or (CUSTOMIZE.parent / (
+            "default_settings.mtk.json" if platform.startswith("mt") else "default_settings.json"
+        )).read_text()
+        c.eq(json.loads(settings), json.loads(expected), "实际配置采用平台模板，升级保留用户配置")
+        results.append((name + " 配置初始化", c))
+
+    return results
+
+
+def uninstall_cases():
+    source = (CUSTOMIZE.parent / "uninstall.sh").read_text()
+    steps = source.split('_restore_ok=""', 1)[1].split('# 停看护', 1)[0]
+    report = source.split('_body=$( {', 1)[1].split('  echo "不自动回滚:', 1)[0]
+    cleanup = next(line for line in source.splitlines() if '&& rm -rf "$DATA_DIR"' in line)
+    results = []
+    for name, failed_step in [("all_ok", ""), ("apply_failed", "apply"),
+                              ("all_failed", "all")]:
+        sb = SESSION_ROOT / name
+        data = sb / "data"
+        data.mkdir(parents=True)
+        (data / "backup").write_text("preserve")
+        engine = sb / "engine"
+        engine.mkdir()
+        (engine / "xjctl.sh").write_text('''echo "$*" >> "$CALL_LOG"
+[ "$FAILED_STEP" != all ] && [ "$*" != "$FAILED_STEP" ]
+''')
+        script = '_restore_ok=""' + steps + cleanup + '\n' + report
+        script += '\n[ -z "$_restore_failed" ]\n'
+        env = dict(os.environ, MODDIR=str(sb), DATA_DIR=str(data),
+                   CALL_LOG=str(sb / "calls.log"), FAILED_STEP=failed_step)
+        proc = subprocess.run(["sh", "-c", script], env=env, capture_output=True, text=True)
+        c = Case(sb, proc)
+        c.eq(proc.returncode, 1 if failed_step else 0, "还原失败返回非零")
+        c.eq(data.exists(), bool(failed_step), "仅还原成功时清理数据")
+        c.eq(len(c.calls("")), 7, "失败后仍尝试其余还原步骤")
+        c.lacks("已还原:", "不把命令结果当作节点已验证")
+        if failed_step:
+            c.has("还原失败:", "失败项应进入报告")
+        else:
+            c.lacks("还原失败:", "全部成功不报告失败")
+        calls = c.calls("")
+        c.eq(calls[-2:], ["setting set enabled false", "apply"], "禁用后应用，避免充电场景重接管")
+        results.append((name + " 卸载还原结果", c))
     return results
 
 
@@ -275,7 +331,7 @@ def main():
     bridge_fails = check_bridge_source()
     SESSION_ROOT = Path(tempfile.mkdtemp(prefix="xj-install-check-"))
     try:
-        results = _run_cases()
+        results = _run_cases() + uninstall_cases()
     finally:
         shutil.rmtree(SESSION_ROOT, ignore_errors=True)
     behavior_fails = check_status_source_behavior()

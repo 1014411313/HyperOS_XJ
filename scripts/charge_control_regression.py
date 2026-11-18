@@ -72,6 +72,11 @@ def apl_case(sb):
     assert run(base + "apl_hard_fault; printf 'unreadable=%s\\n' \"$?\"", env).strip() == "unreadable=2"
     assert (sb / "state/apl_dmesg_mark").read_text() == before
 
+    # 超大内核日志在筛选前限界，保护事件仍能被增量识别。
+    write_exe(bindir / "dmesg", 'cat "$DMSG_FILE"\n')
+    dmesg.write_text(("noise\n" * 20000) + "[20.000] cp work abnormal\n")
+    assert run(base + "apl_hard_fault; printf 'large=%s\\n' \"$?\"", env).strip() == "large=0"
+
 
 def power_env(sb):
     nodes = sb / "nodes"
@@ -113,6 +118,7 @@ def apl_tick_case(sb):
                 "APL_ONLINE": "1", "FAULT_RC": "0", "LOCK_UNTIL": "9999999999"})
     script = """
 . \"%s\"
+date() { echo 1000; }
 cfg_get() { case \"$1\" in apl_enable) echo 1;; power_limit) echo inf;; cg_min_write_gap) echo 60;; apl_max_ma) echo 20000;; *) echo \"$2\";; esac; }
 apl_num() { case \"$1\" in ''|*[!0-9]*) echo 0;; *) echo \"$1\";; esac; }
 apl_rd() { case \"$1\" in *online) echo 1;; *) echo 0;; esac; }
@@ -125,7 +131,7 @@ apl_prof_get() { case \"$1\" in seen) echo 9999999999;; *) echo 0;; esac; }
 apl_adp_check() { :; }
 apl_prof_best() { :; }
 apl_prof_set() { :; }
-apl_state_load() { apl_prev_uon=1; apl_warm_start=0; apl_lock_until=$LOCK_UNTIL; apl_low_cnt=0; apl_stable_cnt=0; apl_stab_ibat=0; apl_prev_ibat=0; apl_last_up=900; apl_thermal_prev=6000; }
+apl_state_load() { apl_prev_uon=1; apl_warm_start=0; apl_lock_until=$LOCK_UNTIL; apl_low_cnt=0; apl_stable_cnt=0; apl_stab_ibat=0; apl_prev_ibat=0; apl_last_up=900; apl_thermal_prev=0; }
 apl_state_save() { :; }
 apl_hard_fault() { return "$FAULT_RC"; }
 blog() { :; }
@@ -141,13 +147,37 @@ cat \"$APL_TGT\"
 
     # 锁内温度回落时不应用温控回升斜率。
     (state / "apl_target_ma").write_text("3000")
-    env["LOCK_UNTIL"] = "9999999999"
+    env["LOCK_UNTIL"] = "1030"
     env["FAULT_RC"] = "1"
-    script_locked = script
-    # 此次不报告硬故障，隔离温控回升逻辑；未来锁期内不应回升。
-    # 当前测试时钟固定为1000，锁截至1030；读回目标不得大于3000mA。
-    out = run(script_locked, env).strip()
+    out = run(script, env).strip()
     assert out == "3000", out
+
+    # 适配器档案重置不能把锁内已降目标抬回设备上限。
+    (state / "apl_target_ma").write_text("10000")
+    (state / "apl_state").write_text("1 0 1060 0 0 0 12000 900 0")
+    env["LOCK_UNTIL"] = "1060"
+    env["APL_FP"] = "changed"
+    env["ADP_REASON"] = "适配器变更"
+    reset_script = script.replace(
+        'apl_adp_fp() { echo test; }',
+        'apl_adp_fp() { echo "${APL_FP:-test}"; }').replace(
+        'apl_prof_best() { :; }',
+        'apl_prof_best() { echo 20000; }').replace(
+        'apl_adp_check() { :; }',
+        'apl_adp_check() { [ -n "${ADP_REASON:-}" ] && echo "$ADP_REASON"; }')
+    out = run(reset_script, env).strip()
+    assert out == "10000", out
+
+    # 持续超温时保留低于 2A 的历史目标，跨进程重载也不能抬升。
+    env.pop("ADP_REASON", None)
+    env["LOCK_UNTIL"] = "0"
+    env["BAT_TEMP"] = "510"
+    env["BAT_CUR"] = "-2100000"
+    (state / "apl_target_ma").write_text("2100")
+    targets = [int(run(script, env).strip()) for _ in range(4)]
+    assert targets[0] < 2000, targets
+    assert all(b <= a for a, b in zip(targets, targets[1:])), targets
+    assert min(targets) >= 1250, targets
 
 
 def power_case(sb):
@@ -294,6 +324,103 @@ def thermal_case(sb):
     assert (conf / "rt_charge_orig").read_text() == "1234567"
 
 
+def voltage_shutdown_case(sb):
+    bat = sb / "battery"
+    bat.mkdir(parents=True)
+    for name, value in {"temp": "250", "current_now": "0", "capacity": "50",
+                        "status": "Discharging"}.items():
+        (bat / name).write_text(value)
+    daemon = (ROOT / "engine/xjdaemon.sh").read_text()
+    guard = daemon.split('  _tv=$(cfg_get term_v "")', 1)[1].split('  # 公版 PPS', 1)[0]
+    script = '. "%s"\ncfg_get() { echo 3400; }\nlog() { :; }\n' % (ROOT / "engine/lib/data.sh")
+    script += 'reboot() { echo shutdown_requested; }\nsvc() { echo shutdown_requested; }\n'
+    script += 'sample\n_tv=3400\n' + guard + '\ntrue\n'
+    env = dict(os.environ, BAT=str(bat))
+    for voltage, shutdown in [(None, False), ("bad", False), ("0", False),
+                              ("3800000", False), ("3300000", True)]:
+        node = bat / "voltage_now"
+        if voltage is None:
+            node.unlink(missing_ok=True)
+        else:
+            node.write_text(voltage)
+        out = run(script, env)
+        assert ("shutdown_requested" in out) == shutdown, (voltage, out)
+
+
+def thermal_backup_case(sb):
+    conf = sb / "control"
+    live = sb / "config"
+    conf.mkdir(parents=True)
+    live.mkdir()
+    (live / "thermal-normal.conf").write_text("original")
+    env = dict(os.environ, CONFDIR=str(conf), MODDIR=str(sb / "module"),
+               DATA_DIR=str(sb), TEST_LIVE=str(live))
+    base = '. "%s"\nTHERMAL_PATH="$TEST_LIVE"\n' % THERMAL
+    base += 'log() { :; }\nunlock_files() { :; }\nchown() { :; }\nchcon() { :; }\n'
+    fail = 'cp() { return 1; }\n'
+    out = run(base + fail + 'factory_backup; echo backup=$?\nbackup_ready; echo ready=$?\n', env)
+    assert "backup=1" in out and "ready=1" in out, out
+    assert not (sb / "backup/thermal-config/.done").exists()
+    assert (live / "thermal-normal.conf").read_text() == "original"
+    marker = sb / "backup/thermal-config/.done"
+    marker.write_text("legacy incomplete backup")
+    partial = 'cp() { command cp "$@"; return 1; }\n'
+    out = run(base + partial + 'factory_backup; echo backup=$?\nbackup_ready; echo ready=$?\n', env)
+    assert "backup=1" in out and "ready=1" in out, out
+    assert not marker.exists()
+    # 无备份或复制失败时保留现有配置，状态不能提前切到 default。
+    (conf / "current_mode").write_text("level_3")
+    out = run(base + 'restore_factory; echo restore=$?\n', env)
+    assert "restore=1" in out, out
+    (sb / "module").mkdir()
+    (sb / "module/t_blank").write_text("replacement")
+    out = run(base + fail + 'apply_conf_mode unlimited "$MODDIR/t_blank"; echo apply=$?\n', env)
+    assert "apply=1" in out, out
+    assert (live / "thermal-normal.conf").read_text() == "original"
+    run(base + 'factory_backup\n', env)
+    assert (sb / "backup/thermal-config/.done").is_file()
+    (live / "thermal-normal.conf").write_text("active")
+    out = run(base + fail + 'apply_default; echo apply=$?\n', env)
+    assert "apply=1" in out, out
+    assert (conf / "current_mode").read_text() == "level_3"
+    assert (live / "thermal-normal.conf").read_text() == "active"
+    out = run(base + 'chcon() { return 1; }\nrestore_factory; echo restore=$?\n', env)
+    assert "restore=1" in out, out
+    assert (live / "thermal-normal.conf").read_text() == "active"
+    # 提交失败时回滚，之后仍能正常还原。
+    mv_fail = 'mv() { case "$1" in *.previous) command mv "$@";; *.restore.*) return 1;; *) command mv "$@";; esac; }\n'
+    out = run(base + mv_fail + 'restore_factory; echo restore=$?\n', env)
+    assert "restore=1" in out, out
+    assert (live / "thermal-normal.conf").read_text() == "active"
+    out = run(base + 'restore_factory; echo restore=$?\n', env)
+    assert "restore=0" in out, out
+    assert (live / "thermal-normal.conf").read_text() == "original"
+    assert not (live / ".done").exists()
+    assert not list(sb.glob("config.restore.*"))
+
+
+def daemon_apply_case(sb):
+    sb.mkdir(parents=True)
+    (sb / "current_mode").write_text("level_3")
+    daemon = (ROOT / "engine/xjdaemon.sh").read_text()
+    tick = 'run_tick() {' + daemon.split('run_tick() {', 1)[1].split('\nbootstrap ||', 1)[0]
+    once = daemon.split('TICK_N=0\n', 1)[1].split('# 单实例', 1)[0]
+    script = '''
+ensure_thermal_dir() { :; }
+hitemp_guard() { :; }
+json_get() { echo false; }
+release_charge() { :; }
+rear_stop() { :; }
+apply_default() { return 1; }
+update_status() { echo unexpected_update; }
+''' + tick + '\nset -- --once\n' + once
+    env = dict(os.environ, MODDIR=str(sb), CONFDIR=str(sb))
+    proc = subprocess.run(["sh", "-c", script], env=env, text=True, capture_output=True)
+    assert proc.returncode == 1, (proc.returncode, proc.stdout, proc.stderr)
+    assert "unexpected_update" not in proc.stdout
+    assert (sb / "current_mode").read_text() == "level_3"
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix="xj-charge-regression-") as raw:
         sb = Path(raw)
@@ -301,7 +428,10 @@ def main():
         apl_tick_case(sb / "apl_tick")
         power_case(sb / "power")
         thermal_case(sb / "thermal")
-    print("charge control regression: PASS (APL cursor, inf/APL target throttling, no-APL settle, node boundaries)")
+        voltage_shutdown_case(sb / "voltage")
+        thermal_backup_case(sb / "backup")
+        daemon_apply_case(sb / "daemon")
+    print("charge control regression: PASS (APL cursor/thermal targets, inf/APL throttling, node boundaries, shutdown voltage, thermal backup/restore)")
 
 
 if __name__ == "__main__":

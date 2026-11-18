@@ -218,11 +218,15 @@ restart_daemon() {
 
 # 原厂温控备份存 DATA（模块目录会被升级删除）；旧位置仅作读取兼容，不再写入。
 THERMAL_BK="$DATA_DIR/backup/thermal-config"
-backup_ready() { [ -f "$THERMAL_BK/.done" ] || [ -f "$MODDIR/backup/thermal-config/.done" ] || [ -f "/data/adb/rezhale_toolbox_backup/thermal-config/.done" ]; }
+backup_ready() { backup_source >/dev/null; }
 backup_source() {
-  [ -f "$THERMAL_BK/.done" ] && { echo "$THERMAL_BK"; return 0; }
-  [ -f "$MODDIR/backup/thermal-config/.done" ] && { echo "$MODDIR/backup/thermal-config"; return 0; }
-  echo "/data/adb/rezhale_toolbox_backup/thermal-config"
+  for _backup in "$THERMAL_BK" "$MODDIR/backup/thermal-config" /data/adb/rezhale_toolbox_backup/thermal-config; do
+    [ -f "$_backup/.done" ] || continue
+    ls -A "$_backup" 2>/dev/null | grep -qv '^\.done$' || continue
+    echo "$_backup"
+    return 0
+  done
+  return 1
 }
 
 factory_backup() {
@@ -231,26 +235,50 @@ factory_backup() {
   _n=$(ls -A "$THERMAL_PATH" 2>/dev/null | wc -l)
   [ "${_n:-0}" -gt 0 ] || return 1
   _bk="$THERMAL_BK"
-  mkdir -p "$_bk" 2>/dev/null
-  cp -a "$THERMAL_PATH/." "$_bk/" 2>/dev/null
-  echo "$(date '+%F %T') from=$THERMAL_PATH files=$_n" > "$_bk/.done"
+  if ! { mkdir -p "$_bk" 2>/dev/null &&
+         rm -f "$_bk/.done" "$_bk/.done.tmp" &&
+         cp -a "$THERMAL_PATH/." "$_bk/" 2>/dev/null &&
+         echo "$(date '+%F %T') from=$THERMAL_PATH files=$_n" > "$_bk/.done.tmp" &&
+         mv -f "$_bk/.done.tmp" "$_bk/.done"; }; then
+    rm -f "$_bk/.done.tmp" 2>/dev/null
+    log "原厂备份失败，保留当前温控配置"
+    return 1
+  fi
   log "原厂备份完成: ${_n} 个文件"
 }
 
-restore_factory() {
-  unlock_files
-  chattr -R -i -a "$THERMAL_PATH" 2>/dev/null
+restore_factory() (
   case "$THERMAL_PATH" in */config|*/thermal-config) ;; *) return 1 ;; esac
-  rm -rf "$THERMAL_PATH"/* 2>/dev/null
-  _bk=$(backup_source)
-  [ -f "$_bk/.done" ] && cp -a "$_bk/." "$THERMAL_PATH/" 2>/dev/null && rm -f "$THERMAL_PATH/.done" 2>/dev/null
-  chown -R root:system "$THERMAL_PATH" 2>/dev/null
-  chcon -R u:object_r:thermal_data_file:s0 "$THERMAL_PATH" 2>/dev/null
-  chmod -R 0771 "$THERMAL_PATH" 2>/dev/null
-}
+  _bk=$(backup_source) || { log "还原失败：无有效原厂备份"; return 1; }
+  _stage=$(mktemp -d "${THERMAL_PATH}.restore.XXXXXX") || return 1
+  if ! cp -a "$_bk/." "$_stage/" 2>/dev/null || ! rm -f "$_stage/.done"; then
+    rm -rf "$_stage" 2>/dev/null
+    log "还原失败：无法准备原厂配置"
+    return 1
+  fi
+  if ! { chown -R root:system "$_stage" 2>/dev/null &&
+         chcon -R u:object_r:thermal_data_file:s0 "$_stage" 2>/dev/null &&
+         chmod -R 0771 "$_stage" 2>/dev/null; }; then
+    rm -rf "$_stage" 2>/dev/null
+    return 1
+  fi
+  unlock_files
+  _old="${_stage}.previous"
+  if ! mv "$THERMAL_PATH" "$_old" 2>/dev/null; then
+    rm -rf "$_stage" 2>/dev/null
+    return 1
+  fi
+  if ! mv "$_stage" "$THERMAL_PATH" 2>/dev/null; then
+    mv "$_old" "$THERMAL_PATH" 2>/dev/null || log "还原回滚失败：原配置保留在 $_old"
+    rm -rf "$_stage" 2>/dev/null
+    return 1
+  fi
+  rm -rf "$_old" 2>/dev/null
+)
 
 apply_conf_mode() {
   _mode="$1" _src="$2"
+  factory_backup || return 1
   ensure_thermal_dir
   _tmd5=$(md5sum "$_src" 2>/dev/null | cut -d' ' -f1)
   _curmd5=$(md5sum "$THERMAL_PATH/thermal-normal.conf" 2>/dev/null | cut -d' ' -f1)
@@ -272,7 +300,7 @@ apply_default() {
   _cur=$(cat "$CONFDIR/current_mode" 2>/dev/null)
   [ "$_cur" = "default" ] && return 0
   ensure_thermal_dir
-  restore_factory
+  restore_factory || return 1
   restart_daemon
   printf 'default' > "$CONFDIR/current_mode"
   update_status default
@@ -281,6 +309,7 @@ apply_default() {
 
 apply_bypass() {
   [ "$MTK_MODE" = "1" ] && return 0
+  factory_backup || return 1
   ensure_thermal_dir
   _src="$MODDIR/t_bypass_0"
   _tmd5=$(md5sum "$_src" 2>/dev/null | cut -d' ' -f1)

@@ -1,11 +1,11 @@
 {
-  "version": "3.1.65",
-  "versionCode": 375,
+  "version": "3.1.66",
+  "versionCode": 376,
   "date": "2026-11-18",
   "url": "",
-  "notes": "修复主页状态数据刷新不稳定：状态采样统一到1秒节奏，Root兜底缓存同步缩短",
-  "download": "https://github.com/1014411313/HyperOS_XJ/releases/download/v3.1.65/rezhale_toolbox_v3.1.65.zip",
-  "download_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/download/v3.1.65/rezhale_toolbox_v3.1.65.zip",
-  "release": "https://github.com/1014411313/HyperOS_XJ/releases/tag/v3.1.65",
-  "release_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/tag/v3.1.65"
+  "notes": "修复五项：电压采样异常不再误触发关机；温控备份失败不再标记完成、还原先校验备份；持续超温时充电目标不再反弹；联发科首装改用对应平台默认配置；卸载还原失败不再误报已还原。隔离回归通过，未做真机验证",
+  "download": "https://github.com/1014411313/HyperOS_XJ/releases/download/v3.1.66/rezhale_toolbox_v3.1.66.zip",
+  "download_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/download/v3.1.66/rezhale_toolbox_v3.1.66.zip",
+  "release": "https://github.com/1014411313/HyperOS_XJ/releases/tag/v3.1.66",
+  "release_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/tag/v3.1.66"
 }
