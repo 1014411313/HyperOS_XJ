@@ -1,11 +1,11 @@
 {
-  "version": "3.1.64",
-  "versionCode": 374,
-  "date": "2026-11-16",
+  "version": "3.1.65",
+  "versionCode": 375,
+  "date": "2026-11-18",
   "url": "",
-  "notes": "修 DTBO 槽位判定：单属性可用、双属性矛盾才拒；机型以 ro.product.device 为主，避免厂商名误拒；状态页显示 slot 属性原值",
-  "download": "https://github.com/1014411313/HyperOS_XJ/releases/download/v3.1.64/rezhale_toolbox_v3.1.64.zip",
-  "download_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/download/v3.1.64/rezhale_toolbox_v3.1.64.zip",
-  "release": "https://github.com/1014411313/HyperOS_XJ/releases/tag/v3.1.64",
-  "release_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/tag/v3.1.64"
+  "notes": "修复主页状态数据刷新不稳定：状态采样统一到1秒节奏，Root兜底缓存同步缩短",
+  "download": "https://github.com/1014411313/HyperOS_XJ/releases/download/v3.1.65/rezhale_toolbox_v3.1.65.zip",
+  "download_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/download/v3.1.65/rezhale_toolbox_v3.1.65.zip",
+  "release": "https://github.com/1014411313/HyperOS_XJ/releases/tag/v3.1.65",
+  "release_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/tag/v3.1.65"
 }

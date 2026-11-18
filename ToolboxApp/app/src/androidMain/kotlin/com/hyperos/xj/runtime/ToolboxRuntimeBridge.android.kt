@@ -20,7 +20,7 @@ private const val SOURCE_RETRY_MS = 60_000L
 private const val MISSING_RETRY_MS = 5_000L
 
 /** 引擎停摆时的 root 采样限频：守护默认 3s 一拍，比这更密只会持续 fork su。 */
-private const val ROOT_STATUS_CACHE_MS = 3_000L
+private const val ROOT_STATUS_CACHE_MS = 1_000L
 
 private val sharedStatusFiles = listOf(
     File("/storage/emulated/0/Android/data/com.hyperos.xj/files/status.json"),

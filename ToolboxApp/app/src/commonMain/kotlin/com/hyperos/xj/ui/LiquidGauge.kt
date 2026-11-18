@@ -71,7 +71,7 @@ fun LiquidGauge(
     val animatedProgress by animateFloatAsState(
         targetValue = progress.coerceIn(0f, 1f),
         animationSpec = if (animate) {
-            tween(800, easing = CubicBezierEasing(0.32f, 0.72f, 0f, 1f))
+            tween(180, easing = CubicBezierEasing(0.32f, 0.72f, 0f, 1f))
         } else {
             tween(0)
         },

@@ -21,7 +21,7 @@ else
   BT_GUARDS_EXTERNAL=0
 fi
 
-POLL_INTERVAL=$(profile_get poll_interval 3)
+POLL_INTERVAL=$(profile_get poll_interval 1)
 FG_INTERVAL=$(profile_get foreground_interval 10)
 CHARGE_INTERVAL=$(profile_get charge_interval 1)
 

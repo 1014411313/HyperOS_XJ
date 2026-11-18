@@ -50,6 +50,7 @@ import com.hyperos.xj.runtime.loadBuiltinAppBackground
 import com.hyperos.xj.runtime.loadLaunchFlags
 import com.hyperos.xj.runtime.saveLaunchFlags
 import com.hyperos.xj.ui.AppMediaBackground
+import com.hyperos.xj.ui.AppearanceSettings
 import com.hyperos.xj.ui.BottomBar
 import com.hyperos.xj.ui.LaunchPermissionDialog
 import com.hyperos.xj.ui.LaunchPermissionDialog
@@ -65,6 +66,7 @@ import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.kyant.backdrop.effects.blur
 import kotlinx.coroutines.delay
+import kotlin.time.TimeSource
 
 private val tabLabels = listOf("主页", "温控", "电池", "外观", "关于")
 
@@ -73,16 +75,8 @@ fun App() {
     val backdrop = rememberLayerBackdrop()
     val bridge = remember { createToolboxBridge() }
     var selectedTab by remember { mutableIntStateOf(0) }
-    var status by remember { mutableStateOf(DeviceStatus()) }
     var appearance by remember { mutableStateOf(AppearanceStore.load()) }
     var showLaunchPerms by remember { mutableStateOf(!loadLaunchFlags().dismissed) }
-
-    LaunchedEffect(Unit) {
-        while (true) {
-            status = bridge.readStatus()
-            delay(700L)
-        }
-    }
 
     LaunchedEffect(appearance) {
         AppearanceStore.save(appearance)
@@ -124,21 +118,13 @@ fun App() {
                     bottom = bottomInset + navBottom + 6.dp
                 )
             ) {
-                Box(Modifier.fillMaxSize()) {
-                    when (selectedTab) {
-                        0 -> HomePage(backdrop, bridge, status)
-                        1 -> ThermalPage(backdrop, bridge, status)
-                        2 -> BatteryPage(backdrop, bridge, status)
-                        3 -> LookPage(
-                            backdrop = backdrop,
-                            bridge = bridge,
-                            status = status,
-                            appearance = appearance,
-                            onAppearanceChange = { appearance = it }
-                        )
-                        else -> AboutPage(backdrop, bridge, status)
-                    }
-                }
+                AppPages(
+                    backdrop = backdrop,
+                    bridge = bridge,
+                    selectedTab = selectedTab,
+                    appearance = appearance,
+                    onAppearanceChange = { appearance = it }
+                )
             }
 
             // 顶部渐变模糊：直接对「整层背景的模糊副本」做 alpha 遮罩，只在顶部露出。
@@ -198,6 +184,39 @@ fun App() {
                 })
             }
         }
+    }
+}
+
+@Composable
+private fun AppPages(
+    backdrop: com.kyant.backdrop.Backdrop,
+    bridge: com.hyperos.xj.runtime.ToolboxRuntimeBridge,
+    selectedTab: Int,
+    appearance: AppearanceSettings,
+    onAppearanceChange: (AppearanceSettings) -> Unit
+) {
+    var status by remember { mutableStateOf(DeviceStatus()) }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            val tickStarted = TimeSource.Monotonic.markNow()
+            status = bridge.readStatus()
+            delay((1000L - tickStarted.elapsedNow().inWholeMilliseconds).coerceAtLeast(0L))
+        }
+    }
+
+    when (selectedTab) {
+        0 -> HomePage(backdrop, bridge, status)
+        1 -> ThermalPage(backdrop, bridge, status)
+        2 -> BatteryPage(backdrop, bridge, status)
+        3 -> LookPage(
+            backdrop = backdrop,
+            bridge = bridge,
+            status = status,
+            appearance = appearance,
+            onAppearanceChange = onAppearanceChange
+        )
+        else -> AboutPage(backdrop, bridge, status)
     }
 }
 
