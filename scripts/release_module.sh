@@ -159,7 +159,25 @@ changes = [{'id': f'{ver}-{i}', 'title': l.lstrip('- *').strip(), 'status': '已
 d['history'].insert(0, {'version': f'{ver}（{code}，已发布）', 'date': date, 'changes': changes})
 open(path, 'w', encoding='utf-8').write(json.dumps(d, ensure_ascii=False, indent=2) + '\n')
 PY
-git -C "$ROOT" add -A latest.json state/release.json dist/HyperOS_XJ_New engine
+LINKS="$ROOT/dist/下载链接_$TAG.txt"
+cat > "$LINKS" <<EOF
+热炸了工具箱 $TAG 模块包下载
+
+Gitee（国内推荐）：
+https://gitee.com/$GITEE_REPO/releases/download/$TAG/$ASSET
+
+GitHub：
+https://github.com/$GITHUB_REPO/releases/download/$TAG/$ASSET
+
+本版本发布页：
+https://gitee.com/$GITEE_REPO/releases/tag/$TAG
+https://github.com/$GITHUB_REPO/releases/tag/$TAG
+
+全部版本（含历史安装包）：
+https://gitee.com/$GITEE_REPO/releases
+https://github.com/$GITHUB_REPO/releases
+EOF
+git -C "$ROOT" add -A latest.json state/release.json "$LINKS" dist/HyperOS_XJ_New engine
 
 step "5/7 提交并打标签 $TAG"
 if git -C "$ROOT" diff --cached --quiet; then
@@ -216,21 +234,6 @@ else
     echo "未取到 GitHub 凭据，跳过 GitHub 发布" >&2
 fi
 
-cat <<EOF
-
-========== 可复制地址 ==========
-发行页（含历史安装包）
-  Gitee : https://gitee.com/$GITEE_REPO/releases
-  GitHub: https://github.com/$GITHUB_REPO/releases
-
-$TAG 发行页
-  Gitee : https://gitee.com/$GITEE_REPO/releases/tag/$TAG
-  GitHub: https://github.com/$GITHUB_REPO/releases/tag/$TAG
-
-$TAG 安装包直链
-  Gitee : https://gitee.com/$GITEE_REPO/releases/download/$TAG/$ASSET
-  GitHub: https://github.com/$GITHUB_REPO/releases/download/$TAG/$ASSET
-
-模块内 App（可直接点击安装）
-  $MODULE_DIR/app/rezhale_toolbox.apk
-EOF
+printf '\n========== 链接文件（纯地址，可跨设备/模型）==========\n'
+cat "$LINKS"
+printf '\n本机产物：\n  %s\n  %s\n' "$ZIP" "$MODULE_DIR/app/rezhale_toolbox.apk"
