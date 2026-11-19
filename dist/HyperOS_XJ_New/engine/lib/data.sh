@@ -183,6 +183,10 @@ data_read() {
   for _f in $ONL; do [ -r "$_f" ] && { IFS= read -r _v < "$_f"; [ "$_v" = "1" ] && _on=1; }; done
   echo "online=$_on"
   if [ -n "$USB" ]; then
+    _rd usb_online "$USB/online"
+    _rd usb_real_type "$USB/real_type"
+    _rd usb_types "$USB/usb_type"
+    _rd usb_supply_type "$USB/type"
     _rd usb_v "$USB/voltage_now"
     if [ -r "$USB/input_current_now" ]; then
       _rd usb_i "$USB/input_current_now"

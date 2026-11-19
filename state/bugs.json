@@ -5,6 +5,44 @@
   "note": "唯一台账。收到反馈只记录不动代码；用户明确说「修复」后才按 fix_plan 逐条改。",
   "collecting": [
     {
+      "id": "bug-148",
+      "title": "无线充电异常，采集时无线接收端离线",
+      "reported": "2026-11-19",
+      "type": "bug",
+      "version_seen": "3.1.62 / 3.1.66 无线诊断测试版",
+      "device": "myron",
+      "status": "3.1.67 将无线充电交回系统管理，隔离回归通过，待真机验证",
+      "resolution": "独立保存无线快照的修复已被本轮策略取代：模块档位应用、节点回读及 power_restore 均不再访问无线控制节点；无线行为交由系统控制。隔离回归确认档位切换及恢复期间无线电流、ctrl 和 thermal 节点写入次数为0。真机充电效果和0x01掉线根因仍待测试包复现验证。",
+      "evidence": "新测试包记录无线接收端上线及三档、四档切换。三档样本电池净充入峰值约29.28W、四档约16.56W，非底座输入功率。驱动在掉线前记录充电使能0/1切换，14:48:04出现power_good_off及RX_INT_ERR_CODE 0x01/dfx66，随后无线online/present归零。掉线前采样温度约32～35℃、电量约83%，不足以认定高温保护。模块同段有热控回调，但掉线后才出现显式thermal_remove改写，不能据此认定模块或底座是根因。错误码含义及wireless_chg_curr的小数值单位尚未确认。",
+      "fix_plan": "让模块不控制无线电流、ctrl及thermal节点，无线充电交由系统原生管理；保留无线状态和驱动日志采集。由手机持有人在同一底座上验证模块档位不再改写无线节点且观察慢充/掉线是否仍发生。诊断的voltage_now/current_now为驱动原始值，不能将电池净功率当底座功率。",
+      "affected": ["engine/lib/diag_log.sh", "engine/lib/diag.sh", "engine/lib/power.sh", "scripts/charge_control_regression.py"]
+    },
+    {
+      "id": "bug-146",
+      "title": "充电协议展示缺少 USB 类型回退",
+      "reported": "2026-11-19",
+      "type": "bug",
+      "version_seen": "3.1.64（374）及当前源码",
+      "device": "Xiaomi 15 Pro（haotian）",
+      "status": "3.1.67 实现协议显示回退，待真机验证",
+      "resolution": "在线时优先使用有效的协议字段，支持 USB 类型列表的当前项，并用在线 USB 的通用类型回退显示 USB PD。",
+      "evidence": "充电快照显示 USB 在线且 type=USB_PD。引擎只选 real_type 或 usb_type，未回退到 type。Android 协议字段按非 null 取值，空字符串或无效枚举可屏蔽后续字段。厂商快充图标的具体显示条件未验证。",
+      "fix_plan": "按有效值读取驱动协议，缺失时回退到当前在线 USB 的通用类型。仅有 USB_PD 时显示 PD，功率和 APDO 能力不用于推断正在使用的快充协议。覆盖有效、未知、缺失和离线输入。",
+      "affected": ["engine/lib/data.sh", "ToolboxApp/app/src/androidMain/kotlin/com/hyperos/xj/runtime/ToolboxRuntimeBridge.android.kt"]
+    },
+    {
+      "id": "bug-147",
+      "title": "充电疑似反复握手缺少同段协议事件",
+      "reported": "2026-11-19",
+      "type": "bug",
+      "version_seen": "3.1.64（374）",
+      "device": "Xiaomi 15 Pro（haotian）",
+      "status": "3.1.67 接入 FreePPS 策略，待真机复测",
+      "evidence": "日志记录一次 APL 降档及多次读取 APDO 标称能力，尚未定位同段重复 PD 合同切换。现有诊断按宽泛关键词保留最后 400 行，周期读数容易占满输出。较早一次慢充记录了快充退出与 9 V 请求，尚无法确定本次有相同原因。",
+      "fix_plan": "保留带时间戳的连接、断开和 PD 协商事件。源码确认旧 PPS 守护会在已插线时覆盖验证节点，按 FreePPS v1.7.0 的协商策略替换为只在确认拔线后写入。用同一设备分别对照原装小米充电器与第三方 PPS 充电器的协议事件、节点回读及稳定功率，核实反复握手的实际原因。",
+      "affected": ["engine/lib/diag.sh", "engine/lib/apl.sh", "engine/lib/power.sh", "engine/lib/pps.sh", "engine/xjdaemon.sh"]
+    },
+    {
       "id": "bug-140",
       "title": "3.1.63 DTBO 要求两个槽位属性同时存在，真机只提供一个导致分区状态未知",
       "reported": "2026-11-16",

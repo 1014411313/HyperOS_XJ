@@ -100,5 +100,9 @@ engine/xjdaemon.sh（唯一常驻）
 
 - 未在真机验证 LSPosed 加载、HyperOS `SubScreenLauncher` 生命周期与背屏渲染。
 - App 内 DTBO 按钮仍是占位；DTBO 镜像已随模块提供，但不自动刷分区。
-- 公版 PPS / 云控 / APL 目前是配置级，未把旧的原生守护进程搬进新引擎。
+- 公版 PPS 仅在支持且能确认 USB 已拔出的设备上写入验证节点。原装和第三方充电头的快充表现因机型而异。
 - 背屏面板目前是固定 4 项 + 功率光环；字段自选/字号联动还可以继续做。
+
+## 致谢
+
+公版 PPS 使用 FreePPS v1.7.0 协商策略。感谢原作者 Seyud 和上游节点提供者酷安 @低线阻狂魔、@花橋桥。上游版权声明与 GPL 许可证随模块分发。 [FreePPS v1.7.0](https://github.com/Seyud/FreePPS/releases/tag/v1.7.0) · [适配源码](engine/lib/pps.sh) · [版权声明](dist/HyperOS_XJ_New/licenses/FreePPS/NOTICES) · [GPL 许可证](dist/HyperOS_XJ_New/licenses/FreePPS/LICENSE)

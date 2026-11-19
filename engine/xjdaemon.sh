@@ -9,6 +9,7 @@ DIR=$(cd "$(dirname "$0")" && pwd)
 . "$DIR/lib/thermal.sh"
 . "$DIR/lib/rear.sh"
 . "$DIR/lib/battery.sh"
+. "$DIR/lib/pps.sh"
 . "$DIR/lib/apl.sh"
 . "$DIR/lib/diag_log.sh"
 . "$DIR/lib/retention.sh"
@@ -150,8 +151,6 @@ battery_guard_tick() {
     case "$_tv" in ''|*[!0-9]*) _tv="" ;; esac
     [ -n "$_tv" ] && [ "${BAT_VOLT:-0}" -gt 0 ] && [ $((BAT_VOLT / 1000)) -le "$_tv" ] && { log "电压 $((BAT_VOLT / 1000))mV ≤ 关机阈值 ${_tv}mV，执行关机"; reboot -p 2>/dev/null || svc power shutdown 2>/dev/null; }
   fi
-  # 公版 PPS：验证节点与 freepps 开关保持一致（两节点 + 回读校验在 pps_apply 里）。
-  pps_tick
   # PSS 动态模式：低电才禁用、回安全区自动启用（内部短路，不重复 pm 调用）。
   pss_guard_tick
   # smart_fv 守护：充电中才压强 0（解除满充电压限制）；非充电必须写回有效值，
@@ -206,6 +205,14 @@ run_tick() {
     _label=disabled
   elif [ "$(json_get enabled true)" = "false" ]; then
     _label=off
+  fi
+  # 公版 PPS 仅由持锁的常驻进程写入；禁用时等拔线归还节点。
+  if [ "$XJ_PPS_OWNER" = 1 ]; then
+    if [ -n "$_label" ]; then
+      pps_tick 0
+    else
+      pps_tick "$(cfg_get freepps 0)"
+    fi
   fi
   if [ -n "$_label" ]; then
     release_charge
@@ -344,6 +351,7 @@ save_charge_orig
 data_detect >/dev/null 2>&1
 
 TICK_N=0
+XJ_PPS_OWNER=0
 if [ "$1" = "--once" ]; then
   run_tick
   exit $?
@@ -377,6 +385,7 @@ if ! _lock_hold; then
 fi
 trap 'rm -rf "$LOCKDIR" 2>/dev/null' EXIT INT TERM HUP
 printf '%s\n' "$$" > "$STATE/daemon.pid" 2>/dev/null
+XJ_PPS_OWNER=1
 
 # 开机先恢复原生背屏时钟，防止上次卡片投屏失败后重启仍黑屏。
 rear_boot_recover

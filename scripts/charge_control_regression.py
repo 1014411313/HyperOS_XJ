@@ -180,6 +180,67 @@ cat \"$APL_TGT\"
     assert min(targets) >= 1250, targets
 
 
+def wireless_untouched_case(sb):
+    env, nodes, state = power_env(sb)
+    sentinel = sb / "wireless-writes"
+    env["WIRELESS_WRITE_LOG"] = str(sentinel)
+    (state / "power_orig_curr").write_text("12400000")
+    (state / "power_orig_wless").write_text("5")
+    (state / "power_orig_wireless_ctrl").write_text("4")
+    (state / "power_orig_wireless_th").write_text("0")
+    script = """
+wnode() {
+  case "$1" in *wireless*) printf '%%s=%%s\\n' "$1" "$2" >> "$WIRELESS_WRITE_LOG";; esac
+  printf '%%s' "$2" > "$1"
+}
+cfg_get() { case "$1" in apl_enable) echo 0;; cg_min_write_gap) echo 60;; thermal_ceil) echo 580;; thermal_ceil_hyst) echo 30;; *) echo "$2";; esac; }
+norm_power() { printf '%%s' "$1"; }
+apl_ceiling_ma() { echo 20000; }
+ctrl_level() { echo 4; }
+tier_watt() { echo 20; }
+read_voltage_uv() { echo 4000000; }
+watt_to_ma() { echo 5000; }
+power_closed_loop_ma() { echo "$2"; }
+cg_gap_ok() { return 0; }
+cg_note_write() { :; }
+log() { :; }
+. "%s"
+power_apply level_3
+restore_gate
+restore_current
+""" % POWER
+    run(script, env)
+    assert not sentinel.exists() or sentinel.read_text() == "", sentinel.read_text()
+    assert (nodes / "wireless_curr").read_text() == "12400"
+    assert (nodes / "wireless_ctrl").read_text() == "0"
+    assert (nodes / "wireless_th").read_text() == "1"
+    run(f'. "{POWER}"\npower_restore', env)
+    assert not sentinel.exists() or sentinel.read_text() == "", sentinel.read_text()
+    assert (nodes / "wireless_curr").read_text() == "12400"
+    assert (nodes / "wireless_ctrl").read_text() == "0"
+    assert (nodes / "wireless_th").read_text() == "1"
+
+
+def wireless_restore_case(sb):
+    env, nodes, state = power_env(sb)
+    (state / "power_orig_curr").write_text("12400000")
+    (nodes / "wireless_curr").write_text("5")
+    (nodes / "wired_ctrl").write_text("4")
+    (nodes / "wired_th").write_text("1")
+    (nodes / "wireless_th").write_text("0")
+    run(f'. "{POWER}"\nsave_orig_current\nsave_orig_gate', env)
+    assert (state / "power_orig_wless").read_text() == "5"
+    for name in ("wireless_ctrl", "wireless_th"):
+        (nodes / name).write_text("12")
+    (nodes / "wireless_curr").write_text("20")
+    (nodes / "wireless_ctrl").write_text("12")
+    (nodes / "wireless_th").write_text("0")
+    run(f'. "{POWER}"\nrestore_current\nrestore_gate', env)
+    assert (nodes / "wireless_curr").read_text().strip() == "20"
+    assert (nodes / "wireless_ctrl").read_text().strip() == "12"
+    assert (nodes / "wireless_th").read_text().strip() == "0"
+
+
 def power_case(sb):
     env, nodes, state = power_env(sb)
     env["POWER_CFG"] = ""
@@ -331,7 +392,7 @@ def voltage_shutdown_case(sb):
                         "status": "Discharging"}.items():
         (bat / name).write_text(value)
     daemon = (ROOT / "engine/xjdaemon.sh").read_text()
-    guard = daemon.split('  _tv=$(cfg_get term_v "")', 1)[1].split('  # 公版 PPS', 1)[0]
+    guard = daemon.split('  _tv=$(cfg_get term_v "")', 1)[1].split('  # PSS 动态模式', 1)[0]
     script = '. "%s"\ncfg_get() { echo 3400; }\nlog() { :; }\n' % (ROOT / "engine/lib/data.sh")
     script += 'reboot() { echo shutdown_requested; }\nsvc() { echo shutdown_requested; }\n'
     script += 'sample\n_tv=3400\n' + guard + '\ntrue\n'
@@ -426,6 +487,8 @@ def main():
         sb = Path(raw)
         apl_case(sb / "apl")
         apl_tick_case(sb / "apl_tick")
+        wireless_untouched_case(sb / "wireless_untouched")
+        wireless_restore_case(sb / "wireless_restore")
         power_case(sb / "power")
         thermal_case(sb / "thermal")
         voltage_shutdown_case(sb / "voltage")

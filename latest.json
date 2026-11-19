@@ -1,11 +1,11 @@
 {
-  "version": "3.1.66",
-  "versionCode": 376,
-  "date": "2026-11-18",
+  "version": "3.1.67",
+  "versionCode": 377,
+  "date": "2026-11-19",
   "url": "",
-  "notes": "修复五项：电压采样异常不再误触发关机；温控备份失败不再标记完成、还原先校验备份；持续超温时充电目标不再反弹；联发科首装改用对应平台默认配置；卸载还原失败不再误报已还原。隔离回归通过，未做真机验证",
-  "download": "https://github.com/1014411313/HyperOS_XJ/releases/download/v3.1.66/rezhale_toolbox_v3.1.66.zip",
-  "download_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/download/v3.1.66/rezhale_toolbox_v3.1.66.zip",
-  "release": "https://github.com/1014411313/HyperOS_XJ/releases/tag/v3.1.66",
-  "release_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/tag/v3.1.66"
+  "notes": "- 公版 PPS 接入 Seyud 的 FreePPS v1.7.0 协商策略，确认 USB 拔线后才更新验证节点，充电期间由系统管理握手。App 和模块已补充原作者署名，安装包附带上游版权声明和许可证。\n- 无线充电交回系统管理，工具箱的功率档位和恢复命令停止写入无线电流与控制节点。\n- 改进充电协议显示，驱动未提供有效细分类型时可回退到在线 USB 的通用 PD 类型。\n- 诊断包分别保留插拔与 PD 协商事件，并补充无线接收端状态和驱动日志。\n- Android 构建与隔离回归通过。原装和第三方充电器的实际功率、握手稳定性及无线掉线仍待真机复测。",
+  "download": "https://github.com/1014411313/HyperOS_XJ/releases/download/v3.1.67/rezhale_toolbox_v3.1.67.zip",
+  "download_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/download/v3.1.67/rezhale_toolbox_v3.1.67.zip",
+  "release": "https://github.com/1014411313/HyperOS_XJ/releases/tag/v3.1.67",
+  "release_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/tag/v3.1.67"
 }

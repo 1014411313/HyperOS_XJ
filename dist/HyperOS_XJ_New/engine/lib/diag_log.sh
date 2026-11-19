@@ -2,7 +2,7 @@
 # engine/lib/diag_log.sh — 常驻诊断采样记录器（挂在 xjdaemon 主循环内，无独立进程）。
 # 参照 v3.12.9 diag_log.sh 的采样思路，但改为守护内嵌：每拍累积一行轻量采样到内存
 # 缓冲，满 DIAG_BUF_MAX 行或距上次落盘 ≥ DIAG_FLUSH_SEC 秒时整段落盘。
-# 采样只读 sample() 已有的全局变量 + 一个功率节点，不 fork dumpsys。
+# 采样复用 sample() 的全局变量，按需读取充电节点。
 # 超过 DIAG_MAX_BYTES 截尾保留末尾（tail -c），防止日志无限增长占满 DATA 分区；
 # 按「只留最近 1 天」的裁剪由 lib/retention.sh 每天执行一次。
 
@@ -20,6 +20,45 @@ DIAG_HEADER_DONE=0
 # 充电器侧缓列（电压/电流/标称功率）：每 10 拍刷一次，避免每拍 3 次额外 fork
 DIAG_CV="-"; DIAG_CI="-"; DIAG_CP="-"
 
+DIAG_WIRELESS_SUPPLY=/sys/class/power_supply/wireless
+DIAG_WIRELESS_LAST=""
+
+diag_wireless_read() {
+  _dw_value=-
+  if [ -r "$1" ] && IFS= read -r _dw_raw < "$1"; then
+    case "${_dw_raw#-}" in ''|*[!0-9]*) ;; *) _dw_value=$_dw_raw ;; esac
+  fi
+}
+
+diag_wireless_tick() {
+  diag_wireless_read "$DIAG_WIRELESS_SUPPLY/online"; _dw_online=$_dw_value
+  diag_wireless_read "$DIAG_WIRELESS_SUPPLY/present"; _dw_present=$_dw_value
+  case "$_dw_online" in 0|1) ;; *) _dw_online=- ;; esac
+  case "$_dw_present" in 0|1) ;; *) _dw_present=- ;; esac
+  if [ "$_dw_online:$_dw_present" = '-:-' ]; then
+    [ -n "$DIAG_WIRELESS_LAST" ] || return 0
+    _dw_key=""
+  else
+    _dw_key="$_dw_online:$_dw_present:$1:$IS_CHARGING"
+  fi
+  [ "$_dw_key" != "$DIAG_WIRELESS_LAST" ] || return 0
+  diag_wireless_read "$DIAG_WIRELESS_SUPPLY/voltage_now"; _dw_voltage=$_dw_value
+  diag_wireless_read "$DIAG_WIRELESS_SUPPLY/current_now"; _dw_current=$_dw_value
+  diag_wireless_read "${WIRELESS_CURR:-}"; _dw_limit=$_dw_value
+  diag_wireless_read "${WIRELESS_TH:-}"; _dw_thermal=$_dw_value
+  diag_wireless_read "${WIRELESS_CTRL:-}"; _dw_control=$_dw_value
+  _dw_log="$LOGDIR/diag_wireless.log"
+  printf '%s online=%s present=%s charging=%s mode=%s voltage_now_raw=%s current_now_raw=%s wireless_chg_curr_raw=%s wireless_thermal_remove=%s wireless_ctrl_limit=%s\n' \
+    "$(date '+%F %T')" "$_dw_online" "$_dw_present" "$IS_CHARGING" "$1" \
+    "$_dw_voltage" "$_dw_current" "$_dw_limit" "$_dw_thermal" "$_dw_control" >> "$_dw_log" || return 0
+  DIAG_WIRELESS_LAST=$_dw_key
+  if [ "$(wc -c < "$_dw_log")" -gt 262144 ]; then
+    tail -n 500 "$_dw_log" > "$_dw_log.cut.$$" && mv -f "$_dw_log.cut.$$" "$_dw_log" \
+      || rm -f "$_dw_log.cut.$$"
+  fi
+  return 0
+}
+
 diag_log_tick() {
   # 功率 uW = mV × mA（uV/1000 × uA/1000），电量为负值（放电）时结果同为负。
   # 空值字段填 "-" 占位：空字符串会让空格分隔的列错位，离线分析没法对列。
@@ -31,9 +70,10 @@ diag_log_tick() {
     DIAG_CP=$(cat /sys/class/xm_power/charger/charger_common/power_max 2>/dev/null); [ -n "$DIAG_CP" ] || DIAG_CP=-
   fi
   _m=$(cat "$CONFDIR/current_mode" 2>/dev/null); [ -n "$_m" ] || _m=-
+  diag_wireless_tick "$_m"
   _pa=$(cat "$BT_STATE/power_applied" 2>/dev/null); [ -n "$_pa" ] || _pa=-
   _ps=$(cat "$BT_STATE/power_sig" 2>/dev/null); [ -n "$_ps" ] || _ps=-
-  # 每拍只做变量拼接与一次节点 cat；date 仅在缓冲检查点调用（约每 10 拍一次）
+  # 电池样本沿用原有列结构，段头记录落盘时间。
   DIAG_BUF="${DIAG_BUF}${BAT_CAP} ${BAT_CUR} ${BAT_VOLT} ${BAT_TEMP} ${_uw} ${IS_CHARGING} ${_wc} ${DIAG_CV} ${DIAG_CI} ${DIAG_CP} ${_m} ${_pa} ${_ps}
 "
   DIAG_BUF_N=$((DIAG_BUF_N + 1))

@@ -96,7 +96,7 @@ cd ToolboxApp
 - 真机验证 LSPosed 加载、背屏叠加、开关隐藏。
 - 把背屏四角字段/字号从 App 的 `LookPage` 写进 `rear.conf`。
 - DTBO 刷入流程（需二次确认 + 备份）。
-- 公版 PPS / 云控 / APL：决定继续配置级还是移植原生逻辑。
+- 公版 PPS：对照真机原装与第三方 PPS 充电头的协商事件，验证 `engine/lib/pps.sh` 的 FreePPS 适配。
 - 真机日志采集：`/data/local/tmp/xj_rear.conf`、`/data/adb/rezhale_toolbox/log/`。
 
 ## Bug 收集（硬规则）

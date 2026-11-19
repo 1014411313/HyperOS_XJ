@@ -257,8 +257,9 @@ private fun AboutMainPage(
             AboutRow("小米热炸了", "整合维护者", "酷安主页", onClick = { openUrl(coolapkUrlTemplate.format("517965")) })
             AboutRow("AxiaojiuY", "动态温控作者", "酷安主页", onClick = { openUrl(coolapkUrlTemplate.format("45432024")) })
             AboutRow("听夜风1337", "解容工具箱作者", "酷安主页", onClick = { openUrl(coolapkUrlTemplate.format("37273905")) })
+            AboutRow("Seyud", "FreePPS 原作者", "GitHub 项目", onClick = { openUrl("https://github.com/Seyud/FreePPS") })
             BasicText(
-                text = "二改声明：整合来源和维护者。点击作者名可打开其酷安主页。",
+                text = "二改声明：整合来源和维护者。点击作者名可打开其主页或项目。",
                 style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp)
             )
         }

@@ -291,7 +291,7 @@ def _run_cases():
 
 def uninstall_cases():
     source = (CUSTOMIZE.parent / "uninstall.sh").read_text()
-    steps = source.split('_restore_ok=""', 1)[1].split('# 停看护', 1)[0]
+    steps = source.split('_restore_ok=""', 1)[1].split('rm -f "$DATA_DIR/state/daemon.pid"', 1)[0]
     report = source.split('_body=$( {', 1)[1].split('  echo "不自动回滚:', 1)[0]
     cleanup = next(line for line in source.splitlines() if '&& rm -rf "$DATA_DIR"' in line)
     results = []
@@ -306,7 +306,10 @@ def uninstall_cases():
         (engine / "xjctl.sh").write_text('''echo "$*" >> "$CALL_LOG"
 [ "$FAILED_STEP" != all ] && [ "$*" != "$FAILED_STEP" ]
 ''')
-        script = '_restore_ok=""' + steps + cleanup + '\n' + report
+        script = r'''timeout() {
+  printf 'stop %s\n' "$6" >> "$CALL_LOG"
+}
+''' + '_restore_ok=""' + steps + cleanup + '\n' + report
         script += '\n[ -z "$_restore_failed" ]\n'
         env = dict(os.environ, MODDIR=str(sb), DATA_DIR=str(data),
                    CALL_LOG=str(sb / "calls.log"), FAILED_STEP=failed_step)
@@ -314,14 +317,16 @@ def uninstall_cases():
         c = Case(sb, proc)
         c.eq(proc.returncode, 1 if failed_step else 0, "还原失败返回非零")
         c.eq(data.exists(), bool(failed_step), "仅还原成功时清理数据")
-        c.eq(len(c.calls("")), 7, "失败后仍尝试其余还原步骤")
+        c.eq(len(c.calls("")), 9, "失败后仍尝试其余还原步骤与进程停止")
         c.lacks("已还原:", "不把命令结果当作节点已验证")
         if failed_step:
             c.has("还原失败:", "失败项应进入报告")
         else:
             c.lacks("还原失败:", "全部成功不报告失败")
         calls = c.calls("")
-        c.eq(calls[-2:], ["setting set enabled false", "apply"], "禁用后应用，避免充电场景重接管")
+        c.eq(calls[-5:], ["setting set enabled false", "apply", "stop boot",
+                          "stop xjdaemon", "battery pps restore"],
+             "先禁用并恢复默认档，再停止看护和守护，最后恢复 PPS")
         results.append((name + " 卸载还原结果", c))
     return results
 

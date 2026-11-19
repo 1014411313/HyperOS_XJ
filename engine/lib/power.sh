@@ -209,8 +209,6 @@ power_boot_clear_stale() {
   printf '%s' "$_b" > "$BT_STATE/power_boot_id" 2>/dev/null
 }
 
-# ctrl_limit / thermal_remove 的原厂值快照：0 与空都视为无效（驱动未就绪、或本就是 0），
-#   存下去会在还原时把温控表/限流写坏，所以只留有效值。
 save_orig_gate() {
   [ -s "$BT_STATE/power_orig_ctrl" ] || {
     _c=$(cat "$WIRED_CTRL" 2>/dev/null)
@@ -222,22 +220,25 @@ save_orig_gate() {
   }
 }
 
-# 还原 ctrl_limit / thermal_remove：有有效原厂值才写回，无效（0/空/缺失）则不写。
+# 每个通道只还原自己的有效快照。
 restore_gate() {
   _c=$(cat "$BT_STATE/power_orig_ctrl" 2>/dev/null)
-  case "$_c" in ''|*[!0-9]*|0) ;; *) wnode "$WIRED_CTRL" "$_c"; wnode "$WIRELESS_CTRL" "$_c" ;; esac
+  case "$_c" in ''|*[!0-9]*|0) ;; *) wnode "$WIRED_CTRL" "$_c" ;; esac
   _t=$(cat "$BT_STATE/power_orig_th" 2>/dev/null)
-  case "$_t" in ''|*[!0-9]*|0) ;; *) wnode "$WIRED_TH" "$_t"; wnode "$WIRELESS_TH" "$_t" ;; esac
+  case "$_t" in ''|*[!0-9]*|0) ;; *) wnode "$WIRED_TH" "$_t" ;; esac
 }
 
 save_orig_current() {
   # 读到的 0 不是有效的原厂值（驱动未就绪/未插枪时该节点就可能是 0），
   # 存下去后 restore_current 会把充电上限写回 0，表现为卸载后充电极慢。
-  [ -s "$BT_STATE/power_orig_curr" ] && [ "$(cat "$BT_STATE/power_orig_curr" 2>/dev/null)" != "0" ] && return 0
-  _c=$(cat "$WIRED_CURR" 2>/dev/null)
-  case "$_c" in ''|*[!0-9]*|0) ;; *) printf '%s' "$_c" > "$BT_STATE/power_orig_curr" ;; esac
-  _wc=$(cat "$WIRELESS_CURR" 2>/dev/null)
-  case "$_wc" in ''|*[!0-9]*|0) ;; *) printf '%s' "$_wc" > "$BT_STATE/power_orig_wless" ;; esac
+  if [ ! -s "$BT_STATE/power_orig_curr" ] || [ "$(cat "$BT_STATE/power_orig_curr" 2>/dev/null)" = "0" ]; then
+    _c=$(cat "$WIRED_CURR" 2>/dev/null)
+    case "$_c" in ''|*[!0-9]*|0) ;; *) printf '%s' "$_c" > "$BT_STATE/power_orig_curr" ;; esac
+  fi
+  if [ ! -s "$BT_STATE/power_orig_wless" ] || [ "$(cat "$BT_STATE/power_orig_wless" 2>/dev/null)" = "0" ]; then
+    _wc=$(cat "$WIRELESS_CURR" 2>/dev/null)
+    case "$_wc" in ''|*[!0-9]*|0) ;; *) printf '%s' "$_wc" > "$BT_STATE/power_orig_wless" ;; esac
+  fi
 }
 
 restore_current() {
@@ -245,22 +246,15 @@ restore_current() {
   case "$_o" in ''|*[!0-9]*|0) _o=$(cat "$CONFDIR/rt_charge_orig" 2>/dev/null) ;; esac
   case "$_o" in ''|*[!0-9]*|0) _o="" ;; esac
   [ -n "$_o" ] && { wnode "$WIRED_CURR" "$_o"; wnode "$WIRED_CURR2" "$_o"; }
-  _wo=$(cat "$BT_STATE/power_orig_wless" 2>/dev/null)
-  case "$_wo" in ''|*[!0-9]*|0) _wo="" ;; esac
-  [ -n "$_wo" ] && wnode "$WIRELESS_CURR" "$_wo"
 }
 
 # 节点是否已符合期望值；$1=th $2=lv $3=ma(可空)。输出 1=符合 / 0=需要重写。
 nodes_ok() {
   _th="$1" _lv="$2" _ma="$3" _ok=1
-  for _p in "$WIRED_TH" "$WIRELESS_TH"; do
-    [ -e "$_p" ] || continue
-    [ "$(cat "$_p" 2>/dev/null)" = "$_th" ] || _ok=0
-  done
-  for _p in "$WIRED_CTRL" "$WIRELESS_CTRL"; do
-    [ -e "$_p" ] || continue
-    [ "$(cat "$_p" 2>/dev/null)" = "$_lv" ] || _ok=0
-  done
+  _p=$WIRED_TH
+  if [ -e "$_p" ] && [ "$(cat "$_p" 2>/dev/null)" != "$_th" ]; then _ok=0; fi
+  _p=$WIRED_CTRL
+  if [ -e "$_p" ] && [ "$(cat "$_p" 2>/dev/null)" != "$_lv" ]; then _ok=0; fi
   if [ -n "$_ma" ]; then
     # 电流节点回读容差 2%（下限 100µA）：驱动会对写入值做量化/裁剪（如 20000→19700），
     #   要求完全相等会每拍判「未生效」→ 每拍重写 → PD 重协商锯齿。
@@ -275,17 +269,6 @@ nodes_ok() {
       _d=$((_now - _want_uv)); [ "$_d" -lt 0 ] && _d=$((0 - _d))
       [ "$_d" -le "$_tol_uv" ] || _ok=0
     done
-    if [ -e "$WIRELESS_CURR" ]; then
-      _now=$(cat "$WIRELESS_CURR" 2>/dev/null)
-      case "$_now" in
-        ''|*[!0-9]*) _ok=0 ;;
-        *)
-          _tol_ma=$((_ma / 50))
-          [ "$_tol_ma" -lt 1 ] && _tol_ma=1
-          _d=$((_now - _ma)); [ "$_d" -lt 0 ] && _d=$((0 - _d))
-          [ "$_d" -le "$_tol_ma" ] || _ok=0 ;;
-      esac
-    fi
   fi
   echo "$_ok"
 }
@@ -376,14 +359,10 @@ power_apply() {
   if [ "$(nodes_ok "$_th" "$_lv" "")" = "0" ]; then
     if [ "$_th" = "1" ]; then
       wnode "$WIRED_TH" 1
-      wnode "$WIRELESS_TH" 1
       wnode "$WIRED_CTRL" 0
-      wnode "$WIRELESS_CTRL" 0
     else
       wnode "$WIRED_TH" 0
-      wnode "$WIRELESS_TH" 0
       wnode "$WIRED_CTRL" "$_lv"
-      wnode "$WIRELESS_CTRL" "$_lv"
     fi
   fi
 
@@ -416,7 +395,6 @@ power_apply() {
     if [ "$_may_write" = "1" ]; then
       wnode "$WIRED_CURR" $((_ma * 1000)) && _ma_written=1
       wnode "$WIRED_CURR2" $((_ma * 1000))
-      wnode "$WIRELESS_CURR" "$_ma"
       [ "$_tier" = "inf" ] && [ "$_ma_written" = "1" ] && cg_note_write
     fi
   fi

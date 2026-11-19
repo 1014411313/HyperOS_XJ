@@ -56,7 +56,8 @@ fun BatteryPage(
     val accent = LocalAccentColor.current
     val scope = rememberCoroutineScope()
     var unlock by remember { mutableStateOf(status.unlock) }
-    var pps by remember { mutableStateOf(status.freepps) }
+    var pps by remember(status.freepps) { mutableStateOf(status.freepps) }
+    var ppsBusy by remember { mutableStateOf(false) }
     var cloudBlock by remember { mutableStateOf(status.cloudGuard) }
     var apl by remember { mutableStateOf(status.aplEnable) }
     var dtboStatus by remember { mutableStateOf("读取中") }
@@ -327,7 +328,24 @@ fun BatteryPage(
             GlassCard(backdrop, Modifier.fillMaxWidth()) {
                 SectionLabel("电池解容")
                 ToggleLine(backdrop, "电池解容", "挂载 BAA，防低电量锁容", unlock, onCheckedChange = { unlock = it; saveBattery("unlock", if (it) "on" else "off", "电池解容") })
-                ToggleLine(backdrop, "公版 PPS 解锁", "第三方充电头功率兼容", pps, onCheckedChange = { pps = it; saveBattery("pps", if (it) "on" else "off", "公版 PPS 解锁") })
+                ToggleLine(backdrop, "公版 PPS 解锁", "FreePPS · Seyud，拔线后应用", pps, onCheckedChange = { enabled ->
+                    if (!ppsBusy) {
+                        ppsBusy = true
+                        scope.launch {
+                            try {
+                                val result = bridge.execResult(Engine.battery("pps", if (enabled) "on" else "off"))
+                                if (result.success) {
+                                    pps = enabled
+                                    showToast(if (enabled) "公版 PPS 已开启，拔线后应用" else "公版 PPS 已关闭，拔线后恢复")
+                                } else {
+                                    showToast(result.output.lineSequence().firstOrNull { it.contains("公版 PPS") } ?: "未能保存公版 PPS 设置")
+                                }
+                            } finally {
+                                ppsBusy = false
+                            }
+                        }
+                    }
+                })
                 ToggleLine(backdrop, "云控屏蔽", "拦截云端下发与巡检隔离", cloudBlock, onCheckedChange = { cloudBlock = it; saveBattery("cloud", if (it) "on" else "off", "云控屏蔽") })
                 ToggleLine(backdrop, "自适应功率爬坡 APL", "全速档下动态上探", apl, onCheckedChange = { apl = it; saveBattery("apl", if (it) "on" else "off", "自适应功率爬坡 APL") })
             }

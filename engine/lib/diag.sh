@@ -285,6 +285,16 @@ diag_pack() {
     for _pn in voltage_now voltage_max current_now current_max input_power_limit real_type type online present; do
       diag_node_line "usb.$_pn" "/sys/class/power_supply/usb/$_pn"
     done
+    if [ -d /sys/class/power_supply/wireless ]; then
+      echo "== power_supply/wireless（关键项，驱动原始值）=="
+      for _pn in online present status voltage_now current_now voltage_max current_max input_current_limit; do
+        diag_node_line "wireless.$_pn" "/sys/class/power_supply/wireless/$_pn"
+      done
+      diag_node_line "wireless.type_reported" /sys/class/qcom-battery/wireless_type
+      for _pn in wireless_chg_curr wireless_ctrl_limit wireless_thermal_remove; do
+        diag_node_line "$_pn" "/sys/class/xm_power/charger/charger_thermal/$_pn"
+      done
+    fi
     echo "== 充电器功率 =="
     diag_node_line "charger_common.power_max" "/sys/class/xm_power/charger/charger_common/power_max"
     echo "== qcom-battery（PD 验证/快充类型/认证）=="
@@ -484,6 +494,12 @@ diag_pack() {
   else
     echo "无匹配或无权读取 dmesg" > "$_stage/dmesg_charge.txt" 2>/dev/null
     _dmc=无匹配
+  fi
+
+  dmesg 2>/dev/null | grep -aiE 'wireless|(^|[^[:alnum:]])wls([^[:alnum:]]|$)|qi2' \
+    | tail -n 200 | cut -c 1-512 > "$_stage/dmesg_wireless.txt"
+  if [ ! -s "$_stage/dmesg_wireless.txt" ]; then
+    echo "无匹配或无权读取 dmesg" > "$_stage/dmesg_wireless.txt"
   fi
 
   # ---- problem.txt：用户在 App 里填写的问题描述，随包一起带给作者 ----

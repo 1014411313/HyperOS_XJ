@@ -391,6 +391,45 @@ out=$(sc_item_5)
 expect FAIL "无" "$out"
 teardown
 
+setup "无线诊断：初始离线、上线、换档、掉线和节点缺失"
+. "$REPO/engine/lib/diag_log.sh"
+DIAG_WIRELESS_SUPPLY="$T/wireless"
+WIRELESS_CURR="$T/wireless_limit"
+WIRELESS_TH="$T/wireless_thermal"
+WIRELESS_CTRL="$T/wireless_control"
+wireless_log="$LOGDIR/diag_wireless.log"
+IS_CHARGING=0
+diag_wireless_tick default
+[ ! -e "$wireless_log" ] && ok || bad "缺少节点时不应生成事件"
+mkdir "$DIAG_WIRELESS_SUPPLY"
+printf '0\n' > "$DIAG_WIRELESS_SUPPLY/online"
+diag_wireless_tick default
+expect_has 'online=0 present=- charging=0 mode=default' "$(tail -n 1 "$wireless_log")"
+printf '1\n' > "$DIAG_WIRELESS_SUPPLY/online"
+printf '1\n' > "$DIAG_WIRELESS_SUPPLY/present"
+printf '%s\n' '-250000' > "$DIAG_WIRELESS_SUPPLY/current_now"
+printf '1200\n' > "$WIRELESS_CURR"
+IS_CHARGING=1
+diag_wireless_tick default
+expect_has 'online=1 present=1 charging=1 mode=default' "$(tail -n 1 "$wireless_log")"
+expect_has 'current_now_raw=-250000 wireless_chg_curr_raw=1200' "$(tail -n 1 "$wireless_log")"
+diag_wireless_tick default
+[ "$(wc -l < "$wireless_log")" -eq 2 ] && ok || bad "相同状态不应重复记录"
+diag_wireless_tick level_3
+expect_has 'online=1 present=1 charging=1 mode=level_3' "$(tail -n 1 "$wireless_log")"
+printf '0\n' > "$DIAG_WIRELESS_SUPPLY/online"
+printf '0\n' > "$DIAG_WIRELESS_SUPPLY/present"
+IS_CHARGING=0
+diag_wireless_tick level_3
+expect_has 'online=0 present=0 charging=0 mode=level_3' "$(tail -n 1 "$wireless_log")"
+: > "$DIAG_WIRELESS_SUPPLY/online"
+: > "$DIAG_WIRELESS_SUPPLY/present"
+diag_wireless_tick level_3
+diag_wireless_tick default
+expect_has 'online=- present=-' "$(tail -n 1 "$wireless_log")"
+[ "$(wc -l < "$wireless_log")" -eq 5 ] && ok || bad "节点失效只应记录一次"
+teardown
+
 # ---------- 第 7 项：留存 ----------
 setup "7 正常：1 小时前执行"
 printf '%s' "$(( $(date +%s) - 3600 ))" > "$STATE/retention.ts"

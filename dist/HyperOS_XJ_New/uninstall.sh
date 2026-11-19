@@ -48,7 +48,6 @@ uninstall_restore() {
 uninstall_restore "背屏叠加/时钟" rear off
 uninstall_restore "BAA 挂载与 PSS" battery unlock off
 uninstall_restore "smart_fv 与循环计数" battery restore
-uninstall_restore "公版 PPS 验证节点" battery pps off
 uninstall_restore "充电节点" power restore
 # 禁用后再应用，避免充电/游戏场景覆盖默认温控并重新接管已还原的节点。
 uninstall_restore "禁用引擎" setting set enabled false
@@ -57,24 +56,23 @@ uninstall_restore "温控默认" apply
 # 停看护与守护：不使用 pkill/pgrep -f 按脚本名匹配（有误匹配风险且设备上行为不稳），
 # 改为 /proc 扫描精确匹配本模块绝对路径后 kill。必须先杀看护 boot.sh 再杀 xjdaemon.sh，
 # 否则看护会在 60s 内把 daemon 重新拉起。cmdline 读取套 timeout 防退出瞬间卡死（同 boot.sh 做法）。
-_dp=$(cat "$DATA_DIR/state/daemon.pid" 2>/dev/null)
-case "$_dp" in ''|*[!0-9]*) _dp=$(cat "$DATA_DIR/state/daemon.lock.d/pid" 2>/dev/null) ;; esac
-case "$_dp" in ''|*[!0-9]*) _dp="" ;; esac
-[ -n "$_dp" ] && kill -9 "$_dp" 2>/dev/null
 _scan_kill='
 for d in /proc/[0-9]*; do
   [ -r "$d/cmdline" ] || continue
   cl=$(tr "\0" " " < "$d/cmdline" 2>/dev/null) || continue
   case "$cl" in
-    *rezhale_toolbox/engine/boot.sh*|*rezhale_toolbox/engine/xjdaemon.sh*)
-      kill -9 "${d#/proc/}" 2>/dev/null ;;
+    *rezhale_toolbox/engine/"$1".sh*) kill -9 "${d#/proc/}" 2>/dev/null ;;
   esac
 done'
 if command -v timeout >/dev/null 2>&1; then
-  timeout 8 sh -c "$_scan_kill" 2>/dev/null
+  timeout 8 sh -c "$_scan_kill" sh boot 2>/dev/null
+  timeout 8 sh -c "$_scan_kill" sh xjdaemon 2>/dev/null
 else
-  sh -c "$_scan_kill" 2>/dev/null
+  sh -c "$_scan_kill" sh boot 2>/dev/null
+  sh -c "$_scan_kill" sh xjdaemon 2>/dev/null
 fi
+# 仍存活的守护负责还原，避免卸载进程与其同时写验证节点。
+uninstall_restore "公版 PPS 验证节点" battery pps restore
 rm -f "$DATA_DIR/state/daemon.pid" "$DATA_DIR/state/daemon.lock.d/pid" 2>/dev/null
 
 pm uninstall --user 0 com.hyperos.xj >/dev/null 2>&1

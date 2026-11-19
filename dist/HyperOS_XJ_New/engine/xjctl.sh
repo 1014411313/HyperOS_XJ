@@ -22,6 +22,7 @@ fi
 . "$DIR/lib/data.sh"
 . "$DIR/lib/power.sh"
 . "$DIR/lib/battery.sh"
+. "$DIR/lib/pps.sh"
 . "$DIR/lib/apl.sh"
 # 背屏支持判据与各入口守卫在 lib/rear.sh，status 输出也用它（status_json 里的 rearscreen_supported）。
 . "$DIR/lib/rear.sh"
@@ -258,9 +259,9 @@ case "$1" in
         esac ;;
       pps)
         case "$3" in
-          on) cfg_set freepps 1; pps_apply 1 ;;
-          off) cfg_set freepps 0; pps_apply 0 ;;
-          restore) pps_apply 0 ;;
+          on) pps_set 1 ;;
+          off) pps_set 0 ;;
+          restore) pps_restore ;;
           *) pps_status ;;
         esac ;;
       cloud)

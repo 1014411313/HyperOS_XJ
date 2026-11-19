@@ -120,7 +120,7 @@ xjctl.sh battery status
 - `battery` 命令会 re-exec 到 PID1 mount namespace（BAA 需要）。
 - `unlock on`：BAA mount + 可选 PSS disable。
 - `unlock off`：BAA umount + PSS enable。
-- `pps`（公版 PPS 解锁）：`on/off` 写配置并立即应用；`restore` 只把验证节点归零；`status` 打印 `freepps` 与两个验证节点的当前值。守护每拍调 `pps_tick`，把 `pd_verifed` 与 `usbpd_verifed` 锁到与开关一致（回读校验，失败记日志）。
+- `pps`（公版 PPS 解锁）：`on/off` 保存开关，由守护确认 USB 拔线后准备或恢复验证节点。`restore` 保存关闭状态，守护已退出时只在确认拔线后恢复。恢复限于本次开机由本模块接管的节点。`status` 显示配置、现有节点值和节点是否可用。已插线、拔线信息未知、多个候选或独立 FreePPS 启用时不写节点。
 - `cloud/apl`：写配置；引擎的 `battery_guard_tick` 负责 cycle、smart_fv 的基础节点写。
 
 `battery status` 输出 KEY=value：

@@ -181,6 +181,27 @@ private fun modeLabel(mode: String): String = when (mode) {
     else -> mode.ifBlank { "系统默认" }
 }
 
+private fun chargingProtocol(map: Map<String, String>): String {
+    if ((map["usb_online"] ?: map["online"]) != "1") return "--"
+    val usbTypes = map["usb_types"].orEmpty().trim()
+    val activeUsbType = if ('[' in usbTypes) {
+        usbTypes.substringAfter('[', "").substringBefore(']', "")
+    } else {
+        usbTypes.takeIf { it.none(Char::isWhitespace) }
+    }
+    val protocol = sequenceOf(
+        map["dt|快充类型"], map["dt|实际充电器类型"], map["dt|USB 实际类型"],
+        map["usb_real_type"], activeUsbType, map["usb_type"]?.takeIf { it.none(Char::isWhitespace) },
+        map["usb_supply_type"].takeIf { map["usb_online"] == "1" },
+    ).filterNotNull().map(String::trim).firstOrNull {
+        it.any(Char::isLetter) && it.lowercase() !in setOf("unknown", "none", "n/a", "null", "not available")
+    }
+    return when (protocol) {
+        "USB_PD" -> "USB PD"
+        else -> protocol ?: "--"
+    }
+}
+
 private fun mapStatus(map: Map<String, String>, environment: String = "Root · 模块在线"): DeviceStatus {
     val tempC = (num(map, "temp") / 10.0).toFloat()
     val currUa = num(map, "curr")
@@ -209,13 +230,12 @@ private fun mapStatus(map: Map<String, String>, environment: String = "Root · �
         }
         .take(8)
 
-    val protocol = map["dt|快充类型"] ?: map["dt|实际充电器类型"] ?: map["usb_type"] ?: "--"
     val powerTier = map["power_tier"] ?: "inf"
 
     return DeviceStatus(
         soc = asInt(map, "cap"),
         status = zhStatus(map["status"] ?: ""),
-        protocol = protocol.ifBlank { "--" },
+        protocol = chargingProtocol(map),
         tempC = tempC,
         currentMa = currentMa,
         voltageMv = voltageMv,
