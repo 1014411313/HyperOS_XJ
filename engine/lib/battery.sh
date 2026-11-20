@@ -8,9 +8,6 @@ BAT_STATE="$BT_STATE"
 BAA_LABEL="u:object_r:batteryantiaging_cfg_file:s0"
 PSS_COMPONENT=com.miui.securitycenter/com.miui.powercenter.provider.PowerSaveService
 
-# BAA 巡检拍数计数器（xjdaemon battery_guard_tick 每 100 拍巡检一次 BAA 挂载）
-BT_BAA_TICK_N=0
-
 [ "$XJ_READONLY" = "1" ] || mkdir -p "$BAT_STATE" 2>/dev/null
 
 blog() { echo "$(date '+%F %T') [battery] $*" >> "$LOGDIR/battery.log" 2>/dev/null; }
@@ -203,33 +200,42 @@ pss_enable() {
 # 解法：只在低电量禁用。SOC ≤ pss_low_soc 禁用；≥ pss_low_soc + pss_low_hyst 启用；
 # 区间内保持不变（滞回，避免在阈值附近反复 pm enable/disable 抖动）。
 # pss_low_soc=0 默认关闭，行为与旧版一致（始终禁用）。
-# 轻量：用 pss_dynamic 状态文件记录上次动作，不调 dumpsys（pss_state 很贵），可每拍挂循环。
-pss_guard_tick() {
-  [ "$(cfg_get pss_disable 1)" = "1" ] || return 0
-  _low=$(cfg_get pss_low_soc 0)
-  case "$_low" in ''|*[!0-9]*) return 0 ;; esac
-  [ "$_low" -gt 0 ] 2>/dev/null || return 0
-  _hys=$(cfg_get pss_low_hyst 5)
-  case "$_hys" in ''|*[!0-9]*) _hys=5 ;; esac
-  _soc=$(cat /sys/class/power_supply/battery/capacity 2>/dev/null)
-  case "$_soc" in ''|*[!0-9]*) return 0 ;; esac
-  _pd=$(cat "$BAT_STATE/pss_dynamic" 2>/dev/null)
-  if [ "$_soc" -le "$_low" ]; then
+# 轻量：用 pss_dynamic 状态文件记录上次动作，不调 dumpsys（pss_state 很贵）。
+# 拆出 pss_guard_soc，供守护 tick 用已采样 SOC 调用，避免每拍重复读节点/配置。
+pss_guard_soc() {
+  local low=$1 hys=$2 soc=$3 pd
+  case "$soc" in ''|*[!0-9]*) return 0 ;; esac
+  [ "$soc" -le 100 ] || return 0
+  pd=$(cat "$BAT_STATE/pss_dynamic" 2>/dev/null)
+  if [ "$soc" -le "$low" ]; then
     # 低电区 → 确保禁用（防锁容）；状态一致时不重复 pm 调用
-    [ "$_pd" = "disabled" ] && return 0
+    [ "$pd" = "disabled" ] && return 0
     pm disable "$PSS_COMPONENT" >/dev/null 2>&1
     printf '1' > "$BAT_STATE/pss_disabled_by_module" 2>/dev/null
     printf 'disabled' > "$BAT_STATE/pss_dynamic" 2>/dev/null
-    blog "pss_dynamic: SOC=${_soc}% <= ${_low}% → PSS 禁用（防低电量锁容）"
-  elif [ "$_soc" -ge "$((_low + _hys))" ]; then
+    blog "pss_dynamic: SOC=${soc}% <= ${low}% → PSS 禁用（防低电量锁容）"
+  elif [ "$soc" -ge "$((low + hys))" ]; then
     # 安全区 → 确保启用（恢复健康度显示）
-    [ "$_pd" = "enabled" ] && return 0
+    [ "$pd" = "enabled" ] && return 0
     pm enable "$PSS_COMPONENT" >/dev/null 2>&1
     rm -f "$BAT_STATE/pss_disabled_by_module" 2>/dev/null
     printf 'enabled' > "$BAT_STATE/pss_dynamic" 2>/dev/null
-    blog "pss_dynamic: SOC=${_soc}% >= $((_low + _hys))% → PSS 启用（恢复电池健康度显示）"
+    blog "pss_dynamic: SOC=${soc}% >= $((low + hys))% → PSS 启用（恢复电池健康度显示）"
   fi
   return 0
+}
+
+pss_guard_tick() {
+  local low hys soc
+  [ "$(cfg_get pss_disable 1)" = "1" ] || return 0
+  low=$(cfg_get pss_low_soc 0)
+  case "$low" in ''|*[!0-9]*) return 0 ;; esac
+  [ "$low" -gt 0 ] 2>/dev/null || return 0
+  hys=$(cfg_get pss_low_hyst 5)
+  case "$hys" in ''|*[!0-9]*) hys=5 ;; esac
+  soc=${BAT_CAP:-}
+  case "$soc" in ''|*[!0-9]*) soc=$(cat "$(bgu_batt_dir)/capacity" 2>/dev/null) ;; esac
+  pss_guard_soc "$low" "$hys" "$soc"
 }
 
 battery_boot() {
@@ -374,6 +380,352 @@ cloud_status() {
   echo "载荷=$(basename "$(baa_src)") 变体=$(baa_cloud_variant)"
   echo "云端目录待检=$(cloud_count) 隔离区=$(ls -1 "$CLOUD_QDIR" 2>/dev/null | grep -vc '^_sources.log$')"
   grep -E '^last_|^blocked_total=' "$CLOUD_STATE" 2>/dev/null
+}
+
+# ---------- 守护 tick：低频调度、低电保护与拔线恢复 ----------
+# 由主循环每拍调用；采样值全部通过环境变量传入，避免重复读节点：
+#   BAT_TEMP / BAT_VOLT / BAT_CAP / IS_CHARGING
+#   XJ_NOW（单调秒）/ XJ_CONFIG_CHANGED(0/1) / XJ_CONNECTION_CHANGED(0/1)
+# 配置只在首次与 XJ_CONFIG_CHANGED=1 时解析，其余拍用缓存。
+BGU_LOW_FILE="$BAT_STATE/low_batt"
+BGU_FV_DEFAULT="$BAT_STATE/fv_default"
+BGU_FV_HOLD="$BAT_STATE/fv_hold"
+BGU_FV_PENDING="$BAT_STATE/fv_restore_pending"
+BGU_FV_CHECK="$BAT_STATE/fv_check_at"
+BGU_CYCLE_REAL="$BAT_STATE/cycle_real"
+BGU_SMART_FV="${BGU_SMART_FV:-/sys/class/xm_power/charger/smart_charge/smart_fv}"
+BGU_FV_DOWN="${BGU_FV_DOWN:-/sys/class/qcom-battery/fv_down}"
+BGU_QMAX_NODE="${BGU_QMAX_NODE:-/sys/class/xm_power/fg_master/qmax_cyclecount}"
+BGU_CYCLE_REAL_FALLBACK="${BGU_CYCLE_REAL_FALLBACK:-/sys/class/xm_power/fg_master/cyclecount}"
+BGU_CYCLE_NODES="${BGU_CYCLE_NODES:-/sys/class/xm_power/fg_master/cyclecount /sys/class/power_supply/battery/cycle_count}"
+BGU_BAA_INTERVAL="${BGU_BAA_INTERVAL:-300}"
+BGU_CLOUD_INTERVAL="${BGU_CLOUD_INTERVAL:-60}"
+BGU_FV_INTERVAL="${BGU_FV_INTERVAL:-300}"
+# 关机电压合法区间与 App 页面约定一致（2800~3500mV），越界按未配置处理。
+BGU_TERM_MIN="${BGU_TERM_MIN:-2800}"
+BGU_TERM_MAX="${BGU_TERM_MAX:-3500}"
+
+BGU_INIT=0
+BGU_CFG_LOADED=0
+BGU_LAST_CHG=""
+BGU_UNLOCK_PREV=""
+BGU_LAST_BAA=-1
+BGU_CLOUD_MODE=""
+BGU_LAST_CLOUD=-1
+
+bgu_batt_dir() { printf '%s' "${BGU_BATT_DIR:-${BAT:-/sys/class/power_supply/battery}}"; }
+
+bgu_now() {
+  local n=${XJ_NOW:-}
+  case "$n" in ''|*[!0-9]*) n=$(cut -d. -f1 /proc/uptime 2>/dev/null) ;; esac
+  case "$n" in ''|*[!0-9]*) n=$(date +%s 2>/dev/null) ;; esac
+  printf '%s' "${n:-0}"
+}
+
+# 取整数配置；空/非数字/越界一律回退默认值。
+bgu_int_or() {
+  local v=$1 d=$2 lo=$3 hi=$4
+  case "$v" in ''|*[!0-9]*) v=$d ;; esac
+  if [ "$v" -lt "$lo" ] || [ "$v" -gt "$hi" ]; then v=$d; fi
+  printf '%s' "$v"
+}
+
+bgu_cfg_load() {
+  BGU_CFG_CYCLE=$(cfg_get cycle_fake "")
+  BGU_CFG_TERM_V=$(cfg_get term_v "")
+  case "$BGU_CFG_TERM_V" in
+    ''|*[!0-9]*) BGU_CFG_TERM_V="" ;;
+    *)
+      if [ "$BGU_CFG_TERM_V" -lt "$BGU_TERM_MIN" ] || [ "$BGU_CFG_TERM_V" -gt "$BGU_TERM_MAX" ]; then
+        blog "term_v=${BGU_CFG_TERM_V}mV 超出 ${BGU_TERM_MIN}~${BGU_TERM_MAX}mV，按未配置处理"
+        BGU_CFG_TERM_V=""
+      fi ;;
+  esac
+  BGU_CFG_UNLOCK=$(cfg_get unlock 1)
+  [ "$BGU_CFG_UNLOCK" = "1" ] || BGU_CFG_UNLOCK=0
+  BGU_CFG_PSS_DISABLE=$(cfg_get pss_disable 1)
+  [ "$BGU_CFG_PSS_DISABLE" = "1" ] || BGU_CFG_PSS_DISABLE=0
+  BGU_CFG_PSS_LOW=$(bgu_int_or "$(cfg_get pss_low_soc 0)" 0 0 100)
+  BGU_CFG_PSS_HYST=$(bgu_int_or "$(cfg_get pss_low_hyst 5)" 5 0 100)
+  BGU_CFG_CLOUD=$(cfg_get cloud_guard 1)
+  [ "$BGU_CFG_CLOUD" = "1" ] || BGU_CFG_CLOUD=0
+  BGU_CFG_SHUT_SOC=$(bgu_int_or "$(cfg_get shutdown_check_soc 20)" 20 0 100)
+  BGU_CFG_SHUT_EXIT=$(bgu_int_or "$(cfg_get shutdown_exit_soc 25)" 25 0 100)
+  # 退出阈值必须高于进入阈值，否则会在门槛上抖动。
+  if [ "$BGU_CFG_SHUT_EXIT" -le "$BGU_CFG_SHUT_SOC" ]; then
+    BGU_CFG_SHUT_EXIT=$((BGU_CFG_SHUT_SOC + 5))
+    [ "$BGU_CFG_SHUT_EXIT" -le 100 ] || BGU_CFG_SHUT_EXIT=100
+    [ "$BGU_CFG_SHUT_EXIT" -gt "$BGU_CFG_SHUT_SOC" ] || BGU_CFG_SHUT_SOC=$((BGU_CFG_SHUT_EXIT - 1))
+  fi
+  BGU_CFG_SHUT_INT=$(bgu_int_or "$(cfg_get shutdown_check_interval 2)" 2 1 60)
+  BGU_CFG_LOADED=1
+}
+
+bgu_cycle_tick() {
+  local cf cr n
+  [ "$XJ_READONLY" = "1" ] && return 0
+  cf=$BGU_CFG_CYCLE
+  [ -n "$cf" ] || return 0
+  # 首次伪装前锁存真实值，卸载时 battery_restore 靠它写回。
+  if [ ! -f "$BGU_CYCLE_REAL" ]; then
+    cr=$(cat "$BGU_QMAX_NODE" 2>/dev/null)
+    case "$cr" in ''|*[!0-9]*) cr=$(cat "$BGU_CYCLE_REAL_FALLBACK" 2>/dev/null) ;; esac
+    case "$cr" in
+      ''|*[!0-9]*) ;;
+      *)
+        if [ "$cr" != "$cf" ]; then
+          mkdir -p "$BAT_STATE" 2>/dev/null
+          printf '%s' "$cr" > "$BGU_CYCLE_REAL" 2>/dev/null
+        fi ;;
+    esac
+  fi
+  for n in $BGU_CYCLE_NODES; do
+    [ -f "$n" ] && [ -w "$n" ] || continue
+    [ "$(cat "$n" 2>/dev/null)" = "$cf" ] || { chmod 0666 "$n" 2>/dev/null; printf '%s\n' "$cf" > "$n" 2>/dev/null; }
+  done
+}
+
+bgu_pss_tick() {
+  local soc
+  [ "$BGU_CFG_PSS_DISABLE" = "1" ] || return 0
+  # 静态模式（pss_low_soc=0）由 battery_boot / 开关一次性处理，不在每拍动作。
+  [ "$BGU_CFG_PSS_LOW" -gt 0 ] 2>/dev/null || return 0
+  soc=${BAT_CAP:-}
+  case "$soc" in ''|*[!0-9]*) return 0 ;; esac
+  pss_guard_soc "$BGU_CFG_PSS_LOW" "$BGU_CFG_PSS_HYST" "$soc"
+}
+
+bgu_write_node() {
+  local p=$1 v=$2
+  [ -e "$p" ] || return 1
+  chmod 0664 "$p" 2>/dev/null
+  printf '%s\n' "$v" > "$p" 2>/dev/null || return 1
+  [ "$(cat "$p" 2>/dev/null)" = "$v" ]
+}
+
+bgu_fv_tick() {
+  local force=$1 now=$2 last ok n cur pending held def changed
+  [ "$BGU_CFG_UNLOCK" = "1" ] || return 0
+  if [ "${IS_CHARGING:-0}" = "1" ]; then
+    # 已压过 0 且未到低频复查点：不读不写，避免每拍访问节点。
+    if [ "$force" != "1" ] && [ -f "$BGU_FV_HOLD" ]; then
+      last=$(cat "$BGU_FV_CHECK" 2>/dev/null)
+      case "$last" in ''|*[!0-9]*) last=-1 ;; esac
+      [ "$((now - last))" -lt "$BGU_FV_INTERVAL" ] && return 0
+    fi
+    ok=1
+    for n in "$BGU_SMART_FV" "$BGU_FV_DOWN"; do
+      [ -e "$n" ] || continue
+      cur=$(cat "$n" 2>/dev/null)
+      [ "$cur" = "0" ] && continue
+      # 快照只在读到非 0 时落盘：升级/旧版残留的 0 不能当成原值。
+      if [ "$n" = "$BGU_SMART_FV" ]; then
+        case "$cur" in
+          ''|0|*[!0-9]*) ;;
+          *) [ -f "$BGU_FV_DEFAULT" ] || printf '%s' "$cur" > "$BGU_FV_DEFAULT" 2>/dev/null ;;
+        esac
+      fi
+      bgu_write_node "$n" 0 || ok=0
+    done
+    if [ "$ok" = "1" ]; then
+      printf '1' > "$BGU_FV_HOLD" 2>/dev/null
+      printf '%s' "$now" > "$BGU_FV_CHECK" 2>/dev/null
+      rm -f "$BGU_FV_PENDING" 2>/dev/null
+    else
+      printf '1' > "$BGU_FV_PENDING" 2>/dev/null
+    fi
+    return 0
+  fi
+
+  # 非充电：只有存在待恢复标记、有快照且到低频复查点，或连接/配置变化时才碰节点。
+  pending=0; [ -f "$BGU_FV_PENDING" ] && pending=1
+  held=0; [ -f "$BGU_FV_HOLD" ] && held=1
+  if [ "$force" != "1" ] && [ "$pending" = 0 ] && [ "$held" = 0 ]; then
+    [ -f "$BGU_FV_DEFAULT" ] || return 0
+    last=$(cat "$BGU_FV_CHECK" 2>/dev/null)
+    case "$last" in ''|*[!0-9]*) last=-1 ;; esac
+    [ "$((now - last))" -lt "$BGU_FV_INTERVAL" ] && return 0
+  fi
+  def=$(cat "$BGU_FV_DEFAULT" 2>/dev/null)
+  case "$def" in
+    ''|0|*[!0-9]*) rm -f "$BGU_FV_HOLD" "$BGU_FV_PENDING" 2>/dev/null; return 0 ;;
+  esac
+  ok=1; changed=0
+  [ -e "$BGU_SMART_FV" ] || { rm -f "$BGU_FV_HOLD" "$BGU_FV_PENDING" 2>/dev/null; return 0; }
+  cur=$(cat "$BGU_SMART_FV" 2>/dev/null)
+  if [ "$cur" != "$def" ]; then
+    changed=1
+    bgu_write_node "$BGU_SMART_FV" "$def" || ok=0
+  fi
+  if [ "$ok" = "1" ]; then
+    rm -f "$BGU_FV_HOLD" "$BGU_FV_PENDING" 2>/dev/null
+    printf '%s' "$now" > "$BGU_FV_CHECK" 2>/dev/null
+    [ "$changed" = "1" ] && blog "smart_fv 已恢复原值 $def"
+  else
+    # 失败只记一次，后续每拍安静重试，避免日志刷屏。
+    [ -f "$BGU_FV_PENDING" ] || blog "smart_fv 恢复失败，稍后重试（目标 $def）"
+    printf '1' > "$BGU_FV_PENDING" 2>/dev/null
+  fi
+  return 0
+}
+
+bgu_baa_tick() {
+  local force=$1 now=$2
+  if [ "$BGU_CFG_UNLOCK" != "1" ]; then
+    BGU_UNLOCK_PREV=0
+    return 0
+  fi
+  # 开机、配置变更、重新开启解容时立即巡检一次。
+  [ "$BGU_UNLOCK_PREV" = "1" ] || force=1
+  if [ "$force" != "1" ] && [ "$BGU_LAST_BAA" != -1 ] && [ "$((now - BGU_LAST_BAA))" -lt "$BGU_BAA_INTERVAL" ]; then
+    BGU_UNLOCK_PREV=1
+    return 0
+  fi
+  BGU_UNLOCK_PREV=1
+  BGU_LAST_BAA=$now
+  [ "$(baa_state)" != "active" ] || return 0
+  blog "BAA inactive detected, remounting"
+  baa_refresh_src >/dev/null 2>&1
+  baa_mount >/dev/null 2>&1
+  setprop ctl.restart batteryantiaging 2>/dev/null
+  if [ "$(baa_state)" = "active" ]; then
+    blog "BAA remounted OK"
+  else
+    blog "BAA remount failed（仍 inactive，可能缺 PID1 namespace）"
+  fi
+}
+
+bgu_cloud_tick() {
+  local now=$1
+  if [ "$BGU_CFG_CLOUD" = "1" ]; then
+    if [ "$BGU_CLOUD_MODE" != "1" ] || [ "$BGU_LAST_CLOUD" = -1 ] || [ "$((now - BGU_LAST_CLOUD))" -ge "$BGU_CLOUD_INTERVAL" ]; then
+      cloud_tick
+      BGU_LAST_CLOUD=$now
+    fi
+    BGU_CLOUD_MODE=1
+  else
+    # 关闭时只在「从开到关」写一次 off，之后不再反复调用。
+    if [ "$BGU_CLOUD_MODE" != "0" ]; then
+      cloud_tick
+      BGU_LAST_CLOUD=$now
+    fi
+    BGU_CLOUD_MODE=0
+  fi
+}
+
+bgu_volt_uv() {
+  local v
+  v=$(cat "$(bgu_batt_dir)/voltage_now" 2>/dev/null)
+  case "$v" in ''|*[!0-9]*) v=${BAT_VOLT:-} ;; esac
+  printf '%s' "$v"
+}
+
+bgu_volt_ok() {
+  case "$1" in ''|*[!0-9]*) return 1 ;; esac
+  # 0 与超出手机电池合理范围（1~10V）的读数都视为无效，不据此关机。
+  [ "$1" -ge 1000000 ] && [ "$1" -le 10000000 ] || return 1
+  return 0
+}
+
+bgu_low_set() {
+  local soc=$1
+  [ -f "$BGU_LOW_FILE" ] && return 0
+  mkdir -p "$BAT_STATE" 2>/dev/null
+  printf '1' > "$BGU_LOW_FILE" 2>/dev/null
+  blog "低电监测进入：SOC=${soc:-未知}% ≤ ${BGU_CFG_SHUT_SOC}%，每 ${BGU_CFG_SHUT_INT}s 检查电压（阈值 ${BGU_CFG_TERM_V}mV）"
+}
+
+bgu_low_clear() {
+  [ -f "$BGU_LOW_FILE" ] || return 0
+  rm -f "$BGU_LOW_FILE" 2>/dev/null
+  blog "低电监测退出"
+}
+
+bgu_shutdown_check() {
+  local mode=$1 uv mv
+  if [ "$mode" = "active" ]; then
+    uv=$(bgu_volt_uv)
+  else
+    uv=${BAT_VOLT:-}
+  fi
+  bgu_volt_ok "$uv" || return 0
+  mv=$((uv / 1000))
+  [ "$mv" -le "$BGU_CFG_TERM_V" ] || return 0
+  log "电压 ${mv}mV ≤ 关机阈值 ${BGU_CFG_TERM_V}mV，执行关机"
+  reboot -p 2>/dev/null || svc power shutdown 2>/dev/null
+}
+
+bgu_low_tick() {
+  local soc low
+  if [ -z "$BGU_CFG_TERM_V" ]; then
+    bgu_low_clear
+    return 0
+  fi
+  if [ "${IS_CHARGING:-0}" = "1" ]; then
+    bgu_low_clear
+    return 0
+  fi
+  soc=${BAT_CAP:-}
+  low=0
+  case "$soc" in
+    ''|*[!0-9]*) low=1 ;;
+    *)
+      if [ "$soc" -gt 100 ]; then
+        low=1
+      elif [ -f "$BGU_LOW_FILE" ]; then
+        [ "$soc" -ge "$BGU_CFG_SHUT_EXIT" ] || low=1
+      else
+        [ "$soc" -le "$BGU_CFG_SHUT_SOC" ] && low=1
+      fi ;;
+  esac
+  if [ "$low" = "1" ]; then
+    bgu_low_set "$soc"
+    # 低电时允许主动读电压。
+    bgu_shutdown_check active
+  else
+    bgu_low_clear
+    # 正常电量不额外读节点，但仍复用已采 BAT_VOLT 做电压保护。
+    bgu_shutdown_check sampled
+  fi
+}
+
+battery_guard_tick() {
+  local cfg conn chg now force
+  [ "$XJ_READONLY" = "1" ] && return 0
+  cfg=${XJ_CONFIG_CHANGED:-0}
+  conn=${XJ_CONNECTION_CHANGED:-0}
+  chg=${IS_CHARGING:-0}
+  now=$(bgu_now)
+  force=0
+  if [ "$BGU_CFG_LOADED" != "1" ] || [ "$cfg" = "1" ]; then
+    bgu_cfg_load
+    force=1
+  fi
+  if [ "$BGU_INIT" != "1" ] || [ "$conn" = "1" ] || [ "$BGU_LAST_CHG" != "$chg" ]; then
+    force=1
+  fi
+  bgu_cycle_tick
+  bgu_pss_tick
+  bgu_fv_tick "$force" "$now"
+  bgu_baa_tick "$force" "$now"
+  bgu_cloud_tick "$now"
+  bgu_low_tick
+  BGU_LAST_CHG=$chg
+  BGU_INIT=1
+  return 0
+}
+
+# 低电时主循环应使用的 sleep 秒数；正常返回空，由主循环沿用原间隔。
+battery_poll_interval() {
+  local tv interval
+  [ -f "$BGU_LOW_FILE" ] || return 0
+  tv=$(cfg_get term_v "")
+  case "$tv" in ''|*[!0-9]*) return 0 ;; esac
+  [ "$tv" -ge "$BGU_TERM_MIN" ] && [ "$tv" -le "$BGU_TERM_MAX" ] || return 0
+  interval=$(cfg_get shutdown_check_interval 2)
+  case "$interval" in ''|*[!0-9]*) interval=2 ;; esac
+  [ "$interval" -ge 1 ] && [ "$interval" -le 60 ] || interval=2
+  printf '%s' "$interval"
 }
 
 # ---------- 卸载/关闭时的节点还原 ----------

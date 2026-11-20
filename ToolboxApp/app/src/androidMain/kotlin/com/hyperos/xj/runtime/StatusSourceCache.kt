@@ -104,6 +104,10 @@ internal fun isMissing(t: Throwable): Boolean =
 internal fun hasLiveCore(live: Map<String, String>): Boolean =
     CORE_LIVE_KEYS.all { !live[it].isNullOrBlank() }
 
+internal fun snapshotHasFreshCore(snapshot: Map<String, String>?, now: Long): Boolean =
+    snapshot != null && hasLiveCore(snapshot) &&
+        snapshot["ts"]?.toLongOrNull()?.let { now - it * 1000 in 0..1_500L } == true
+
 private val CORE_LIVE_KEYS = listOf("cap", "status", "temp", "volt", "curr")
 
 /** 快照 / sysfs 实时 / root 基底三路的取舍。 */

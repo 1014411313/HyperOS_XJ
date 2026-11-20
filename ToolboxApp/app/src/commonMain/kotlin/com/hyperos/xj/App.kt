@@ -42,6 +42,11 @@ import com.hyperos.xj.pages.BatteryPage
 import com.hyperos.xj.pages.HomePage
 import com.hyperos.xj.pages.LookPage
 import com.hyperos.xj.pages.ThermalPage
+import com.hyperos.xj.runtime.AppVisibility
+import com.hyperos.xj.runtime.LocalAppVisible
+import com.hyperos.xj.runtime.LocalPreviewVisible
+import com.hyperos.xj.runtime.appVisible
+import com.hyperos.xj.runtime.statusRefreshInterval
 import com.hyperos.xj.runtime.AppearanceStore
 import com.hyperos.xj.runtime.DeviceStatus
 import com.hyperos.xj.runtime.createToolboxBridge
@@ -99,6 +104,7 @@ fun App() {
         LocalAppearance provides appearance,
         LocalAccentColor provides appearance.accentColor(),
         LocalGlassMode provides appearance.glassMode,
+        LocalAppVisible provides appVisible(),
         LocalSelectedTab provides selectedTab
     ) {
         val density = LocalDensity.current
@@ -197,14 +203,19 @@ private fun AppPages(
 ) {
     var status by remember { mutableStateOf(DeviceStatus()) }
 
-    LaunchedEffect(Unit) {
+    val visible = LocalAppVisible.current
+    var previewVisible by remember { mutableStateOf(false) }
+    val interval = statusRefreshInterval(selectedTab, previewVisible)
+    LaunchedEffect(visible, interval, selectedTab, AppVisibility.statusRevision.intValue) {
+        if (!visible) return@LaunchedEffect
         while (true) {
             val tickStarted = TimeSource.Monotonic.markNow()
             status = bridge.readStatus()
-            delay((1000L - tickStarted.elapsedNow().inWholeMilliseconds).coerceAtLeast(0L))
+            delay((interval - tickStarted.elapsedNow().inWholeMilliseconds).coerceAtLeast(0L))
         }
     }
 
+    CompositionLocalProvider(LocalPreviewVisible provides { previewVisible = it }) {
     when (selectedTab) {
         0 -> HomePage(backdrop, bridge, status)
         1 -> ThermalPage(backdrop, bridge, status)
@@ -217,6 +228,7 @@ private fun AppPages(
             onAppearanceChange = onAppearanceChange
         )
         else -> AboutPage(backdrop, bridge, status)
+    }
     }
 }
 

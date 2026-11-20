@@ -17,10 +17,30 @@ SUB_PKG=com.xiaomi.subscreencenter
 # 支持判据缓存：测温/状态/守护共用一份，避免每拍 fork pm。
 RS_SUP="$RS_STATE/supported"
 RS_SUP_TS="$RS_STATE/supported.ts"
+# 关闭/无支持且收尾完成后置静默标记，60 秒内不再 grep 配置；开启态健康维护按真实时间节流。
+RS_IDLE="$RS_STATE/idle"
+RS_IDLE_TS="$RS_STATE/idle.ts"
+RS_HEALTH_TS="$RS_STATE/health.ts"
 
 [ "$XJ_READONLY" = "1" ] || mkdir -p "$RS_STATE" 2>/dev/null
 
 say() { echo "$(date '+%F %T') $*" >> "$RS_LOG" 2>/dev/null; }
+
+# 调度时钟：守护循环可注入 XJ_NOW（单调秒，避免系统时间跳变影响窗口）；
+# 独立命令/自检未注入时回退 date epoch。
+_now_sec() {
+  case "${XJ_NOW:-}" in
+    ''|*[!0-9]*) date +%s ;;
+    *) printf '%s' "$XJ_NOW" ;;
+  esac
+}
+
+# 时间窗口判断（$1=now $2=last $3=ttl）：last 缺失、时钟倒退或超出 ttl 都返回非 0。
+_within() {
+  case "${2:-}" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$1" -lt "$2" ] && return 1
+  [ $(( $1 - $2 )) -lt "$3" ]
+}
 
 # 唯一判据：com.xiaomi.subscreencenter 在装。dumpsys 的 Display #1 可能来自外接屏/
 # 投屏，不能当背屏硬件依据；也不看屏幕亮灭（熄屏时照样有硬件）。
@@ -34,7 +54,7 @@ subscreen_probe() {
   if [ "$XJ_READONLY" != "1" ]; then
     mkdir -p "$RS_STATE" 2>/dev/null
     printf '%s' "$_rsp" > "$RS_SUP" 2>/dev/null
-    printf '%s' "$(date +%s)" > "$RS_SUP_TS" 2>/dev/null
+    printf '%s' "$(_now_sec)" > "$RS_SUP_TS" 2>/dev/null
   fi
   printf '%s' "$_rsp"
 }
@@ -44,9 +64,9 @@ subscreen_probe() {
 subscreen_supported_cached() {
   _rsv=$(cat "$RS_SUP" 2>/dev/null)
   case "$_rsv" in 1) _rsttl=600 ;; 0) _rsttl=60 ;; *) _rsv=""; _rsttl=0 ;; esac
-  _rsnow=$(date +%s); _rslast=$(cat "$RS_SUP_TS" 2>/dev/null)
+  _rsnow=$(_now_sec); _rslast=$(cat "$RS_SUP_TS" 2>/dev/null)
   case "$_rslast" in ''|*[!0-9]*) _rslast=0 ;; esac
-  if [ -z "$_rsv" ] || [ $((_rsnow - _rslast)) -ge "$_rsttl" ]; then
+  if [ -z "$_rsv" ] || ! _within "$_rsnow" "$_rslast" "$_rsttl"; then
     subscreen_probe
     return 0
   fi
@@ -55,10 +75,39 @@ subscreen_supported_cached() {
 
 apk_ok() { pm path "$CARD_PKG" >/dev/null 2>&1; }
 
+# App uid 的可靠来源：优先 App 数据目录属主（存存即权威，免 fork dumpsys）；
+# 退 dumpsys 的 userId=/appId=（Android 17 起可能只给 appId=）。
+# 多用户下 uid = userId*100000 + appId，合法 appId 区间 10000–19999；
+# 只校验 appId 部分（uid % 100000），不猜、不用非应用 uid。
 card_uid() {
-  _u=$(dumpsys package "$CARD_PKG" 2>/dev/null | grep -m1 'userId=' | sed 's/.*userId=//')
+  _u=""
+  for _d in "/data/data/$CARD_PKG" "/data/user/0/$CARD_PKG"; do
+    _v=$(stat -c %u "$_d" 2>/dev/null)
+    case "$_v" in
+      ''|*[!0-9]*) ;;
+      *) _u=$_v; break ;;
+    esac
+  done
+  if [ -z "$_u" ]; then
+    _dump=$(dumpsys package "$CARD_PKG" 2>/dev/null)
+    _u=$(printf '%s\n' "$_dump" | grep -m1 -o 'userId=[0-9]*' | cut -d= -f2)
+    [ -n "$_u" ] || _u=$(printf '%s\n' "$_dump" | grep -m1 -o 'appId=[0-9]*' | cut -d= -f2)
+  fi
   case "$_u" in ''|*[!0-9]*) _u=0 ;; esac
+  _app=$(( _u % 100000 ))
+  if [ "$_u" -le 0 ] || [ "$_app" -lt 10000 ] || [ "$_app" -gt 19999 ]; then _u=0; fi
   echo "$_u"
+}
+
+# 静默标记只记「上次已核验」的时间；只读模式不写状态。
+_set_idle() {
+  [ "$XJ_READONLY" = "1" ] && return 0
+  : > "$RS_IDLE" 2>/dev/null
+  printf '%s' "${1:-$(_now_sec)}" > "$RS_IDLE_TS" 2>/dev/null
+}
+
+_clear_idle() {
+  [ -e "$RS_IDLE" ] && rm -f "$RS_IDLE" "$RS_IDLE_TS" 2>/dev/null
 }
 
 enable_clock() {
@@ -76,6 +125,7 @@ rear_boot_recover() {
   rear_cleanup_pending && rear_cleanup_once
   rear_cleanup_pending || rm -f "$RS_STATE/on" "$RS_STATE/retry" "$RS_STATE/push_fail" 2>/dev/null
   enable_clock
+  ! rear_cleanup_pending && _set_idle
   return 0
 }
 
@@ -179,6 +229,7 @@ rear_enable() {
     return 4
   fi
   cfg_set rearscreen 1
+  _clear_idle
   rear_ensure
 }
 
@@ -218,6 +269,7 @@ rear_stop() {
   enable_clock
   [ "$_acted" = "1" ] && say "lsposed overlay disabled"
   [ "$_fail" = "1" ] && return 1
+  _set_idle
   return 0
 }
 
@@ -232,7 +284,7 @@ rear_cleanup_once() {
   if [ -f "$RS_STATE/cleanup_retry" ]; then
     _t=$(cat "$RS_STATE/cleanup_retry" 2>/dev/null)
     case "$_t" in ''|*[!0-9]*) _t=0 ;; esac
-    [ $(( $(date +%s) - _t )) -lt 60 ] && return 2
+    _within "$(_now_sec)" "$_t" 60 && return 2
     _first=0
   else
     _first=1
@@ -246,7 +298,7 @@ rear_cleanup_once() {
   fi
   rear_active_leftover && _ok=0
   if [ "$_ok" = "0" ]; then
-    printf '%s' "$(date +%s)" > "$RS_STATE/cleanup_retry" 2>/dev/null
+    printf '%s' "$(_now_sec)" > "$RS_STATE/cleanup_retry" 2>/dev/null
     [ "$_first" = "1" ] && say "cleanup incomplete: retry in 60s"
     return 1
   fi
@@ -266,14 +318,31 @@ rear_unsupported_cleanup() {
 }
 
 rear_tick() {
-  [ "$(cfg_get rearscreen 0)" = "1" ] || {
-    rear_cleanup_pending && rear_cleanup_once
+  _now=$(_now_sec)
+  _changed=0; [ "${XJ_CONFIG_CHANGED:-0}" = "1" ] && _changed=1
+  # 关闭/无支持收尾完成后置静默标记，60 秒内不读配置；XJ_CONFIG_CHANGED=1
+  # 只穿透本次快速返回，不删除静默标记，避免每轮归零丢状态。
+  if [ "$_changed" = "0" ] && [ -f "$RS_IDLE" ]; then
+    _last=$(cat "$RS_IDLE_TS" 2>/dev/null)
+    _within "$_now" "$_last" 60 && return 0
+  fi
+
+  if [ "$(cfg_get rearscreen 0)" != "1" ]; then
+    if rear_cleanup_pending; then
+      rear_cleanup_once
+    fi
     rm -f "$RS_STATE/on" 2>/dev/null
+    # 收尾失败保留 cleanup_retry（60 秒窗口）继续重试，不置静默标记。
+    if ! rear_cleanup_pending; then
+      _set_idle "$_now"
+    fi
     return 0
-  }
+  fi
+  _clear_idle
 
   if [ "$(subscreen_supported_cached)" != "1" ]; then
     rear_unsupported_cleanup
+    ! rear_cleanup_pending && _set_idle "$_now"
     return 0
   fi
   rm -f "$RS_STATE/unsupported" 2>/dev/null
@@ -281,23 +350,28 @@ rear_tick() {
   if [ ! -f "$RS_STATE/on" ]; then
     if [ -f "$RS_STATE/retry" ]; then
       _t=$(cat "$RS_STATE/retry" 2>/dev/null)
-      case "$_t" in ''|*[!0-9]*) _t=0 ;; esac
-      [ $(( $(date +%s) - _t )) -lt 60 ] && return 0
+      _within "$_now" "$_t" 60 && return 0
     fi
     if rear_ensure; then
       : > "$RS_STATE/on" 2>/dev/null
       rm -f "$RS_STATE/retry" 2>/dev/null
     else
-      date +%s > "$RS_STATE/retry" 2>/dev/null
+      printf '%s' "$_now" > "$RS_STATE/retry" 2>/dev/null
       return 0
     fi
+    _clear_idle
   fi
 
-  _n=$(cat "$RS_STATE/tick" 2>/dev/null); [ -n "$_n" ] || _n=0
-  _n=$((_n + 1))
-  echo "$_n" > "$RS_STATE/tick" 2>/dev/null
-  if [ $((_n % 30)) -eq 0 ]; then
-    grep -q '^enabled=1' "$CARD_CONF" 2>/dev/null || write_config 1 1
+  # 开启态健康维护：真实 60 秒一次，不按拍数（守护 tick 可能 1 秒一拍）。
+  _hlast=$(cat "$RS_HEALTH_TS" 2>/dev/null)
+  if [ "$_changed" = "1" ] || ! _within "$_now" "$_hlast" 60; then
+    [ "$XJ_READONLY" = "1" ] || printf '%s' "$_now" > "$RS_HEALTH_TS" 2>/dev/null
+    # 参数变化（字/色/背景/开关）需要即时下发，不只补 enabled=1。
+    if [ "$_changed" = "1" ]; then
+      rear_push_config || write_config 1 1
+    else
+      grep -q '^enabled=1' "$CARD_CONF" 2>/dev/null || write_config 1 1
+    fi
     am start-foreground-service -n "$CARD_SERVICE" >/dev/null 2>&1
   fi
 }

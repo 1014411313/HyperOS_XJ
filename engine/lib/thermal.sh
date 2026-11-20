@@ -278,13 +278,25 @@ restore_factory() (
 
 apply_conf_mode() {
   _mode="$1" _src="$2"
+  local check_now check_key
+  check_now=${XJ_NOW:-$(date +%s)}
+  check_key="$_mode|$_src"
+  if [ "${XJ_CONFIG_CHANGED:-0}" != 1 ] && [ "${THERMAL_CHECK_KEY:-}" = "$check_key" ] &&
+     [ $((check_now - ${THERMAL_CHECK_AT:-0})) -lt 60 ] &&
+     [ -s "$THERMAL_PATH/thermal-normal.conf" ]; then
+    return 0
+  fi
   factory_backup || return 1
-  ensure_thermal_dir
   _tmd5=$(md5sum "$_src" 2>/dev/null | cut -d' ' -f1)
   _curmd5=$(md5sum "$THERMAL_PATH/thermal-normal.conf" 2>/dev/null | cut -d' ' -f1)
   _curname=$(cat "$CONFDIR/current_mode" 2>/dev/null)
   [ -n "$_tmd5" ] || return 1
-  [ "$_curmd5" = "$_tmd5" ] && [ "$_curname" = "$_mode" ] && return 0
+  if [ "$_curmd5" = "$_tmd5" ] && [ "$_curname" = "$_mode" ]; then
+    daemon_running || restart_daemon
+    THERMAL_CHECK_KEY=$check_key
+    THERMAL_CHECK_AT=$check_now
+    return 0
+  fi
   unlock_files
   ensure_thermal_dir
   cp -f "$_src" "$THERMAL_PATH/thermal-normal.conf" 2>/dev/null || return 1
@@ -292,11 +304,14 @@ apply_conf_mode() {
   restart_daemon
   lock_files
   printf '%s' "$_mode" > "$CONFDIR/current_mode"
+  THERMAL_CHECK_KEY=$check_key
+  THERMAL_CHECK_AT=$check_now
   update_status "$_mode"
   log "切换 → $(mode_label "$_mode") ｜ map=$_n"
 }
 
 apply_default() {
+  THERMAL_CHECK_KEY=
   _cur=$(cat "$CONFDIR/current_mode" 2>/dev/null)
   [ "$_cur" = "default" ] && return 0
   ensure_thermal_dir
@@ -414,6 +429,13 @@ hyperos_keepalive() {
 }
 
 update_status() {
+  local update_now update_mode
+  update_now=${XJ_NOW:-$(date +%s)}
+  update_mode=$1
+  if [ "${STATUS_DESCRIPTION_MODE:-}" = "$update_mode" ] &&
+     [ $((update_now - ${STATUS_DESCRIPTION_AT:-0})) -lt 300 ]; then
+    return 0
+  fi
   _label=$(mode_label "$1")
   _t=$(cat /sys/class/power_supply/battery/temp 2>/dev/null)
   case "$_t" in ''|*[!0-9-]*) _t="" ;; esac
@@ -432,7 +454,12 @@ update_status() {
           /^description=/ { print "description=" d; next }
           { print }
         ' "$_mp" > "$_mp.new.$$" 2>/dev/null; then
-      mv -f "$_mp.new.$$" "$_mp" 2>/dev/null || rm -f "$_mp.new.$$" 2>/dev/null
+      if mv -f "$_mp.new.$$" "$_mp" 2>/dev/null; then
+        STATUS_DESCRIPTION_MODE=$update_mode
+        STATUS_DESCRIPTION_AT=$update_now
+      else
+        rm -f "$_mp.new.$$" 2>/dev/null
+      fi
     else
       rm -f "$_mp.new.$$" 2>/dev/null
     fi
@@ -452,7 +479,8 @@ _app_uid_cached() {
   _f="$STATE/app_uid"; _ts="$STATE/app_uid.ts"
   _now=$(date +%s); _last=$(cat "$_ts" 2>/dev/null)
   case "$_last" in ''|*[!0-9]*) _last=0 ;; esac
-  if [ ! -s "$_f" ] || [ $((_now - _last)) -ge 600 ]; then
+  _cached_uid=$(cat "$_f" 2>/dev/null)
+  if [ ! -s "$_f" ] || [ "$_cached_uid" = 0 ] || [ $((_now - _last)) -ge 600 ]; then
     card_uid > "$_f" 2>/dev/null
     printf '%s' "$_now" > "$_ts"
   fi

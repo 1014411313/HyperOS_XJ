@@ -87,6 +87,10 @@ pps_apply_idle() {
 pps_tick() {
   local want="$1" error
   : "${PPS_IDLE_SEEN:=0}" "${PPS_ATTEMPT:=}"
+  if [ "${XJ_CONNECTION_CHANGED:-1}" = 0 ] && [ "${XJ_CONFIG_CHANGED:-1}" = 0 ] &&
+     [ "$PPS_ATTEMPT" = "$want" ]; then
+    return 0
+  fi
   if [ "$want" != 1 ] && [ ! -f "$PPS_STATE" ]; then
     PPS_IDLE_SEEN= PPS_ATTEMPT=
     return 0

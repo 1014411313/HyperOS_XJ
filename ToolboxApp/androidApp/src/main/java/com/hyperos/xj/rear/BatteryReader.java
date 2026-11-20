@@ -12,6 +12,20 @@ public final class BatteryReader {
     private BatteryReader() {
     }
 
+    /** 只读粘贴的电池广播判断充电，不读 sysfs，供不可见时的轻量轮询使用。 */
+    public static boolean charging(Context ctx) {
+        try {
+            Intent intent = ctx.registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+            if (intent == null) return false;
+            int status = intent.getIntExtra(BatteryManager.EXTRA_STATUS,
+                    BatteryManager.BATTERY_STATUS_UNKNOWN);
+            return status == BatteryManager.BATTERY_STATUS_CHARGING
+                    || status == BatteryManager.BATTERY_STATUS_FULL;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
     public static ChargeState read(Context ctx) {
         ChargeState state = new ChargeState();
         Intent intent = null;

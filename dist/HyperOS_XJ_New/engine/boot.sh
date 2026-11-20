@@ -82,7 +82,7 @@ log "boot service start (waited)"
 if [ ! -s "$CONFDIR/settings.json" ] && [ -s "$MODDIR/default_settings.json" ]; then
   cp -f "$MODDIR/default_settings.json" "$CONFDIR/settings.json" 2>/dev/null
 fi
-sh "$DIR/xjctl.sh" detect >/dev/null 2>&1
+[ -s "$CACHE/ps.cache" ] && [ -s "$CACHE/detail.list" ] || sh "$DIR/xjctl.sh" detect >/dev/null 2>&1
 
 start_daemon
 

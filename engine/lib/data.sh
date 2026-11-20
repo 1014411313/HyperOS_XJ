@@ -18,15 +18,15 @@ find_ps() {
 # 每拍采样：写入全局 BAT_TEMP(0.1℃) / BAT_CUR(uA) / BAT_CAP(%) / BAT_VOLT(uV) / BAT_STATUS。
 sample() {
   _b="${BAT:-/sys/class/power_supply/battery}"
-  BAT_TEMP=$(cat "$_b/temp" 2>/dev/null)
+  BAT_TEMP=; IFS= read -r BAT_TEMP < "$_b/temp" 2>/dev/null
   case "$BAT_TEMP" in ''|*[!0-9-]*) BAT_TEMP=0 ;; esac
-  BAT_CUR=$(cat "$_b/current_now" 2>/dev/null)
+  BAT_CUR=; IFS= read -r BAT_CUR < "$_b/current_now" 2>/dev/null
   case "$BAT_CUR" in ''|*[!0-9-]*) BAT_CUR=0 ;; esac
-  BAT_CAP=$(cat "$_b/capacity" 2>/dev/null)
+  BAT_CAP=; IFS= read -r BAT_CAP < "$_b/capacity" 2>/dev/null
   case "$BAT_CAP" in ''|*[!0-9]*) BAT_CAP=0 ;; esac
-  BAT_VOLT=$(cat "$_b/voltage_now" 2>/dev/null)
+  BAT_VOLT=; IFS= read -r BAT_VOLT < "$_b/voltage_now" 2>/dev/null
   case "$BAT_VOLT" in ''|*[!0-9]*) BAT_VOLT=0 ;; esac
-  BAT_STATUS=$(cat "$_b/status" 2>/dev/null)
+  BAT_STATUS=; IFS= read -r BAT_STATUS < "$_b/status" 2>/dev/null
   [ -n "$BAT_STATUS" ] || BAT_STATUS="Unknown"
   # 涓流/温控暂停时 status 会短暂变 Not charging，只看它会让场景判定在
   # 「默认档位/充电档位」之间反复跳；因此非放电状态一律以充电器在线为准。

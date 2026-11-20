@@ -68,6 +68,18 @@ private val boltNy = floatArrayOf(0.00f, 0.55f, 0.55f, 1.00f, 0.42f, 0.42f)
  * 中央闪电 + 大号电量百分比、底部一行实时数据。
  */
 @Composable
+private fun rearAnimationPhase(target: Float, duration: Int): Float {
+    val transition = rememberInfiniteTransition(label = "rearAnimation")
+    val phase by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = target,
+        animationSpec = infiniteRepeatable(tween(duration, easing = LinearEasing), RepeatMode.Restart),
+        label = "rearPhase"
+    )
+    return phase
+}
+
+@Composable
 fun RearScreenPreview(
     accent: Color,
     status: DeviceStatus,
@@ -87,31 +99,9 @@ fun RearScreenPreview(
         label = "rearLiquidLevel"
     )
 
-    val wave = rememberInfiniteTransition(label = "rearWave")
-    val rawPhase by wave.animateFloat(
-        initialValue = 0f,
-        targetValue = (2 * PI).toFloat(),
-        animationSpec = infiniteRepeatable(
-            animation = tween(1333, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "rearWavePhase"
-    )
-    // animate=false 时冻结波形（乘 0），避免预览里仍有流动。
-    val phase = rawPhase * if (animate) 1f else 0f
-
-    // 焦散漂移相位：独立慢速循环（周期与 PanelView 同值），animate=false 时冻结。
-    val caustTick = rememberInfiniteTransition(label = "rearCaustic")
-    val rawCaustPhase by caustTick.animateFloat(
-        initialValue = 0f,
-        targetValue = LiquidStyle.CAUSTIC_DRIFT_LOOP_MS,
-        animationSpec = infiniteRepeatable(
-            animation = tween(LiquidStyle.CAUSTIC_DRIFT_LOOP_MS.toInt(), easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "rearCausticPhaseMs"
-    )
-    val caustPhaseMs = rawCaustPhase * if (animate) 1f else 0f
+    val rawPhase = if (animate) rearAnimationPhase((2 * PI).toFloat(), 1333) else 0f
+    val phase = rawPhase
+    val caustPhaseMs = if (animate) rearAnimationPhase(LiquidStyle.CAUSTIC_DRIFT_LOOP_MS, LiquidStyle.CAUSTIC_DRIFT_LOOP_MS.toInt()) else 0f
 
     // 水面高光段：固定 seed 生成一次，位置随波面流动，避免每帧全变导致闪烁。
     val highlightSegments = remember {
@@ -175,17 +165,9 @@ fun RearScreenPreview(
 
         // 背景图在液体、挖孔遮罩之下，必须是第一个子组件。
         if (bgGifPath != null) {
-            val gifClock = rememberInfiniteTransition(label = "rearGif")
-            val gifMs by gifClock.animateFloat(
-                initialValue = 0f,
-                targetValue = 60_000f,
-                animationSpec = infiniteRepeatable(
-                    animation = tween(60_000, easing = LinearEasing),
-                    repeatMode = RepeatMode.Restart
-                ),
-                label = "rearGifMs"
-            )
-            val gifFrame = gifFrameAt(bgGifPath, (gifMs * if (animate) 1f else 0f).toLong())
+            val gifMs = if (animate) rearAnimationPhase(60_000f, 60_000) else 0f
+            val frozenFrame = remember(bgGifPath, animate) { if (animate) null else gifFrameAt(bgGifPath, 0) }
+            val gifFrame = if (animate) gifFrameAt(bgGifPath, gifMs.toLong()) else frozenFrame
             if (gifFrame != null) {
                 Canvas(Modifier.matchParentSize()) {
                     drawRearRefractedBackground(gifFrame, level, phase)

@@ -6,6 +6,11 @@ import java.io.InputStreamReader
 import kotlin.math.abs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.coroutineContext
+import kotlin.coroutines.resume
+import java.util.concurrent.atomic.AtomicReference
 
 /** 守护每拍写出的状态快照；App 直读免 fork su，过期/缺失/解析失败时回退 root 采样。 */
 private const val SHARED_STATUS_STALE_MS = 15_000L
@@ -19,7 +24,7 @@ private const val SOURCE_RETRY_MS = 60_000L
 /** 快照文件还没生成时用短冷却，守护起来后很快能读到。 */
 private const val MISSING_RETRY_MS = 5_000L
 
-/** 引擎停摆时的 root 采样限频：守护默认 3s 一拍，比这更密只会持续 fork su。 */
+/** root 兜底最多每秒一次，保持首页实时读数。 */
 private const val ROOT_STATUS_CACHE_MS = 1_000L
 
 private val sharedStatusFiles = listOf(
@@ -37,34 +42,79 @@ private class AndroidToolboxBridge : ToolboxRuntimeBridge {
     private var rootBaseAt = 0L
     private var rootBase: Map<String, String>? = null
     private var rootHintText: String = "Root 不可用"
+    private var deviceInfo: Map<String, String> = emptyMap()
+    @Volatile private var statusDirty = false
+
+    private fun withDeviceInfo(map: Map<String, String>): Map<String, String> {
+        val keys = setOf("device_name", "device_code", "os_version", "base_firmware", "kernel", "module_version", "date")
+        deviceInfo = deviceInfo + map.filter { it.key in keys && it.value.isNotBlank() }
+        return map + deviceInfo
+    }
 
     override suspend fun readStatus(): DeviceStatus = withContext(Dispatchers.IO) {
+        coroutineContext.ensureActive()
+        if (!AppVisibility.visible.value) return@withContext DeviceStatus()
         val snap = sourceCache.readSnapshot(
             sharedStatusFiles, SHARED_STATUS_STALE_MS, SOURCE_RETRY_MS, MISSING_RETRY_MS,
         ) { raw -> if (raw.trimStart().startsWith("{")) parseFlatJson(raw) else emptyMap() }
-        val live = readSysfsLive(sourceCache)
+        if (statusDirty) {
+            val updated = rootBaseCached()
+            if (updated != null) {
+                statusDirty = false
+                return@withContext mapStatus(withDeviceInfo(updated))
+            }
+        }
+        val live = if (snapshotHasFreshCore(snap, System.currentTimeMillis())) null else readSysfsLive(sourceCache)
         // 只有快照和完整实时都拿不到时才 fork su；缺字段的实时值要和 root 基底合并，不能当 0。
         val needRootBase = snap == null && (live == null || !hasLiveCore(live))
         val rootBase = if (needRootBase) rootBaseCached() else null
         when (pickLiveSource(snap != null, live, rootBase)) {
-            LiveSource.SNAPSHOT_WITH_LIVE -> mapStatus(snap.orEmpty() + live.orEmpty())
-            LiveSource.SNAPSHOT -> mapStatus(snap.orEmpty())
-            LiveSource.LIVE -> mapStatus(live.orEmpty(), "面板直读 · 引擎快照不可用")
-            LiveSource.ROOT_WITH_LIVE -> mapStatus(rootBase.orEmpty() + live.orEmpty())
-            LiveSource.ROOT -> mapStatus(rootBase.orEmpty())
-            LiveSource.PARTIAL_LIVE -> mapStatus(live.orEmpty(), "面板直读（部分字段） · 引擎快照不可用")
+            LiveSource.SNAPSHOT_WITH_LIVE -> mapStatus(withDeviceInfo(snap.orEmpty() + live.orEmpty()))
+            LiveSource.SNAPSHOT -> mapStatus(withDeviceInfo(snap.orEmpty()))
+            LiveSource.LIVE -> mapStatus(withDeviceInfo(live.orEmpty()), "面板直读 · 引擎快照不可用")
+            LiveSource.ROOT_WITH_LIVE -> mapStatus(withDeviceInfo(rootBase.orEmpty() + live.orEmpty()))
+            LiveSource.ROOT -> mapStatus(withDeviceInfo(rootBase.orEmpty()))
+            LiveSource.PARTIAL_LIVE -> mapStatus(withDeviceInfo(live.orEmpty()), "面板直读（部分字段） · 引擎快照不可用")
             LiveSource.NONE -> DeviceStatus(status = "未连接", environment = rootHintText)
         }
     }
 
-    private fun rootBaseCached(): Map<String, String>? {
+    private suspend fun rootBaseCached(): Map<String, String>? {
+        coroutineContext.ensureActive()
+        if (!AppVisibility.visible.value) return null
         val now = System.currentTimeMillis()
         if (now - rootBaseAt < ROOT_STATUS_CACHE_MS) return rootBase
-        val raw = runAsRoot(Engine.status()).output
+        val raw = readRootStatus().output
         rootBase = (if (raw.trimStart().startsWith("{")) parseFlatJson(raw) else emptyMap()).ifEmpty { null }
         rootHintText = raw.lineSequence().firstOrNull { it.isNotBlank() }?.take(80) ?: "Root 不可用"
         rootBaseAt = now
         return rootBase
+    }
+
+    private suspend fun readRootStatus(): ExecResult = suspendCancellableCoroutine { continuation ->
+        val running = AtomicReference<Process?>()
+        continuation.invokeOnCancellation { running.get()?.destroy() }
+        Dispatchers.IO.dispatch(continuation.context, Runnable {
+            if (!continuation.isActive) return@Runnable
+            if (!AppVisibility.visible.value) {
+                continuation.resume(ExecResult("读取已暂停", -1))
+                return@Runnable
+            }
+            val result = try {
+                val process = ProcessBuilder("su", "-c", Engine.status()).redirectErrorStream(true).start()
+                running.set(process)
+                if (!continuation.isActive || !AppVisibility.visible.value) {
+                    process.destroy()
+                    ExecResult("读取已暂停", -1)
+                } else {
+                    val output = process.inputStream.bufferedReader().use { it.readText() }
+                    ExecResult(output.trim(), process.waitFor())
+                }
+            } catch (t: Exception) {
+                ExecResult(t.message ?: "error", -1)
+            }
+            if (continuation.isActive) continuation.resume(result)
+        })
     }
 
     private fun invalidateRootBase() {
@@ -80,15 +130,38 @@ private class AndroidToolboxBridge : ToolboxRuntimeBridge {
 
     override suspend fun exec(command: String): String = withContext(Dispatchers.IO) {
         invalidateRootBase()
-        runAsRoot(command).also { settingsCache = null }.output
+        try {
+            runAsRoot(command).also { settingsCache = null }.output
+        } finally {
+            withContext(Dispatchers.Main) {
+                if (!command.startsWith(Engine.build("dtbo")) && command != Engine.status() && command != Engine.settingsDump()) {
+                    statusDirty = true
+                }
+                AppVisibility.statusRevision.intValue++
+            }
+        }
     }
 
     override suspend fun execResult(command: String): ExecResult = withContext(Dispatchers.IO) {
         invalidateRootBase()
-        runAsRoot(command).also { settingsCache = null }
+        try {
+            runAsRoot(command).also { settingsCache = null }
+        } finally {
+            withContext(Dispatchers.Main) {
+                if (!command.startsWith(Engine.build("dtbo")) && command != Engine.status() && command != Engine.settingsDump()) {
+                    statusDirty = true
+                }
+                AppVisibility.statusRevision.intValue++
+            }
+        }
     }
 
     private fun runAsRoot(command: String): ExecResult {
+        val backgroundRead = command == Engine.settingsDump() || command in listOf(
+            Engine.dtboStatus(), Engine.dtboHasLocal(), Engine.dtboResolve(),
+            Engine.dtboDirs(), Engine.dtboList(), Engine.dtboBackups(),
+        )
+        if (!AppVisibility.visible.value && backgroundRead) return ExecResult("应用不可见，读取已暂停", -1)
         return try {
             val process = ProcessBuilder("su", "-c", command)
                 .redirectErrorStream(true)

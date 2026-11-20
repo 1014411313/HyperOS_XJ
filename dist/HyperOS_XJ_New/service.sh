@@ -59,7 +59,8 @@ BG_APP_DIR=/storage/emulated/0/Android/data/com.hyperos.xj/files
 BG_APP="$BG_APP_DIR/xj_rear_bg_default.gif"
 BG_VER_FILE="$DATA_DIR/state/bg_default_ver"
 _bg_ver=$(grep -a '^versionCode=' "$MODDIR/module.prop" 2>/dev/null | cut -d= -f2)
-if [ -f "$BG_SRC" ] && [ "$(cat "$BG_VER_FILE" 2>/dev/null)" != "$_bg_ver" ]; then
+if pm path com.xiaomi.subscreencenter >/dev/null 2>&1 &&
+   [ -f "$BG_SRC" ] && [ "$(cat "$BG_VER_FILE" 2>/dev/null)" != "$_bg_ver" ]; then
     if cp -f "$BG_SRC" "$BG_ENGINE" 2>/dev/null; then
         chmod 0644 "$BG_ENGINE" 2>/dev/null
         mkdir -p "$DATA_DIR/state" 2>/dev/null
@@ -70,21 +71,8 @@ if [ -f "$BG_SRC" ] && [ "$(cat "$BG_VER_FILE" 2>/dev/null)" != "$_bg_ver" ]; th
     if [ -z "$_bg_sel" ]; then
         rm -f /data/local/tmp/xj_rear_bg.gif "$BG_APP_DIR/xj_rear_bg.gif" 2>/dev/null
     fi
-    # App 预览副本（App uid 读不了 /data/local/tmp）。
-    # 开机早期 FUSE 尚未就绪、目录不可写会让 cp 静默失败：先每秒试写探针，最多等 60s，超时写日志跳过（bug-059）。
-    if [ -f "$BG_ENGINE" ]; then
-        _bg_wait=0
-        while [ "$_bg_wait" -lt 60 ]; do
-            if [ -d "$BG_APP_DIR" ] && touch "$BG_APP_DIR/.bg_probe" 2>/dev/null; then
-                rm -f "$BG_APP_DIR/.bg_probe" 2>/dev/null
-                break
-            fi
-            _bg_wait=$((_bg_wait + 1))
-            sleep 1
-        done
-        if [ "$_bg_wait" -ge 60 ]; then
-            echo "$(date '+%F %T') [SVC] bg copy skip: $BG_APP_DIR not writable after 60s" >> "$LOG"
-        elif cp -f "$BG_ENGINE" "$BG_APP" 2>/dev/null; then
+    if [ -f "$BG_ENGINE" ] && [ -d "$BG_APP_DIR" ]; then
+        if cp -f "$BG_ENGINE" "$BG_APP" 2>/dev/null; then
             chmod 0644 "$BG_APP" 2>/dev/null
             _bg_uid=$(stat -c %u "$BG_APP_DIR" 2>/dev/null)
             case "$_bg_uid" in ''|*[!0-9]*|0) ;; *) chown "$_bg_uid:$_bg_uid" "$BG_APP" 2>/dev/null ;; esac

@@ -20,6 +20,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.findRootCoordinates
+import com.hyperos.xj.runtime.LocalAppVisible
+import com.hyperos.xj.runtime.LocalPreviewVisible
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -96,6 +102,11 @@ fun LookPage(
     var rearCardBgImage by remember { mutableStateOf<ImageBitmap?>(null) }
     var rearCardBgGifPath by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val appVisible = LocalAppVisible.current
+    var previewInWindow by remember { mutableStateOf(false) }
+    val reportPreview = LocalPreviewVisible.current
+    LaunchedEffect(appVisible, previewInWindow) { reportPreview(appVisible && previewInWindow) }
+    DisposableEffect(Unit) { onDispose { reportPreview(false) } }
     // 图片选择异步返回后组合早已重组，必须读最新快照，否则会覆盖期间调过的 bgBlur 等字段
     val currentAppearance by rememberUpdatedState(appearance)
 
@@ -196,11 +207,17 @@ fun LookPage(
             )
             Spacer(Modifier.height(10.dp))
             if (rearEnabled) {
+                DisposableEffect(Unit) { onDispose { previewInWindow = false } }
                 RearScreenPreview(
                     accent = appearance.accentColor(),
                     status = status,
                     fields = rearSelected.toList(),
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().onGloballyPositioned { coordinates ->
+                        val bounds = coordinates.boundsInWindow()
+                        val root = coordinates.findRootCoordinates().boundsInWindow()
+                        previewInWindow = bounds.width > 0 && bounds.height > 0 && bounds.overlaps(root)
+                    },
+                    animate = appVisible && previewInWindow,
                     fontScale = when (rearFont) { 0 -> 0.85f; 2 -> 1.2f; else -> 1f },
                     bgColor = rearCardBg ?: "",
                     bgImage = rearCardBgImage,

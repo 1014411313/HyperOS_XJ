@@ -379,25 +379,59 @@ public class PanelView extends View implements SensorEventListener {
     @Override
     protected void onAttachedToWindow() {
         super.onAttachedToWindow();
-        if (sensorManager != null && accelerometer != null) {
-            try {
-                sensorManager.registerListener(this, accelerometer, SensorManager.SENSOR_DELAY_UI);
-            } catch (Throwable ignored) {
-            }
-        }
-        startAnimation();
+        syncAnimation();
     }
 
     @Override
     protected void onDetachedFromWindow() {
-        super.onDetachedFromWindow();
-        if (sensorManager != null) {
-            try {
-                sensorManager.unregisterListener(this);
-            } catch (Throwable ignored) {
-            }
-        }
         stopAnimation();
+        unregisterSensor();
+        super.onDetachedFromWindow();
+    }
+
+    @Override
+    protected void onVisibilityChanged(View changedView, int visibility) {
+        super.onVisibilityChanged(changedView, visibility);
+        syncAnimation();
+    }
+
+    @Override
+    protected void onWindowVisibilityChanged(int visibility) {
+        super.onWindowVisibilityChanged(visibility);
+        syncAnimation();
+    }
+
+    // 只在真正可见时跑动画与加速度计：GONE 或窗口不可见立刻停，避免背屏下方白白耗电。
+    private void syncAnimation() {
+        boolean run;
+        try {
+            run = getWindowToken() != null && getWindowVisibility() == VISIBLE && isShown();
+        } catch (Throwable t) {
+            run = false;
+        }
+        if (run) {
+            registerSensor();
+            startAnimation();
+        } else {
+            stopAnimation();
+            unregisterSensor();
+        }
+    }
+
+    private void registerSensor() {
+        if (sensorManager == null || accelerometer == null) return;
+        try {
+            sensorManager.registerListener(this, accelerometer, SensorManager.SENSOR_DELAY_UI);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private void unregisterSensor() {
+        if (sensorManager == null) return;
+        try {
+            sensorManager.unregisterListener(this);
+        } catch (Throwable ignored) {
+        }
     }
 
     private void startAnimation() {

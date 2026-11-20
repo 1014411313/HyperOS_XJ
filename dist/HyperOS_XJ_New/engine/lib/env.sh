@@ -42,7 +42,46 @@ seed_bt_conf() {
 seed_settings
 seed_bt_conf
 
+runtime_config_refresh() {
+  local sig
+  sig=$(stat -c '%y:%s:%i' "$CONFDIR/settings.json" "$BT_CONF" "$STATE/config.changed" 2>/dev/null)
+  XJ_CONFIG_CHANGED=0
+  [ "$sig" != "${XJ_CONFIG_SIGNATURE:-}" ] || return 0
+  XJ_CONFIG_SIGNATURE=$sig
+  XJ_JSON_CACHE=$(awk '
+    /^[[:space:]]*"[A-Za-z_][A-Za-z0-9_]*"[[:space:]]*:/ {
+      line=$0; sub(/^[[:space:]]*"/, "", line)
+      key=line; sub(/".*/, "", key)
+      sub(/^[^"]*"[[:space:]]*:[[:space:]]*/, "", line)
+      if (line ~ /^\{/ || line ~ /^\[/) next
+      sub(/[[:space:]]*,?[[:space:]]*$/, "", line)
+      if (line ~ /^"/) { sub(/^"/, "", line); sub(/".*$/, "", line) }
+      print key "=" line
+    }' "$CONFDIR/settings.json" 2>/dev/null)
+  XJ_BT_CACHE=$(cat "$BT_CONF" 2>/dev/null)
+  XJ_CONFIG_CACHED=1
+  XJ_CONFIG_CHANGED=1
+}
+
+runtime_config_value() {
+  local line key=$1 fallback=$2 value= found=0
+  while IFS= read -r line; do
+    case "$line" in "$key="*) value=${line#*=}; found=1 ;; esac
+  done <<EOF
+$3
+EOF
+  if [ "$found" = 1 ] && [ -n "$value" ]; then printf '%s' "$value"; else printf '%s' "$fallback"; fi
+}
+
+config_changed() {
+  [ "$XJ_READONLY" = 1 ] || touch "$STATE/config.changed" 2>/dev/null
+}
+
 json_get() {
+  if [ "${XJ_CONFIG_CACHED:-0}" = 1 ]; then
+    runtime_config_value "$1" "${2:-}" "$XJ_JSON_CACHE"
+    return
+  fi
   _f="$CONFDIR/settings.json"; _k="$1"; _d="${2:-}"
   seed_settings
   [ -s "$_f" ] || { printf '%s' "$_d"; return 0; }
@@ -84,10 +123,15 @@ json_set() {
       print line
     }
   ' "$_f" > "$_f.new" 2>/dev/null && cat "$_f.new" > "$_f" && rm -f "$_f.new"
+  config_changed
 }
 
 # ---------- settings.conf（电池/解容配置，KEY=value） ----------
 cfg_get() {
+  if [ "${XJ_CONFIG_CACHED:-0}" = 1 ]; then
+    runtime_config_value "$1" "${2:-}" "$XJ_BT_CACHE"
+    return
+  fi
   _k="$1"; _d="${2:-}"
   [ -s "$BT_CONF" ] || { printf '%s' "$_d"; return 0; }
   _v=$(grep -aE "^${_k}=" "$BT_CONF" 2>/dev/null | tail -n1 | cut -d= -f2-)
@@ -120,6 +164,7 @@ cfg_set() {
   else
     printf '%s=%s\n' "$_k" "$_v" >> "$BT_CONF"
   fi
+  config_changed
 }
 
 # ---------- 功率档（inf/fast/mid/slow，或 5~119 的自定义瓦数） ----------

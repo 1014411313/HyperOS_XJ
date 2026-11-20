@@ -22,7 +22,7 @@ else
   BT_GUARDS_EXTERNAL=0
 fi
 
-POLL_INTERVAL=$(profile_get poll_interval 1)
+POLL_INTERVAL=$(profile_get poll_interval 5)
 FG_INTERVAL=$(profile_get foreground_interval 10)
 CHARGE_INTERVAL=$(profile_get charge_interval 1)
 
@@ -122,83 +122,76 @@ apply_fps() {
   printf '%s' "$_fps" > "$CONFDIR/.fps_applied"
 }
 
-battery_guard_tick() {
-  # 循环伪装：FG 回滚时自动重压。qmax_cyclecount 是不受伪装影响的权威值，只读不写。
-  _cf=$(cfg_get cycle_fake "")
-  if [ -n "$_cf" ]; then
-    # 首次伪装前锁存真实值，卸载时 battery_restore 靠它写回。
-    if [ ! -f "$BAT_STATE/cycle_real" ]; then
-      _cr=$(cat /sys/class/xm_power/fg_master/qmax_cyclecount 2>/dev/null)
-      case "$_cr" in ''|*[!0-9]*) _cr=$(cat /sys/class/xm_power/fg_master/cyclecount 2>/dev/null) ;; esac
-      case "$_cr" in
-        ''|*[!0-9]*) ;;
-        *)
-          if [ "$_cr" != "$_cf" ]; then
-            mkdir -p "$BAT_STATE" 2>/dev/null
-            printf '%s' "$_cr" > "$BAT_STATE/cycle_real" 2>/dev/null
-          fi ;;
-      esac
-    fi
-    for _n in /sys/class/xm_power/fg_master/cyclecount \
-              /sys/class/power_supply/battery/cycle_count; do
-      [ -f "$_n" ] && [ -w "$_n" ] || continue
-      [ "$(cat "$_n" 2>/dev/null)" = "$_cf" ] || { chmod 0666 "$_n" 2>/dev/null; echo "$_cf" > "$_n"; } 2>/dev/null
-    done
+runtime_now() {
+  IFS=' ' read -r _uptime _idle < /proc/uptime
+  XJ_NOW=${_uptime%%.*}
+}
+
+app_visible() {
+  local until now
+  until=
+  IFS= read -r until < /storage/emulated/0/Android/data/com.hyperos.xj/files/visible.until 2>/dev/null
+  case "$until" in ''|*[!0-9]*) return 1 ;; esac
+  now=$(date +%s)
+  [ "$until" -gt "$now" ] && [ "$until" -le $((now + 20)) ]
+}
+
+publish_tick() {
+  local mode interval
+  mode=$(cat "$CONFDIR/current_mode" 2>/dev/null)
+  update_status "$mode"
+  interval=30
+  app_visible && interval=1
+  if [ "$XJ_CONFIG_CHANGED" = 1 ] || [ "$XJ_CONNECTION_CHANGED" = 1 ] ||
+     [ "${XJ_STATUS_MODE:-}" != "$mode" ] || [ $((XJ_NOW - ${XJ_STATUS_AT:-0})) -ge "$interval" ]; then
+    write_status_json
+    XJ_STATUS_AT=$XJ_NOW
+    XJ_STATUS_MODE=$mode
   fi
-  # 关机电压：放电中电压低于阈值执行软关机。
-  _tv=$(cfg_get term_v "")
-  if [ -n "$_tv" ] && [ "$IS_CHARGING" != "1" ]; then
-    case "$_tv" in ''|*[!0-9]*) _tv="" ;; esac
-    [ -n "$_tv" ] && [ "${BAT_VOLT:-0}" -gt 0 ] && [ $((BAT_VOLT / 1000)) -le "$_tv" ] && { log "电压 $((BAT_VOLT / 1000))mV ≤ 关机阈值 ${_tv}mV，执行关机"; reboot -p 2>/dev/null || svc power shutdown 2>/dev/null; }
-  fi
-  # PSS 动态模式：低电才禁用、回安全区自动启用（内部短路，不重复 pm 调用）。
-  pss_guard_tick
-  # smart_fv 守护：充电中才压强 0（解除满充电压限制）；非充电必须写回有效值，
-  # 否则手机管家读到 0 会不显示电池健康度。
-  if [ "$(cfg_get unlock 1)" = "1" ]; then
-    _sf=/sys/class/xm_power/charger/smart_charge/smart_fv
-    _fvd=/sys/class/qcom-battery/fv_down
-    if [ "$IS_CHARGING" = "1" ]; then
-      [ -e "$_sf" ] && [ "$(cat "$_sf" 2>/dev/null)" != "0" ] && { chmod 0664 "$_sf" 2>/dev/null; echo 0 > "$_sf"; } 2>/dev/null
-      [ -e "$_fvd" ] && [ "$(cat "$_fvd" 2>/dev/null)" != "0" ] && { chmod 0664 "$_fvd" 2>/dev/null; echo 0 > "$_fvd"; } 2>/dev/null
-    elif [ -e "$_sf" ]; then
-      _sfv=$(cat "$_sf" 2>/dev/null)
-      case "$_sfv" in
-        ''|0) ;;
-        *)
-          # 快照只在读到非 0 时落盘：升级/旧版残留的 0 不能当成原值。
-          [ -f "$BAT_STATE/fv_default" ] || printf '%s' "$_sfv" > "$BAT_STATE/fv_default" 2>/dev/null ;;
-      esac
-      if [ "$_sfv" = "0" ]; then
-        _fd=$(cat "$BAT_STATE/fv_default" 2>/dev/null)
-        case "$_fd" in
-          ''|0|*[!0-9]*) ;;
-          *) chmod 0664 "$_sf" 2>/dev/null; echo "$_fd" > "$_sf" 2>/dev/null ;;
-        esac
-      fi
-    fi
-  fi
-  # BAA 运行期重挂巡检（参照 v3.12.9 cloud_guard.sh watch，约每 5 分钟一次）：
-  # 系统 mid-session 替换 /odm、OTA 残留会冲掉 bind mount，表现为解容「开关开着但没生效」。
-  # 重挂后必须 restart batteryantiaging，否则文件已换成解容版、内存里跑的还是原厂策略。
-  BT_BAA_TICK_N=$((BT_BAA_TICK_N + 1))
-  if [ $((BT_BAA_TICK_N % 100)) -eq 0 ] && [ "$(cfg_get unlock 1)" = "1" ] && [ "$(baa_state)" != "active" ]; then
-    blog "BAA inactive detected, remounting"
-    baa_refresh_src >/dev/null 2>&1
-    baa_mount >/dev/null 2>&1
-    setprop ctl.restart batteryantiaging 2>/dev/null
-    if [ "$(baa_state)" = "active" ]; then
-      blog "BAA remounted OK"
-    else
-      blog "BAA remount failed（仍 inactive，可能缺 PID1 namespace）"
-    fi
+  interval=60
+  [ "$USB_CONNECTED:$WIRELESS_CONNECTED" = 0:0 ] || interval=5
+  if [ "$XJ_CONNECTION_CHANGED" = 1 ] || [ "$XJ_CONFIG_CHANGED" = 1 ] ||
+     [ $((XJ_NOW - ${XJ_DIAG_AT:-0})) -ge "$interval" ]; then
+    diag_log_tick
+    XJ_DIAG_AT=$XJ_NOW
   fi
 }
 
+connection_read() {
+  local node value _connection
+  USB_CONNECTED=0; WIRELESS_CONNECTED=0
+  for node in /sys/class/power_supply/usb/present /sys/class/power_supply/usb/online; do
+    if [ -r "$node" ] && IFS= read -r value < "$node"; then
+      [ "$value" != 1 ] || USB_CONNECTED=1
+    fi
+  done
+  for node in /sys/class/power_supply/wireless/present /sys/class/power_supply/wireless/online; do
+    if [ -r "$node" ] && IFS= read -r value < "$node"; then
+      [ "$value" != 1 ] || WIRELESS_CONNECTED=1
+    fi
+  done
+  [ "${IS_CHARGING:-0}" != 1 ] || [ "$WIRELESS_CONNECTED" = 1 ] || USB_CONNECTED=1
+  XJ_CONNECTION_CHANGED=0
+  _connection="$USB_CONNECTED:$WIRELESS_CONNECTED:${IS_CHARGING:-0}"
+  [ "${XJ_CONNECTION:-}" = "$_connection" ] || XJ_CONNECTION_CHANGED=1
+  XJ_CONNECTION=$_connection
+}
+
 run_tick() {
+  local _label _on _games _game_enabled _want_bypass _d _target _ts _te _tl _h _sl _gaming _scene _t_limit _tb _src _thermal_rc
   TICK_N=$((TICK_N + 1))
-  ensure_thermal_dir
-  hitemp_guard
+  runtime_now
+  runtime_config_refresh
+  if [ -z "$THERMAL_DAEMON" ] || [ -z "$THERMAL_PATH" ]; then
+    bootstrap || return 1
+  fi
+  sample
+  connection_read
+  if [ "$XJ_CONFIG_CHANGED" = 1 ] || [ $((XJ_NOW - ${XJ_PROPERTY_AT:-0})) -ge 60 ]; then
+    hitemp_guard
+    hyperos_keepalive
+    XJ_PROPERTY_AT=$XJ_NOW
+  fi
 
   _label=""
   if [ -f "$MODDIR/disable" ]; then
@@ -215,32 +208,39 @@ run_tick() {
     fi
   fi
   if [ -n "$_label" ]; then
-    release_charge
-    rear_stop
-    if [ "$(cat "$CONFDIR/current_mode" 2>/dev/null)" != "$_label" ]; then
+    if [ "${XJ_DISABLED_HANDLED:-}" != "$_label" ]; then
+      release_charge
+      rear_stop
       apply_default || return 1
       printf '%s' "$_label" > "$CONFDIR/current_mode"
       update_status "$_label"
+      XJ_DISABLED_HANDLED=$_label
+      write_status_json
     fi
     return 0
   fi
-
-  hyperos_keepalive
-  sample
+  XJ_DISABLED_HANDLED=
 
   # 诊断数据保留：只留最近 1 天，每天清一次（函数内自查时间戳，未到期直接返回）。
-  [ $((TICK_N % 60)) = 1 ] && retention_tick
+  if [ $((XJ_NOW - ${XJ_RETENTION_AT:-0})) -ge 3600 ] || [ "${XJ_RETENTION_AT:-0}" = 0 ]; then
+    retention_tick
+    XJ_RETENTION_AT=$XJ_NOW
+  fi
 
-  # 云控屏蔽：云端下发目录巡检隔离，约每 20 拍（1 分钟）一次。
-  [ $((TICK_N % 20)) = 1 ] && cloud_tick
-
-  _on=0; screen_on && _on=1
-  _now=$(date +%s)
-  _last_fg=$(cat "$CONFDIR/.fg_time" 2>/dev/null); [ -z "$_last_fg" ] && _last_fg=0
-  if [ "$_on" = "1" ]; then
-    [ $((_now - _last_fg)) -ge "$FG_INTERVAL" ] && { printf '%s' "$(foreground_pkg)" > "$CONFDIR/.fg_pkg"; printf '%s' "$_now" > "$CONFDIR/.fg_time"; }
-  else
+  _on=0
+  _games=$(json_get game_apps "")
+  _game_enabled=$(json_get game_mode true)
+  if [ "$USB_CONNECTED" = 1 ] || [ "$WIRELESS_CONNECTED" = 1 ] || { [ "$_game_enabled" = true ] && [ -n "$_games" ]; }; then
+    screen_on && _on=1
+  fi
+  if [ "$_on" = 1 ] && [ "$_game_enabled" = true ] && [ -n "$_games" ]; then
+    if [ "$XJ_CONFIG_CHANGED" = 1 ] || [ $((XJ_NOW - ${XJ_FG_AT:-0})) -ge "$FG_INTERVAL" ]; then
+      foreground_pkg > "$CONFDIR/.fg_pkg"
+      XJ_FG_AT=$XJ_NOW
+    fi
+  elif [ "${XJ_FG_AT:-0}" != 0 ]; then
     : > "$CONFDIR/.fg_pkg"
+    XJ_FG_AT=0
   fi
 
   _want_bypass=0
@@ -256,8 +256,7 @@ run_tick() {
   if [ "$_want_bypass" = "1" ]; then
     printf '1' > "$CONFDIR/bypass_active"
     apply_bypass || return 1
-    write_status_json
-    diag_log_tick
+    publish_tick
     [ "$BT_GUARDS_EXTERNAL" = "1" ] || battery_guard_tick
     rear_tick
     return 0
@@ -266,11 +265,18 @@ run_tick() {
   # 离开旁路时先交还充电节点，再应用功率档。
   [ -f "$CONFDIR/bypass_active" ] && release_charge
   # APL：每拍算一次 inf 档电流目标（写 state/apl_target_ma，供 power_apply 读取）。
-  apl_tick
-  power_apply "$(effective_tier)"
+  if [ "$USB_CONNECTED" = 1 ] && [ "$WIRELESS_CONNECTED" != 1 ]; then
+    apl_tick
+    power_apply "$(effective_tier)"
+    XJ_POWER_ACTIVE=1
+  elif [ "${XJ_POWER_ACTIVE:-0}" = 1 ] || [ -f "$STATE/apl_target_ma" ]; then
+    rm -f "$STATE/apl_target_ma" "$STATE/apl_urgent" 2>/dev/null
+    power_restore
+    XJ_POWER_ACTIVE=0
+  fi
 
   _target="default"
-  if [ "$IS_CHARGING" = "1" ] && [ "$MTK_MODE" != "1" ]; then
+  if { [ "$USB_CONNECTED" = 1 ] || [ "$WIRELESS_CONNECTED" = 1 ]; } && [ "$MTK_MODE" != 1 ]; then
     if [ "$(json_get charge_mode true)" = "true" ]; then
       _target=$(json_get charge_level unlimited)
       _ts=$(json_get time_start 0); _te=$(json_get time_end 0); _tl=$(json_get time_level level_1)
@@ -289,14 +295,14 @@ run_tick() {
   fi
 
   _gaming=0
-  if [ "$(json_get game_mode true)" = "true" ] && [ "$_on" = "1" ] && is_gaming; then
+  if [ "$_game_enabled" = true ] && [ -n "$_games" ] && [ "$_on" = 1 ] && is_gaming; then
     _gaming=1
     _target=$(json_get game_level unlimited)
   fi
 
   # 场景标记：normal（非充电非游戏）/ charge / game
   _scene="normal"
-  [ "$IS_CHARGING" = "1" ] && [ "$MTK_MODE" != "1" ] && _scene="charge"
+  { [ "$USB_CONNECTED" = 1 ] || [ "$WIRELESS_CONNECTED" = 1 ]; } && [ "$MTK_MODE" != 1 ] && _scene=charge
   [ "$_gaming" = "1" ] && _scene="game"
 
   # 普通/游戏场景：电池温度 ≥ 档位上限 → 交回官方温控（解除档位对温度的接管）；
@@ -339,16 +345,13 @@ run_tick() {
 
   [ "$BT_GUARDS_EXTERNAL" = "1" ] || battery_guard_tick
   rear_tick
-  update_status "$(cat "$CONFDIR/current_mode" 2>/dev/null)"
-  write_status_json
-  diag_log_tick
+  publish_tick
   return "$_thermal_rc"
 }
 
 bootstrap || log "初始化失败，稍后重试"
 factory_backup
-save_charge_orig
-data_detect >/dev/null 2>&1
+[ -s "$CACHE/ps.cache" ] && [ -s "$CACHE/detail.list" ] || data_detect >/dev/null 2>&1
 
 TICK_N=0
 XJ_PPS_OWNER=0
@@ -393,9 +396,12 @@ rear_boot_recover
 while true; do
   run_tick
   # 充电中快循环：档位切换、闭环反馈、inf 安顿都需要更短的响应时间。
-  if [ "${IS_CHARGING:-0}" = "1" ]; then
-    sleep "$CHARGE_INTERVAL"
-  else
-    sleep "$POLL_INTERVAL"
+  _sleep=$POLL_INTERVAL
+  app_visible && _sleep=1
+  if [ "${USB_CONNECTED:-0}" = 1 ] || [ "${IS_CHARGING:-0}" = 1 ]; then
+    _sleep=$CHARGE_INTERVAL
   fi
+  _battery_interval=$(battery_poll_interval)
+  case "$_battery_interval" in ''|*[!0-9]*) ;; *) [ "$_battery_interval" -ge "$_sleep" ] || _sleep=$_battery_interval ;; esac
+  sleep "$_sleep"
 done

@@ -80,8 +80,8 @@ diag_log_tick() {
   _due=0
   if [ "$DIAG_BUF_N" -ge "$DIAG_BUF_MAX" ]; then
     _due=1
-  elif [ $((DIAG_BUF_N % 10)) -eq 0 ]; then
-    _now=$(date +%s)
+  else
+    _now=${XJ_NOW:-$(date +%s)}
     case "$DIAG_LAST_FLUSH" in ''|*[!0-9]*) DIAG_LAST_FLUSH=0 ;; esac
     [ $((_now - DIAG_LAST_FLUSH)) -ge "$DIAG_FLUSH_SEC" ] && _due=1
   fi
@@ -97,7 +97,7 @@ diag_log_tick() {
   } >> "$DIAG_LOG" 2>/dev/null
   DIAG_BUF=""
   DIAG_BUF_N=0
-  DIAG_LAST_FLUSH=$(date +%s)
+  DIAG_LAST_FLUSH=${XJ_NOW:-$(date +%s)}
   # 体积控制：超限截尾保留末尾（wc/tail 各一次 fork，仅落盘时发生）
   _sz=$(wc -c < "$DIAG_LOG" 2>/dev/null)
   case "$_sz" in ''|*[!0-9]*) return 0 ;; esac

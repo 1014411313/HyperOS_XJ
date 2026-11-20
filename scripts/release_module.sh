@@ -231,7 +231,15 @@ https://github.com/$GITHUB_REPO/releases/tag/$TAG
 https://gitee.com/$GITEE_REPO/releases
 https://github.com/$GITHUB_REPO/releases
 EOF
-git -C "$ROOT" add -A latest.json state/release.json "$LINKS" dist/HyperOS_XJ_New engine
+# Stage only public source, tests, module inputs and release metadata.
+git -C "$ROOT" add -u -- ToolboxApp dist/HyperOS_XJ_New engine scripts latest.json
+for path in ToolboxApp dist/HyperOS_XJ_New engine \
+    scripts/charge_control_regression.py scripts/rear_guard_regression.py \
+    scripts/battery_idle_regression.py scripts/idle_dispatch_regression.py \
+    latest.json state/release.json "$LINKS"; do
+    [ ! -e "$ROOT/$path" ] || git -C "$ROOT" add -- "$path"
+done
+git -C "$ROOT" reset -q -- state/bugs.json
 
 step "5/7 提交并打标签 $TAG"
 if git -C "$ROOT" diff --cached --quiet; then

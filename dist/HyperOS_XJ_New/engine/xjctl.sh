@@ -344,8 +344,8 @@ case "$1" in
 
   bypass)
     case "$2" in
-      on) printf '1' > "$CONFDIR/bypass_manual" ;;
-      off) rm -f "$CONFDIR/bypass_manual" ;;
+      on) printf '1' > "$CONFDIR/bypass_manual"; config_changed ;;
+      off) rm -f "$CONFDIR/bypass_manual"; config_changed ;;
       status) [ -f "$CONFDIR/bypass_manual" ] && echo on || echo off ;;
       *) usage; exit 9 ;;
     esac ;;

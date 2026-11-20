@@ -31,8 +31,9 @@ apl_num() {
 
 # /proc/device-tree 里的 big-endian u32 数组最大值（DTBO 参数）
 apl_dt_u32_max() {
+  local output
   [ -e "$1" ] || { printf '%s' ""; return 0; }
-  od -An -tu1 -v "$1" 2>/dev/null | awk '
+  output=$(od -An -tu1 -v "$1" 2>/dev/null | awk '
     { for (i = 1; i <= NF; i++) a[++n] = $i }
     END {
       if (n < 4) { print ""; exit }
@@ -42,7 +43,8 @@ apl_dt_u32_max() {
         if (v > max) max = v
       }
       print max
-    }'
+    }')
+  printf '%s' "$output"
 }
 
 # 充电泵允许的电流顶（DTBO div_max_curr）
@@ -64,16 +66,23 @@ apl_vterm_mv() {
 # inf 档真实上限：DTBO div_max_curr 与 20000 取小，可用 apl_max_ma 再收紧。
 # 注意不能用 max_ma（那是 fast/mid/slow 瓦数换算的封顶），否则解容会被压到几十瓦。
 apl_ceiling_ma() {
-  _c=20000
-  _d=$(dt_curr_cap_ma)
-  case "$_d" in ''|*[!0-9]*) _d="" ;; esac
-  [ -n "$_d" ] && [ "$_d" -gt 0 ] && [ "$_d" -lt "$_c" ] && _c="$_d"
-  _o=$(cfg_get apl_max_ma "")
-  case "$_o" in
+  local ceiling dt_cap raw_cap battery_cap configured_cap
+  ceiling=20000
+  dt_cap=$(dt_curr_cap_ma)
+  case "$dt_cap" in ''|*[!0-9]*) dt_cap="" ;; esac
+  [ -n "$dt_cap" ] && [ "$dt_cap" -gt 0 ] && [ "$dt_cap" -lt "$ceiling" ] && ceiling="$dt_cap"
+  raw_cap=$(apl_rd /sys/class/power_supply/battery/constant_charge_current_max)
+  case "$raw_cap" in ''|*[!0-9]*) raw_cap="" ;; esac
+  if [ -n "$raw_cap" ] && [ "$raw_cap" -ge 100000 ] && [ "$raw_cap" -le 100000000 ]; then
+    battery_cap=$((raw_cap / 1000))
+    [ "$battery_cap" -lt "$ceiling" ] && ceiling="$battery_cap"
+  fi
+  configured_cap=$(cfg_get apl_max_ma "")
+  case "$configured_cap" in
     ''|*[!0-9]*) ;;
-    *) [ "$_o" -gt 0 ] && [ "$_o" -lt "$_c" ] && _c="$_o" ;;
+    *) [ "$configured_cap" -gt 0 ] && [ "$configured_cap" -lt "$ceiling" ] && ceiling="$configured_cap" ;;
   esac
-  printf '%s' "$_c"
+  printf '%s' "$ceiling"
 }
 
 apl_rd() {
@@ -197,10 +206,15 @@ apl_hard_fault() {
 # 运行态：一行 8 个字段，read 读回（无 fork）
 apl_state_load() {
   apl_prev_uon=0; apl_warm_start=0; apl_lock_until=0; apl_low_cnt=0
-  apl_stable_cnt=0; apl_stab_ibat=0; apl_prev_ibat=0; apl_last_up=0; apl_thermal_prev=0
+  apl_stable_cnt=0; apl_stab_ibat=0; apl_prev_ibat=0; apl_last_up=0; apl_thermal_prev=0; apl_last_tier=""
   [ -f "$APL_STATE" ] || return 0
   IFS=' ' read -r apl_prev_uon apl_warm_start apl_lock_until apl_low_cnt \
-                 apl_stable_cnt apl_stab_ibat apl_prev_ibat apl_last_up apl_thermal_prev < "$APL_STATE" 2>/dev/null
+                 _stored_stable_cnt apl_stab_ibat apl_prev_ibat apl_last_up apl_thermal_prev apl_last_tier < "$APL_STATE" 2>/dev/null
+  if [ "${APL_ADP_RESET:-0}" = "1" ]; then
+    apl_stable_cnt=0
+  else
+    apl_stable_cnt=$_stored_stable_cnt
+  fi
   case "$apl_prev_uon" in ''|*[!0-9]*) apl_prev_uon=0 ;; esac
   case "$apl_warm_start" in ''|*[!0-9]*) apl_warm_start=0 ;; esac
   case "$apl_lock_until" in ''|*[!0-9]*) apl_lock_until=0 ;; esac
@@ -210,11 +224,12 @@ apl_state_load() {
   case "$apl_prev_ibat" in ''|*[!0-9]*) apl_prev_ibat=0 ;; esac
   case "$apl_last_up" in ''|*[!0-9]*) apl_last_up=0 ;; esac
   case "$apl_thermal_prev" in ''|*[!0-9]*) apl_thermal_prev=0 ;; esac
+  case "$apl_last_tier" in ''|default|unlimited|bypass|level_1|level_2|level_3|level_4|level_5) ;; *) apl_last_tier="" ;; esac
 }
 
 apl_state_save() {
-  printf '%s %s %s %s %s %s %s %s %s\n' "$apl_prev_uon" "$apl_warm_start" "$apl_lock_until" \
-    "$apl_low_cnt" "$apl_stable_cnt" "$apl_stab_ibat" "$apl_prev_ibat" "$apl_last_up" "$apl_thermal_prev" \
+  printf '%s %s %s %s %s %s %s %s %s %s\n' "$apl_prev_uon" "$apl_warm_start" "$apl_lock_until" \
+    "$apl_low_cnt" "$apl_stable_cnt" "$apl_stab_ibat" "$apl_prev_ibat" "$apl_last_up" "$apl_thermal_prev" "$apl_last_tier" \
     > "$APL_STATE.tmp" 2>/dev/null && mv -f "$APL_STATE.tmp" "$APL_STATE" 2>/dev/null
 }
 
@@ -226,6 +241,15 @@ apl_tgt_write() {
 apl_tick() {
   if [ "$(cfg_get apl_enable 0)" != "1" ]; then
     rm -f "$APL_TGT" 2>/dev/null
+    return 0
+  fi
+
+  if [ "${USB_CONNECTED:-}" = 0 ] || [ "${IS_CHARGING:-0}" != 1 ]; then
+    [ ! -f "$APL_TGT" ] || rm -f "$APL_TGT" "$STATE/apl_urgent" 2>/dev/null
+    if [ "${apl_prev_uon:-0}" != 0 ]; then
+      apl_prev_uon=0
+      apl_state_save
+    fi
     return 0
   fi
 
@@ -247,9 +271,20 @@ apl_tick() {
   _apl_uon=$(apl_rd /sys/class/power_supply/usb/online)
   _apl_vterm=$(apl_vterm_mv)
   _apl_cap=$(apl_ceiling_ma)
+  case "$_apl_cap" in ''|*[!0-9]*) _apl_cap=20000 ;; esac
+  [ "$_apl_cap" -ge 300 ] || _apl_cap=300
   # 温度线：有档位温度上限 → 以其为降档线，低于（上限 − 滞回）才恢复上探；
   # 无档位线（unlimited/default/bypass）→ 退回 DTBO ffc_temp_high（上探 -8，降档 -3）。
-  _apl_lt=$(apl_mode_temp_c)
+  _apl_mode=$(cat "$CONFDIR/current_mode" 2>/dev/null)
+  case "$apl_last_tier" in
+    '') apl_thermal_prev=0; apl_last_tier=$_apl_mode ;;
+    *)
+      if [ "$apl_last_tier" != "$_apl_mode" ]; then
+        apl_thermal_prev=0
+        apl_last_tier=$_apl_mode
+      fi ;;
+  esac
+  _apl_lt=$(apl_level_temp_c "$_apl_mode")
   if [ -n "$_apl_lt" ]; then
     # 回落到上限-2℃ 以下才回升（死区由 APL_TEMP_HYST 定义）
     _apl_tup=$(( _apl_lt - APL_TEMP_HYST ))
@@ -266,6 +301,9 @@ apl_tick() {
   _apl_fp=$(apl_adp_fp)
   _apl_seen=$(apl_num "$(apl_prof_get seen)")
   _apl_why=$(apl_adp_check "$_apl_fp")
+  APL_ADP_RESET=0
+  [ "$_apl_why" = "适配器变更" ] && APL_ADP_RESET=1
+  export APL_ADP_RESET
   [ "$_apl_seen" -gt 0 ] && [ $(( _apl_now - _apl_seen )) -gt 604800 ] && \
     _apl_why="${_apl_why:+$_apl_why;}档案>7天"
   if [ -n "$_apl_why" ]; then
@@ -279,6 +317,9 @@ apl_tick() {
   elif [ "$_apl_seen" = "0" ] || [ $(( _apl_now - _apl_seen )) -gt 600 ]; then
     apl_prof_set seen "$_apl_now"
   fi
+  case "$_apl_why" in *变更*|*">7天"*)
+    apl_stable_cnt=0; apl_stab_ibat=0; apl_prev_ibat=0 ;;
+  esac
 
   # ---- 让路：不写目标，power.sh 读不到文件时退回原有 inf 行为 ----
   _apl_let=""
@@ -335,7 +376,9 @@ apl_tick() {
   # ---- B 档：功率塌陷（插枪后 40s 宽限期，等电流爬上来）----
   _apl_grace=0
   [ "$apl_warm_start" -gt 0 ] && [ $(( _apl_now - apl_warm_start )) -lt 40 ] && _apl_grace=1
-  _apl_want=$(( _apl_tgt * _apl_mv / 1000 ))
+  _apl_eval_tgt=$_apl_tgt
+  [ "$_apl_eval_tgt" -gt "$_apl_cap" ] && _apl_eval_tgt=$_apl_cap
+  _apl_want=$(( _apl_eval_tgt * _apl_mv / 1000 ))
   if [ "$_apl_grace" = "0" ] && [ "$_apl_want" -gt 0 ] && [ "$_apl_pw" -lt $(( _apl_want * 55 / 100 )) ]; then
     apl_low_cnt=$(( apl_low_cnt + 1 ))
   else
@@ -361,6 +404,10 @@ apl_tick() {
   # ---- 温度保护（连续调节）----
   # 温控档位只定义温度阈值：超过上限就按斜率缓慢降功率（最低 5W）；
   # 回落到「上限 − 2℃」以下再按斜率缓慢回升；两者之间是死区，保持不动，避免一上一下。
+  if [ -n "$_apl_lt" ] && [ "$_apl_tb" -gt "$_apl_lt" ]; then
+    # 模式温度线退出后，旧模式留下的回升上限不再有效。
+    apl_thermal_prev=0
+  fi
   if [ -n "$_apl_lt" ]; then
     _apl_min_ma=$(( APL_THERMAL_MIN_W * 1000 / _apl_mv ))
     [ "$_apl_min_ma" -lt 300 ] && _apl_min_ma=300
@@ -407,16 +454,17 @@ apl_tick() {
   fi
 
   # ---- 上探：热身 +8%，稳定 ≥6 拍 +6%，否则 ≥9 拍 +3% ----
-  if [ "$_apl_locked" = "0" ] && [ "$apl_thermal_prev" -eq 0 ] && [ "$_apl_up_ok" = "1" ] && [ "$_apl_tgt" -lt "$_apl_cap" ]; then    _apl_step=0; _apl_need=99
+  if [ "$_apl_locked" = "0" ] && [ "$apl_thermal_prev" -eq 0 ] && [ "$_apl_up_ok" = "1" ] && [ "$_apl_tgt" -lt "$_apl_cap" ]; then
+    _apl_step=0; _apl_need=0
     if [ "$apl_warm_start" -gt 0 ] && [ $(( _apl_now - apl_warm_start )) -lt "$APL_WARMUP" ]; then
       _apl_step=$(( _apl_tgt * 8 / 100 )); _apl_need=3
-    elif [ "$apl_stable_cnt" -ge 6 ]; then
-      _apl_step=$(( _apl_tgt * 6 / 100 )); _apl_need=6
     elif [ "$apl_stable_cnt" -ge 9 ]; then
       _apl_step=$(( _apl_tgt * 3 / 100 )); _apl_need=9
+    elif [ "$apl_stable_cnt" -ge 6 ]; then
+      _apl_step=$(( _apl_tgt * 6 / 100 )); _apl_need=6
     fi
     [ "$_apl_step" -lt 200 ] && _apl_step=200
-    if [ "$apl_stable_cnt" -ge "$_apl_need" ] && [ $(( _apl_now - apl_last_up )) -ge "$_apl_gap" ]; then
+    if [ "$_apl_need" -gt 0 ] && [ "$apl_stable_cnt" -ge "$_apl_need" ] && [ $(( _apl_now - apl_last_up )) -ge "$_apl_gap" ]; then
       _apl_new=$(( _apl_tgt + _apl_step ))
       [ "$_apl_new" -gt "$_apl_cap" ] && _apl_new="$_apl_cap"
       if [ "$_apl_new" -gt "$_apl_tgt" ]; then
@@ -450,6 +498,7 @@ apl_tick() {
 
   # ---- 落盘 ----
   _apl_fl=$(( _apl_cap * 50 / 100 ))
+  [ "$_apl_locked" = "1" ] && _apl_fl="$_apl_tgt"
   [ "$_apl_hard_fault" = "1" ] && [ "$_apl_tgt" -lt "$_apl_fl" ] && _apl_fl="$_apl_tgt"
   # 有档位温度线时允许降到 5W（~1250mA），否则温度保护降不下去
   [ -n "$_apl_lt" ] && _apl_fl=300

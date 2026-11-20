@@ -9,12 +9,10 @@ import android.content.Intent;
 import android.content.pm.ServiceInfo;
 import android.os.Build;
 import android.os.IBinder;
-import android.os.PowerManager;
 
 public class RearService extends Service {
     private static final String CHANNEL = "xjrear";
     private static final int NOTIFY_ID = 0x584A;
-    private PowerManager.WakeLock wakeLock;
 
     public static void start(Context ctx) {
         if (!RearSupport.isSupported(ctx)) {
@@ -91,52 +89,20 @@ public class RearService extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (!RearSupport.isSupported(this)) {
-            releaseWakeLock();
             stopSelf(startId);
             return START_NOT_STICKY;
         }
         RearConfig cfg = Prefs.read(this);
         if (!cfg.enabled) {
-            releaseWakeLock();
             stopSelf(startId);
             return START_NOT_STICKY;
         }
         Prefs.sync(this, cfg);
-        if (cfg.keepOn) {
-            acquireWakeLock();
-        } else {
-            releaseWakeLock();
-        }
         return START_STICKY;
-    }
-
-    @Override
-    public void onDestroy() {
-        releaseWakeLock();
-        super.onDestroy();
     }
 
     @Override
     public IBinder onBind(Intent intent) {
         return null;
-    }
-
-    private void acquireWakeLock() {
-        if (wakeLock != null) return;
-        PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
-        if (pm == null) return;
-        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "xjrear:panel");
-        wakeLock.setReferenceCounted(false);
-        wakeLock.acquire();
-    }
-
-    private void releaseWakeLock() {
-        if (wakeLock != null) {
-            try {
-                wakeLock.release();
-            } catch (Throwable ignored) {
-            }
-            wakeLock = null;
-        }
     }
 }

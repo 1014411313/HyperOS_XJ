@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -48,9 +49,16 @@ exit 0
 DUMPSYS_STUB = """#!/bin/sh
 echo "dumpsys $*" >> "$CALL_LOG"
 case "$1" in
+  package) printf '%s\\n' "${FAKE_PKG_DUMP:-}" ;;
   display) printf '%s\\n' "${FAKE_DISPLAY_TEXT:-}" ;;
 esac
 exit 0
+"""
+
+STAT_STUB = """#!/bin/sh
+echo "stat $*" >> "$CALL_LOG"
+if [ -n "${FAKE_STAT_UID:-}" ]; then printf '%s\\n' "$FAKE_STAT_UID"; exit 0; fi
+exec "${REAL_STAT:-/usr/bin/stat}" "$@"
 """
 
 PRELUDE = """PATH="@SB@/bin:$PATH"
@@ -97,7 +105,8 @@ class Case:
 
 def run_case(name, body, sub=0, card=1, display="", readonly=False,
              cfg_init="", install_ok=1, keep=False, pre=None,
-             am_fail=0, am_mkdir=0, am_start_fail=0):
+             am_fail=0, am_mkdir=0, am_start_fail=0,
+             stat_uid="", pkg_dump="", config_changed=0, now=None):
     sb = SESSION_ROOT / name
     if not keep:
         if sb.exists():
@@ -106,7 +115,8 @@ def run_case(name, body, sub=0, card=1, display="", readonly=False,
             (sb / d).mkdir(parents=True, exist_ok=True)
         (sb / "cfg").write_text(cfg_init)
         (sb / "calls.log").write_text("")
-        for stub, text in (("pm", PM_STUB), ("am", AM_STUB), ("dumpsys", DUMPSYS_STUB)):
+        for stub, text in (("pm", PM_STUB), ("am", AM_STUB),
+                           ("dumpsys", DUMPSYS_STUB), ("stat", STAT_STUB)):
             p = sb / "bin" / stub
             p.write_text(text)
             p.chmod(0o755)
@@ -123,7 +133,13 @@ def run_case(name, body, sub=0, card=1, display="", readonly=False,
         "FAKE_AM_MKDIR": str(am_mkdir),
         "FAKE_AM_START_FAIL": str(am_start_fail),
         "FAKE_EXT_DIR": str(sb / "ext"),
+        "FAKE_STAT_UID": stat_uid,
+        "FAKE_PKG_DUMP": pkg_dump,
+        "XJ_CONFIG_CHANGED": str(config_changed),
+        "REAL_STAT": shutil.which("stat") or "/usr/bin/stat",
     })
+    if now is not None:
+        env["XJ_NOW"] = str(now)
     if readonly:
         env["XJ_READONLY"] = "1"
     else:
@@ -352,6 +368,144 @@ def _run_cases():
              "重试成功：cleanup_retry 应删除")
     c2.eq(c2.engine_log().count("subscreen not supported"), 1, "重试成功：skipped 日志只一次")
     results.append(("重试成功后才落 unsupported 标记", c2))
+
+    # 23) card_uid：App 数据目录属主可用时直接用，不 fork dumpsys。
+    c = run_case("uid_from_stat", 'card_uid', sub=1, stat_uid="10123")
+    c.eq(c.proc.stdout.strip(), "10123", "uid/stat：应返回目录属主")
+    c.eq(len(c.calls("dumpsys package")), 0, "uid/stat：可用时不应 fork dumpsys")
+    results.append(("card_uid 优先用 App 目录属主", c))
+
+    # 24) card_uid：无目录属主时退 dumpsys 的 userId=。
+    c = run_case("uid_from_dumpsys_user", 'card_uid', sub=1, stat_uid="",
+                 pkg_dump="Packages:\n  Package [com.hyperos.xj] (x):\n    userId=10098")
+    c.eq(c.proc.stdout.strip(), "10098", "uid/userId：应解析 userId")
+    results.append(("card_uid 回退 dumpsys userId", c))
+
+    # 25) card_uid：Android 17 只给 appId= 时仍可解析。
+    c = run_case("uid_from_dumpsys_appid", 'card_uid', sub=1, stat_uid="",
+                 pkg_dump="Packages:\n  Package [com.hyperos.xj] (x):\n    appId=10107")
+    c.eq(c.proc.stdout.strip(), "10107", "uid/appId：应解析 appId")
+    results.append(("card_uid 支持 appId（Android 17）", c))
+
+    # 26) card_uid：多用户 uid（userId*100000+appId）合法应保留；appId 越界才拒绝。
+    c = run_case("uid_multiuser", 'card_uid', sub=1, stat_uid="",
+                 pkg_dump="    userId=1010099")
+    c.eq(c.proc.stdout.strip(), "1010099", "uid/多用户：应保留合法多用户 uid")
+    results.append(("card_uid 接受合法多用户 uid", c))
+
+    c = run_case("uid_multiuser_stat", 'card_uid', sub=1, stat_uid="1010123")
+    c.eq(c.proc.stdout.strip(), "1010123", "uid/多用户目录：应保留目录属主")
+    results.append(("card_uid 接受多用户目录属主", c))
+
+    c = run_case("uid_reject_out_of_range", 'card_uid', sub=1, stat_uid="",
+                 pkg_dump="    userId=20500")
+    c.eq(c.proc.stdout.strip(), "0", "uid/越界：appId 超出 10000-19999 应返回 0")
+    results.append(("card_uid 拒绝越界 appId", c))
+
+    c = run_case("uid_none", 'card_uid', sub=1, stat_uid="", pkg_dump="")
+    c.eq(c.proc.stdout.strip(), "0", "uid/无数据：应返回 0")
+    results.append(("card_uid 无来源返回 0", c))
+
+    # 27) 开启态健康维护按真实时间节流：连续 5 拍只维护一次，不按拍数。
+    c = run_case("health_interval", 'i=0; while [ $i -lt 5 ]; do rear_tick; i=$((i+1)); done',
+                 sub=1, cfg_init="rearscreen=1\n", am_mkdir=1)
+    c.eq(len(c.calls("am start-foreground-service")), 1, "健康维护：5 拍只应拉一次服务")
+    c.check((c.sb / "state" / "rear" / "health.ts").exists(), "健康维护：应记 health.ts")
+    results.append(("开启态健康维护按真实时间只做一次", c))
+
+    # 28) 关闭态收尾后置静默：后续拍不读配置、不调 pm/am。
+    def seed_idle(sb, ts="now"):
+        d = sb / "state" / "rear"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "idle").write_text("")
+        value = str(int(time.time())) if ts == "now" else ts
+        (d / "idle.ts").write_text(value)
+
+    c = run_case("idle_quiet", 'i=0; while [ $i -lt 5 ]; do rear_tick; i=$((i+1)); done',
+                 sub=1, cfg_init="rearscreen=0\n", pre=lambda sb: seed_idle(sb))
+    c.eq(len(c.calls("am ")), 0, "静默：不应有 am 调用")
+    c.eq(len(c.calls("pm ")), 0, "静默：不应有 pm 调用")
+    c.eq(len(c.calls("dumpsys")), 0, "静默：不应有 dumpsys 调用")
+    results.append(("关闭态静默期内不读配置不调系统命令", c))
+
+    # 29) 静默过期后重查：配置已改开时立即进入开启态。
+    c = run_case("idle_expire_recheck",
+                 'cfg_set rearscreen 1; rear_tick; echo "on=$([ -f \"$STATE/rear/on\" ] && echo 1 || echo 0)"',
+                 sub=1, cfg_init="rearscreen=0\n", pre=lambda sb: seed_idle(sb, ts="0"))
+    c.check("on=1" in c.proc.stdout, "重查：配置变开后应进入开启态，实际 %r" % c.proc.stdout.strip())
+    c.check(len(c.calls("am broadcast")) >= 1, "重查：应下发控制广播")
+    results.append(("静默过期后重查并响应配置变化", c))
+
+    # 30) XJ_CONFIG_CHANGED=1：不等过期立即核验并开启。
+    c = run_case("config_changed_immediate",
+                 'cfg_set rearscreen 1; rear_tick; echo "on=$([ -f \"$STATE/rear/on\" ] && echo 1 || echo 0)"',
+                 sub=1, cfg_init="rearscreen=0\n", pre=lambda sb: seed_idle(sb),
+                 config_changed=1)
+    c.check("on=1" in c.proc.stdout, "配置变更：应立即开启，实际 %r" % c.proc.stdout.strip())
+    results.append(("XJ_CONFIG_CHANGED 立即核验不等静默期", c))
+
+    # 32) 注入 XJ_NOW 单调秒：窗口内静默、过期后重查，与 date epoch 不混用。
+    c = run_case("monotonic_idle", 'rear_tick', sub=1, cfg_init="rearscreen=0\n",
+                 pre=lambda sb: seed_idle(sb, ts="100000"), now=100030)
+    c.eq(len(c.calls("am ")), 0, "XJ_NOW：窗口内应静默")
+    c.check((c.sb / "state" / "rear" / "idle").exists(), "XJ_NOW：静默标记应保留")
+
+    c = run_case("monotonic_expire",
+                 'cfg_set rearscreen 1; rear_tick; echo "on=$([ -f \"$STATE/rear/on\" ] && echo 1 || echo 0)"',
+                 sub=1, cfg_init="rearscreen=0\n",
+                 pre=lambda sb: seed_idle(sb, ts="100000"), now=100070)
+    c.check("on=1" in c.proc.stdout, "XJ_NOW：过期后应重查并开启，实际 %r" % c.proc.stdout.strip())
+    results.append(("XJ_NOW 单调秒驱动窗口", c))
+
+    # 33) XJ_CONFIG_CHANGED 只穿透本次，不删除静默标记（不丢状态）。
+    c = run_case("changed_keeps_idle", 'rear_tick', sub=1, cfg_init="rearscreen=0\n",
+                 pre=lambda sb: seed_idle(sb), config_changed=1)
+    c.check((c.sb / "state" / "rear" / "idle").exists(),
+            "配置变更信号：不应删除静默标记")
+    results.append(("配置变更信号不丢静默状态", c))
+
+    # 34) 配置变更即时下发展示参数（不只补 enabled=1）。
+    def seed_enabled(sb):
+        (sb / "ext").mkdir(parents=True, exist_ok=True)
+        (sb / "ext" / "rear.conf").write_text("enabled=1\nkeep_on=1\nfields=temp\n")
+        d = sb / "state" / "rear"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "on").write_text("")
+        (d / "health.ts").write_text(str(int(time.time())))
+
+    c = run_case("changed_push_params", 'rear_tick', sub=1,
+                 cfg_init="rearscreen=1\nrear_fields=soc\n",
+                 pre=seed_enabled, config_changed=1)
+    conf = {"exists": False, "text": ""}
+    f = c.sb / "ext" / "rear.conf"
+    conf["exists"] = f.exists()
+    conf["text"] = f.read_text() if f.exists() else ""
+    c.check(len(c.calls("am broadcast")) >= 1, "参数即时：应下发控制广播")
+    c.check("fields=soc" in conf["text"], "参数即时：rear.conf 应写入新 fields")
+    results.append(("配置变更即时下发展示参数", c))
+
+    # 31) 只读模式（selfcheck）不落静默标记。
+    c = run_case("readonly_no_idle", 'rear_tick', sub=1, cfg_init="rearscreen=0\n", readonly=True)
+    c.check(not (c.sb / "state" / "rear" / "idle").exists(), "只读：不应写静默标记")
+    results.append(("只读模式不写静默标记", c))
+
+    # 35) tick 异常兜底：catch 分支必须先撤下卡片并释放唤醒锁，不能只安排重试。
+    overlay_src = (ROOT / "ToolboxApp" / "androidApp" / "src" / "main" / "java"
+                   / "com" / "hyperos" / "xj" / "rear" / "Overlay.java")
+    case = Case(SESSION_ROOT, subprocess.CompletedProcess([], 0, "", ""))
+    text = overlay_src.read_text(errors="replace") if overlay_src.exists() else ""
+    tick_mark = "visible ? 2000L : 10000L"
+    case.check(bool(text), "失败兜底：应能读取 Overlay.java")
+    pos = text.find(tick_mark)
+    case.check(pos >= 0, "失败兜底：应找到 tick 调度位置")
+    if pos >= 0:
+        catch_pos = text.find("} catch (Throwable ignored) {", pos)
+        case.check(catch_pos >= 0, "失败兜底：应找到 tick 的 catch 分支")
+        if catch_pos >= 0:
+            block = text[catch_pos:catch_pos + 900]
+            case.check("setVisibility(View.GONE)" in block, "失败兜底：catch 应隐藏卡片")
+            case.check("WakeGuard.release()" in block, "失败兜底：catch 应释放唤醒锁")
+    results.append(("tick 异常兜底撤卡并释放锁", case))
 
     failed = 0
     for title, case in results:

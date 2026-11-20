@@ -24,15 +24,18 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.hyperos.xj.runtime.LocalAppVisible
 import com.hyperos.xj.runtime.gifFrameAt
 import java.io.File
 
 @Composable
 actual fun AppMediaBackground(kind: String, path: String, blurDp: Float, modifier: Modifier) {
+    val visible = LocalAppVisible.current
     if (kind == "gif") {
         // gifFrameAt 返回共享帧缓冲，引用不变而内容逐帧更新，须 neverEqualPolicy 才能每帧重组重绘
         var frame by remember(path) { mutableStateOf<ImageBitmap?>(null, neverEqualPolicy()) }
-        LaunchedEffect(path) {
+        LaunchedEffect(path, visible) {
+            if (!visible) return@LaunchedEffect
             val start = withFrameNanos { it }
             while (true) {
                 withFrameNanos { now ->
@@ -51,7 +54,7 @@ actual fun AppMediaBackground(kind: String, path: String, blurDp: Float, modifie
         }
         return
     }
-    if (kind != "video") return
+    if (kind != "video" || !visible) return
     if (!File(path).isFile) return
     val context = LocalContext.current
     var player by remember(path) { mutableStateOf<MediaPlayer?>(null) }
@@ -77,7 +80,12 @@ actual fun AppMediaBackground(kind: String, path: String, blurDp: Float, modifie
                     val mediaPlayer = MediaPlayer()
                     player = mediaPlayer
                     runCatching {
-                        mediaPlayer.setSurface(Surface(surface))
+                        val outputSurface = Surface(surface)
+                        try {
+                            mediaPlayer.setSurface(outputSurface)
+                        } finally {
+                            outputSurface.release()
+                        }
                         mediaPlayer.isLooping = true
                         mediaPlayer.setVolume(0f, 0f)
                         mediaPlayer.setDataSource(path)
@@ -86,7 +94,9 @@ actual fun AppMediaBackground(kind: String, path: String, blurDp: Float, modifie
                                 applyVideoTransform(this@apply, VideoMeta(videoWidth, videoHeight, 0))
                             }
                         }
-                        mediaPlayer.setOnPreparedListener { it.start() }
+                        mediaPlayer.setOnPreparedListener {
+                            if (com.hyperos.xj.runtime.AppVisibility.visible.value) it.start()
+                        }
                         mediaPlayer.prepareAsync()
                     }.onFailure {
                         mediaPlayer.release()

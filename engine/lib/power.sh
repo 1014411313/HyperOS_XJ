@@ -334,7 +334,8 @@ power_apply() {
     fi
   fi
   if [ "$_need" = "0" ]; then
-    printf '%s' "$_tier" > "$BT_STATE/power_applied" 2>/dev/null
+    [ "$(cat "$BT_STATE/power_applied" 2>/dev/null)" = "$_tier" ] ||
+      printf '%s' "$_tier" > "$BT_STATE/power_applied" 2>/dev/null
     return 0
   fi
 

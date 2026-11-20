@@ -34,6 +34,8 @@ import com.hyperos.xj.runtime.ToolboxRuntimeBridge
 import com.hyperos.xj.runtime.pickDirectoryPath
 import com.hyperos.xj.runtime.parseKv
 import com.hyperos.xj.ui.ActionButton
+import com.hyperos.xj.ui.CollapsibleCard
+import com.hyperos.xj.runtime.LocalAppVisible
 import com.hyperos.xj.ui.GlassCard
 import com.hyperos.xj.ui.GlassInput
 import com.hyperos.xj.ui.LocalAccentColor
@@ -88,7 +90,7 @@ fun BatteryPage(
     var dtboLibraryMsg by remember { mutableStateOf("") }
     var cycleTarget by remember { mutableStateOf(status.cycleFake) }
     var shutdownVoltage by remember { mutableStateOf(status.termV) }
-    var loaded by remember { mutableStateOf(false) }
+    val appVisible = LocalAppVisible.current
 
     // 解容等开关初值取自 status 快照，等 status 首次真实读取后再渲染，避免从默认值跳变
     val statusReady = status.environment != "检测中"
@@ -293,17 +295,6 @@ fun BatteryPage(
         }
     }
 
-    LaunchedEffect(Unit) {
-        val out = bridge.exec(Engine.dtboStatus())
-        dtboStatusDetail = out
-        dtboStatus = out.lineSequence().firstOrNull { it.isNotBlank() }?.take(24) ?: "无输出"
-        dtboHasLocal = bridge.exec(Engine.dtboHasLocal()).trim() == "yes"
-        refreshDtboResolve()
-        refreshDtboLibrary()
-        refreshDtboBackups()
-        loaded = true
-    }
-
     Column(
         Modifier
             .fillMaxWidth()
@@ -317,7 +308,7 @@ fun BatteryPage(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         PageHeader(status)
-        if (!loaded || !statusReady) {
+        if (!statusReady) {
             GlassCard(backdrop, Modifier.fillMaxWidth()) {
                 BasicText(
                     text = "正在读取设置…",
@@ -350,7 +341,15 @@ fun BatteryPage(
                 ToggleLine(backdrop, "自适应功率爬坡 APL", "全速档下动态上探", apl, onCheckedChange = { apl = it; saveBattery("apl", if (it) "on" else "off", "自适应功率爬坡 APL") })
             }
 
-            GlassCard(backdrop, Modifier.fillMaxWidth()) {
+            CollapsibleCard(backdrop, title = "DTBO", initiallyExpanded = false, modifier = Modifier.fillMaxWidth()) {
+                LaunchedEffect(appVisible) {
+                    if (!appVisible) return@LaunchedEffect
+                    val out = bridge.exec(Engine.dtboStatus())
+                    dtboStatusDetail = out
+                    dtboStatus = out.lineSequence().firstOrNull { it.isNotBlank() }?.take(24) ?: "无输出"
+                    dtboHasLocal = bridge.exec(Engine.dtboHasLocal()).trim() == "yes"
+                    refreshDtboResolve()
+                }
                 SectionLabel("DTBO")
                 ValueRow("分区状态", dtboStatus)
                 Spacer(Modifier.height(6.dp))
@@ -452,7 +451,8 @@ fun BatteryPage(
                 }
             }
 
-            GlassCard(backdrop, Modifier.fillMaxWidth()) {
+            CollapsibleCard(backdrop, title = "恢复 DTBO 备份", initiallyExpanded = false, modifier = Modifier.fillMaxWidth()) {
+                LaunchedEffect(appVisible) { if (appVisible) refreshDtboBackups() }
                 SectionLabel("恢复 DTBO 备份")
                 ActionButton(backdrop, "刷新可用备份", { if (!dtboActionPending()) { dtboBusy = true; scope.launch { try { refreshDtboBackups() } finally { dtboBusy = false } } } }, Modifier.fillMaxWidth())
                 dtboBackups.forEach { (path, size) ->
@@ -469,7 +469,8 @@ fun BatteryPage(
                 ActionButton(backdrop, "预检并恢复所选备份", { if (dtboSelectedBackup.isBlank()) dtboStatusDetail = "请先从校验列表明确选择一个备份。" else startRestorePreflight(dtboSelectedBackup) }, Modifier.fillMaxWidth(), danger = true)
             }
 
-            GlassCard(backdrop, Modifier.fillMaxWidth()) {
+            CollapsibleCard(backdrop, title = "DTBO 镜像库", initiallyExpanded = false, modifier = Modifier.fillMaxWidth()) {
+                LaunchedEffect(appVisible) { if (appVisible) refreshDtboLibrary() }
                 SectionLabel("DTBO 镜像库")
 
                 Row(verticalAlignment = Alignment.CenterVertically) {

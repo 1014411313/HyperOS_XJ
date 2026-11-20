@@ -109,30 +109,45 @@ def apl_tick_case(sb):
     state = sb / "state"
     state.mkdir(parents=True)
     (state / "apl_target_ma").write_text("3000")
+    conf = sb / "config"
+    conf.mkdir()
+    (conf / "current_mode").write_text("level_5")
     boot = sb / "boot_id"
     boot.write_text("boot-a")
     env = dict(os.environ)
-    env.update({"STATE": str(state), "BT_STATE": str(state), "APL_BOOT_ID_FILE": str(boot),
+    env.update({"STATE": str(state), "BT_STATE": str(state), "CONFDIR": str(conf), "APL_BOOT_ID_FILE": str(boot),
                 "IS_CHARGING": "1", "BAT_STATUS": "Charging", "BAT_CUR": "-3200000",
-                "BAT_VOLT": "4000000", "BAT_TEMP": "400", "BAT_CAP": "20",
-                "APL_ONLINE": "1", "FAULT_RC": "0", "LOCK_UNTIL": "9999999999"})
+                "BAT_VOLT": "4000000", "BAT_TEMP": "400", "BAT_CAP": "20", "APL_VTERM": "4570",
+                "APL_ONLINE": "1", "FAULT_RC": "0", "LOCK_UNTIL": "9999999999",
+                "USB_CONNECTED": "1", "APL_TEMP_LINE": "50", "APL_CEILING": "20000", "BATTERY_MAX": "6000000"})
     script = """
 . \"%s\"
-date() { echo 1000; }
+date() { echo \"${TEST_NOW:-1000}\"; }
 cfg_get() { case \"$1\" in apl_enable) echo 1;; power_limit) echo inf;; cg_min_write_gap) echo 60;; apl_max_ma) echo 20000;; *) echo \"$2\";; esac; }
 apl_num() { case \"$1\" in ''|*[!0-9]*) echo 0;; *) echo \"$1\";; esac; }
-apl_rd() { case \"$1\" in *online) echo 1;; *) echo 0;; esac; }
-apl_vterm_mv() { echo 4570; }
-apl_ceiling_ma() { echo 20000; }
-dt_curr_cap_ma() { echo 20000; }
-apl_mode_temp_c() { echo 50; }
+apl_rd() { case \"$1\" in *online) echo 1;; *constant_charge_current_max) echo \"${BATTERY_MAX:-0}\";; *) echo 0;; esac; }
+apl_vterm_mv() { echo "${APL_VTERM:-4570}"; }
+apl_ceiling_ma() {
+  local c=${APL_TEST_CAP:-20000} raw
+  raw=$(apl_rd /sys/class/power_supply/battery/constant_charge_current_max)
+  case "$raw" in ''|*[!0-9]*) raw=0;; esac
+  [ "$raw" -lt 100000 ] || [ "$raw" -gt 100000000 ] || { raw=$((raw / 1000)); [ "$raw" -ge "$c" ] || c=$raw; }
+  echo "$c"
+}
+dt_curr_cap_ma() { echo "${APL_CEILING:-20000}"; }
+apl_mode_temp_c() { apl_level_temp_c "$(cat "$CONFDIR/current_mode" 2>/dev/null)"; }
+apl_level_temp_c() { case "$1" in level_1) echo 30;; level_2) echo 35;; level_3) echo 40;; level_4) echo 45;; level_5) echo 50;; *) echo '';; esac; }
 apl_adp_fp() { echo test; }
 apl_prof_get() { case \"$1\" in seen) echo 9999999999;; *) echo 0;; esac; }
 apl_adp_check() { :; }
 apl_prof_best() { :; }
 apl_prof_set() { :; }
-apl_state_load() { apl_prev_uon=1; apl_warm_start=0; apl_lock_until=$LOCK_UNTIL; apl_low_cnt=0; apl_stable_cnt=0; apl_stab_ibat=0; apl_prev_ibat=0; apl_last_up=900; apl_thermal_prev=0; }
-apl_state_save() { :; }
+apl_state_load() {
+  apl_prev_uon=1; apl_warm_start=0; apl_lock_until=${LOCK_UNTIL:-0}; apl_low_cnt=0
+  apl_stable_cnt=0; apl_stab_ibat=0; apl_prev_ibat=0; apl_last_up=${APL_LAST_UP:-900}; apl_thermal_prev=0; apl_last_tier=
+  [ -n "${APL_STATE_FIXTURE:-}" ] && apl_stable_cnt=$APL_STATE_FIXTURE
+}
+apl_state_save() { APL_STATE_FIXTURE=$apl_stable_cnt; export APL_STATE_FIXTURE; }
 apl_hard_fault() { return "$FAULT_RC"; }
 blog() { :; }
 apl_tick
@@ -141,6 +156,7 @@ cat \"$APL_TGT\"
     # 低目标硬故障不得被 cap 的 50% floor 抬高。
     (state / "apl_state").write_text("1 0 0 0 0 0 0 900 0")
     env["FAULT_RC"] = "0"
+    env["BATTERY_MAX"] = "100000000"
     env["LOCK_UNTIL"] = "9999999999"
     out = run(script, env).strip()
     assert out == "2560", out
@@ -168,8 +184,9 @@ cat \"$APL_TGT\"
     out = run(reset_script, env).strip()
     assert out == "10000", out
 
-    # 持续超温时保留低于 2A 的历史目标，跨进程重载也不能抬升。
+    # 持续超温时APL按斜率降低目标，且不突破5W安全底线。
     env.pop("ADP_REASON", None)
+    (conf / "current_mode").write_text("level_1")
     env["LOCK_UNTIL"] = "0"
     env["BAT_TEMP"] = "510"
     env["BAT_CUR"] = "-2100000"
@@ -178,6 +195,22 @@ cat \"$APL_TGT\"
     assert targets[0] < 2000, targets
     assert all(b <= a for a, b in zip(targets, targets[1:])), targets
     assert min(targets) >= 1250, targets
+
+    # Leaving the one档 thermal line clears its saved recovery cap and resumes the DTBO policy.
+    (state / "apl_state").write_text("1 0 0 0 0 0 5800 900 1 level_1")
+    (state / "apl_target_ma").write_text("8800")
+    (conf / "current_mode").write_text("unlimited")
+    env.update({"LOCK_UNTIL": "0", "FAULT_RC": "1", "BAT_TEMP": "450", "APL_CEILING": "20000", "APL_TEST_CAP": "6000", "BAT_CUR": "-5500000"})
+    out = run(script, env).strip()
+    assert out == "6000", out
+
+    # A driver-reported 6A ceiling, not the 20A software ceiling, bounds APL ramp-up.
+    (state / "apl_state").write_text("1 0 0 0 0 0 0 0 0")
+    (state / "apl_target_ma").write_text("5500")
+    env.update({"BAT_TEMP": "350", "BAT_CUR": "-5500000", "BAT_VOLT": "4000000", "APL_STATE_FIXTURE": "6", "APL_LAST_UP": "900"})
+    env["TEST_NOW"] = "1000"
+    target = int(run(script, env).strip())
+    assert 5500 < target <= 6000, target
 
 
 def wireless_untouched_case(sb):
@@ -391,12 +424,40 @@ def voltage_shutdown_case(sb):
     for name, value in {"temp": "250", "current_now": "0", "capacity": "50",
                         "status": "Discharging"}.items():
         (bat / name).write_text(value)
-    daemon = (ROOT / "engine/xjdaemon.sh").read_text()
-    guard = daemon.split('  _tv=$(cfg_get term_v "")', 1)[1].split('  # PSS 动态模式', 1)[0]
-    script = '. "%s"\ncfg_get() { echo 3400; }\nlog() { :; }\n' % (ROOT / "engine/lib/data.sh")
-    script += 'reboot() { echo shutdown_requested; }\nsvc() { echo shutdown_requested; }\n'
-    script += 'sample\n_tv=3400\n' + guard + '\ntrue\n'
-    env = dict(os.environ, BAT=str(bat))
+    state = sb / "state"
+    logdir = sb / "log"
+    module = sb / "module"
+    for d in (state, logdir, module):
+        d.mkdir(parents=True, exist_ok=True)
+    script = '''
+BT_STATE="%s"; BAT_STATE="%s"; LOGDIR="%s"; MODDIR="%s"; XJ_READONLY=0
+. "%s"
+. "%s"
+log() { :; }
+cfg_get() {
+  case "$1" in
+    term_v) echo 3400 ;;
+    unlock|pss_disable|cloud_guard) echo 0 ;;
+    pss_low_soc) echo 0 ;;
+    pss_low_hyst) echo 5 ;;
+    shutdown_check_soc) echo 20 ;;
+    shutdown_exit_soc) echo 25 ;;
+    shutdown_check_interval) echo 2 ;;
+    cycle_fake) echo "" ;;
+    *) echo "${2:-}" ;;
+  esac
+}
+cloud_tick() { :; }
+baa_state() { echo active; }
+reboot() { echo shutdown_requested; }
+svc() { echo shutdown_requested; }
+sample
+XJ_NOW=0 XJ_CONFIG_CHANGED=1 XJ_CONNECTION_CHANGED=0 battery_guard_tick
+''' % (state, state, logdir, module, ROOT / "engine/lib/data.sh",
+       ROOT / "engine/lib/battery.sh")
+    env = dict(os.environ, BAT=str(bat), BT_STATE=str(state),
+               BAT_STATE=str(state), LOGDIR=str(logdir), MODDIR=str(module),
+               XJ_READONLY="0")
     for voltage, shutdown in [(None, False), ("bad", False), ("0", False),
                               ("3800000", False), ("3300000", True)]:
         node = bat / "voltage_now"
@@ -467,8 +528,14 @@ def daemon_apply_case(sb):
     tick = 'run_tick() {' + daemon.split('run_tick() {', 1)[1].split('\nbootstrap ||', 1)[0]
     once = daemon.split('TICK_N=0\n', 1)[1].split('# 单实例', 1)[0]
     script = '''
+THERMAL_DAEMON=test; THERMAL_PATH="$CONFDIR"
+runtime_now() { XJ_NOW=100; }
+runtime_config_refresh() { XJ_CONFIG_CHANGED=1; }
+sample() { IS_CHARGING=0; }
+connection_read() { XJ_CONNECTION_CHANGED=0; USB_CONNECTED=0; WIRELESS_CONNECTED=0; }
 ensure_thermal_dir() { :; }
 hitemp_guard() { :; }
+hyperos_keepalive() { :; }
 json_get() { echo false; }
 release_charge() { :; }
 rear_stop() { :; }
