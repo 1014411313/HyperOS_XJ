@@ -90,12 +90,10 @@ apl_rd() {
   case "$_v" in ''|*[!0-9-]*) printf '%s' 0 ;; *) printf '%s' "$_v" ;; esac
 }
 
-# 适配器指纹；变化即认为换了充电头，整份学习档案作废重新探
+# 只用协商电压档识别适配器；功率读数会随充电状态变化。
 apl_adp_fp() {
   _v=$(apl_rd /sys/class/power_supply/usb/voltage_max)
-  _p=$(apl_rd /sys/class/xm_power/charger/charger_common/power_max)
-  [ "$_p" = "0" ] && _p=$(apl_rd /sys/class/power_supply/usb/input_power_limit)
-  printf '%s_%s' "$_v" "$_p"
+  printf '%s' "$_v"
 }
 
 apl_prof_get() {
@@ -123,6 +121,13 @@ apl_prof_best() {
 apl_adp_check() {
   _fp="$1"
   _old=$(apl_prof_get adp)
+  case "$_old" in
+    "${_fp}_"*)
+      apl_prof_set adp "$_fp"
+      apl_prof_set adpc ""
+      apl_prof_set adpn 0
+      return 0 ;;
+  esac
   if [ -z "$_old" ]; then
     apl_prof_set adp "$_fp"
     apl_prof_set adpc ""
@@ -327,6 +332,10 @@ apl_tick() {
   [ "$_apl_uon" != "1" ] && _apl_let="未插枪"
   case "$IS_CHARGING" in 1) ;; *) [ -z "$_apl_let" ] && _apl_let="status=$BAT_STATUS" ;; esac
   [ "$_apl_mv" -ge $(( _apl_vterm - 30 )) ] && _apl_let="CV段($_apl_mv/$_apl_vterm)"
+  # 高电量时驱动进入恒压/涓流，电流自然回落；不当作功率塌陷降档。
+  _apl_cvsoc=$(apl_num "$(cfg_get apl_cv_soc 95)")
+  [ "$_apl_cvsoc" -ge 50 ] || _apl_cvsoc=95
+  [ -z "$_apl_let" ] && [ "$_apl_soc" -ge "$_apl_cvsoc" ] && _apl_let="高电量($_apl_soc%)"
   if [ -n "$_apl_let" ]; then
     rm -f "$APL_TGT" 2>/dev/null
     apl_prev_uon="$_apl_uon"

@@ -8,6 +8,8 @@
 
 DIAG_LOG="$LOGDIR/diag_samples.log"
 DIAG_NODE_WIRED_CURR=/sys/class/xm_power/charger/charger_thermal/wired_chg_curr
+DIAG_USB_SUPPLY=/sys/class/power_supply/usb
+DIAG_USB_IBUS=/sys/class/qcom-battery/ibus_total
 DIAG_BUF_MAX=60          # 缓冲行数上限（3s/拍约 3 分钟、充电 1s/拍约 1 分钟必落一次）
 DIAG_FLUSH_SEC=30        # 两次落盘的最小间隔（秒）
 DIAG_MAX_BYTES=$((4 * 1024 * 1024))   # 体积上限（约容纳 1 天采样；按天裁剪由 retention.sh 负责）
@@ -28,6 +30,22 @@ diag_wireless_read() {
   if [ -r "$1" ] && IFS= read -r _dw_raw < "$1"; then
     case "${_dw_raw#-}" in ''|*[!0-9]*) ;; *) _dw_value=$_dw_raw ;; esac
   fi
+}
+
+diag_usb_read_current() {
+  DIAG_CI=$(cat "$DIAG_USB_SUPPLY/current_now" 2>/dev/null)
+  case "$DIAG_CI" in ''|*[!0-9-]*) DIAG_CI=- ;; esac
+  case "$DIAG_CI" in 0|-)
+    _di=$(cat "$DIAG_USB_SUPPLY/input_current_now" 2>/dev/null)
+    case "$_di" in ''|*[!0-9-]*|0) _di= ;; esac
+    if [ -n "$_di" ]; then
+      DIAG_CI=$_di
+    elif [ -r "$DIAG_USB_IBUS" ]; then
+      IFS= read -r _di < "$DIAG_USB_IBUS"
+      case "$_di" in ''|*[!0-9]*) ;; *) [ "$_di" -gt 0 ] && DIAG_CI=$((_di * 1000)) ;; esac
+    fi
+    ;;
+  esac
 }
 
 diag_wireless_tick() {
@@ -65,10 +83,10 @@ diag_log_tick() {
   _uw=$(( (BAT_VOLT / 1000) * (BAT_CUR / 1000) ))
   _wc=$(cat "$DIAG_NODE_WIRED_CURR" 2>/dev/null); [ -n "$_wc" ] || _wc=-
   if [ $((DIAG_BUF_N % 10)) -eq 0 ]; then
-    DIAG_CV=$(cat /sys/class/power_supply/usb/voltage_now 2>/dev/null); [ -n "$DIAG_CV" ] || DIAG_CV=-
-    DIAG_CI=$(cat /sys/class/power_supply/usb/current_now 2>/dev/null); [ -n "$DIAG_CI" ] || DIAG_CI=-
+    DIAG_CV=$(cat "$DIAG_USB_SUPPLY/voltage_now" 2>/dev/null); [ -n "$DIAG_CV" ] || DIAG_CV=-
     DIAG_CP=$(cat /sys/class/xm_power/charger/charger_common/power_max 2>/dev/null); [ -n "$DIAG_CP" ] || DIAG_CP=-
   fi
+  diag_usb_read_current
   _m=$(cat "$CONFDIR/current_mode" 2>/dev/null); [ -n "$_m" ] || _m=-
   diag_wireless_tick "$_m"
   _pa=$(cat "$BT_STATE/power_applied" 2>/dev/null); [ -n "$_pa" ] || _pa=-

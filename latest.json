@@ -1,11 +1,11 @@
 {
-  "version": "3.1.68",
-  "versionCode": 378,
+  "version": "3.1.69",
+  "versionCode": 379,
   "date": "2026-11-20",
   "url": "",
-  "notes": "功耗优化：App 前后台刷新、按场景调度守护任务、低电保护、APL限额与恢复及背屏按需保活",
-  "download": "https://github.com/1014411313/HyperOS_XJ/releases/download/v3.1.68/rezhale_toolbox_v3.1.68.zip",
-  "download_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/download/v3.1.68/rezhale_toolbox_v3.1.68.zip",
-  "release": "https://github.com/1014411313/HyperOS_XJ/releases/tag/v3.1.68",
-  "release_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/tag/v3.1.68"
+  "notes": "充电诊断与APL修复：USB 电流采样增加回退并改为每拍读取；适配器指纹改用协商电压档并迁移旧档案，避免功率读数波动误判换头；高电量恒压段不再把电流自然回落当作塌陷降档",
+  "download": "https://github.com/1014411313/HyperOS_XJ/releases/download/v3.1.69/rezhale_toolbox_v3.1.69.zip",
+  "download_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/download/v3.1.69/rezhale_toolbox_v3.1.69.zip",
+  "release": "https://github.com/1014411313/HyperOS_XJ/releases/tag/v3.1.69",
+  "release_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/tag/v3.1.69"
 }

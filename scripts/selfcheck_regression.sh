@@ -391,6 +391,23 @@ out=$(sc_item_5)
 expect FAIL "无" "$out"
 teardown
 
+setup "USB 诊断电流：current_now 为 0 时回退 input_current_now 和 ibus_total"
+. "$REPO/engine/lib/diag_log.sh"
+DIAG_USB_SUPPLY="$T/usb"
+DIAG_USB_IBUS="$T/ibus_total"
+mkdir "$DIAG_USB_SUPPLY"
+printf '0\n' > "$DIAG_USB_SUPPLY/current_now"
+printf '900000\n' > "$DIAG_USB_SUPPLY/input_current_now"
+diag_usb_read_current
+[ "$DIAG_CI" = "900000" ] || bad "input_current_now 回退错误: $DIAG_CI"
+printf '0\n' > "$DIAG_USB_SUPPLY/input_current_now"
+printf '1234\n' > "$DIAG_USB_IBUS"
+diag_usb_read_current
+[ "$DIAG_CI" = "1234000" ] || bad "ibus_total 回退错误: $DIAG_CI"
+printf '456000\n' > "$DIAG_USB_SUPPLY/current_now"
+diag_usb_read_current
+[ "$DIAG_CI" = "456000" ] || bad "有效 current_now 应优先: $DIAG_CI"
+
 setup "无线诊断：初始离线、上线、换档、掉线和节点缺失"
 . "$REPO/engine/lib/diag_log.sh"
 DIAG_WIRELESS_SUPPLY="$T/wireless"

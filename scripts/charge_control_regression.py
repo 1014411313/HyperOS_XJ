@@ -50,6 +50,40 @@ def apl_case(sb):
     mark = (sb / "state/apl_dmesg_mark").read_text()
     assert mark.startswith("boot-a|1.000|"), mark
 
+    # Adapter power metadata can fluctuate without changing the negotiated voltage tier.
+    profile = sb / "adapter-profile"
+    profile.mkdir()
+    (profile / "profile").write_text("adp=9000000\nseen=9999999999\n")
+    apl_env = dict(env, CONFDIR=str(profile))
+    apl_fp_script = """
+. \"%s\"
+apl_rd() { case \"$1\" in */voltage_max) echo \"${USB_VMAX:-9000000}\";; */power_max) echo \"${POWER_MAX:-90}\";; *) echo 0;; esac; }
+apl_prof_get() { case \"$1\" in adp) echo \"$(sed -n 's/^adp=//p' \"$PROFILE\")\";; adpc) echo \"$(sed -n 's/^adpc=//p' \"$PROFILE\")\";; adpn) echo \"$(sed -n 's/^adpn=//p' \"$PROFILE\")\";; esac; }
+apl_prof_set() { printf '%%s=%%s\\n' \"$1\" \"$2\" >> \"$PROFILE_WRITES\"; }
+fp=$(apl_adp_fp)
+reason=$(apl_adp_check \"$fp\")
+printf '%%s|%%s|%%s\\n' \"$fp\" \"$reason\" \"$(cat \"$PROFILE_WRITES\" 2>/dev/null)\"
+""" % APL
+    apl_env["PROFILE"] = str(profile / "profile")
+    apl_env["PROFILE_WRITES"] = str(profile / "writes")
+    apl_env["USB_VMAX"] = "9000000"
+    apl_env["POWER_MAX"] = "90"
+    out = run(apl_fp_script, apl_env).strip()
+    assert out.split("|", 2)[:2] == ["9000000", ""], out
+    assert not (profile / "writes").exists(), out
+    (profile / "profile").write_text("adp=9000000_90\nseen=9999999999\n")
+    out = run(apl_fp_script, apl_env).strip()
+    assert out.startswith("9000000||adp=9000000"), out
+    assert "adp=9000000" in (profile / "writes").read_text(), out
+    power_profile = sb / "adapter-power-profile"
+    power_profile.mkdir()
+    (power_profile / "profile").write_text("adp=9000000\nseen=9999999999\n")
+    power_env = dict(apl_env, CONFDIR=str(power_profile), PROFILE=str(power_profile / "profile"),
+                     PROFILE_WRITES=str(power_profile / "writes"), POWER_MAX="60")
+    out = run(apl_fp_script, power_env).strip()
+    assert out.split("|", 2)[:2] == ["9000000", ""], out
+    assert not (power_profile / "writes").exists(), out
+
     dmesg.write_text("[1.000] cp work abnormal\n[2.000] cp work abnormal\n")
     assert run(base + "apl_hard_fault; printf 'new=%s\\n' \"$?\"", env).strip() == "new=0"
     assert run(base + "apl_hard_fault; printf 'repeat=%s\\n' \"$?\"", env).strip() == "repeat=1"
@@ -211,6 +245,17 @@ cat \"$APL_TGT\"
     env["TEST_NOW"] = "1000"
     target = int(run(script, env).strip())
     assert 5500 < target <= 6000, target
+
+    # High SOC taper: let power.sh take over instead of treating it as a collapse.
+    env.update({"BAT_CAP": "97", "BAT_TEMP": "400", "BAT_CUR": "-900000", "BAT_VOLT": "4500000",
+                "LOCK_UNTIL": "0", "FAULT_RC": "1", "TEST_NOW": "2000"})
+    (conf / "current_mode").write_text("unlimited")
+    (state / "apl_target_ma").write_text("2000")
+    let_script = script.replace('cat \"$APL_TGT\"', '[ -f \"$APL_TGT\" ] && cat \"$APL_TGT\" || echo gone')
+    assert run(let_script, env).strip() == "gone"
+    env["BAT_CAP"] = "50"
+    out = run(let_script, env).strip()
+    assert out.isdigit() and int(out) >= 1250, out
 
 
 def wireless_untouched_case(sb):
