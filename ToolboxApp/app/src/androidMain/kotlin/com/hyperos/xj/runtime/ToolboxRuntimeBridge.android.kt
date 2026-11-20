@@ -6,6 +6,7 @@ import java.io.InputStreamReader
 import kotlin.math.abs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.coroutineContext
@@ -64,8 +65,15 @@ private class AndroidToolboxBridge : ToolboxRuntimeBridge {
                 return@withContext mapStatus(withDeviceInfo(updated))
             }
         }
-        val live = if (snapshotHasFreshCore(snap, System.currentTimeMillis())) null else readSysfsLive(sourceCache)
-        // 只有快照和完整实时都拿不到时才 fork su；缺字段的实时值要和 root 基底合并，不能当 0。
+        var live = readSysfsLive(sourceCache)
+        // 快照发布受整轮守护耗时限制；节点拒绝时用轻量 KV 读取，避免数秒沿用旧电流。
+        if (snap != null && !hasLiveCore(live.orEmpty()) && !sourceCache.cooledDown("root-live")) {
+            val result = withTimeoutOrNull(2_000L) { readRootStatus(Engine.readLive()) }
+            val rootLive = if (result?.success == true) parseKv(result.output) else emptyMap()
+            if (rootLive.isNotEmpty()) live = rootLive + live.orEmpty()
+            if (!hasLiveCore(rootLive)) sourceCache.markUnreadable("root-live", SOURCE_RETRY_MS)
+        }
+        // 只有快照和完整实时都拿不到时才读取完整 root 基底；部分实时值不能当 0。
         val needRootBase = snap == null && (live == null || !hasLiveCore(live))
         val rootBase = if (needRootBase) rootBaseCached() else null
         when (pickLiveSource(snap != null, live, rootBase)) {
@@ -91,7 +99,7 @@ private class AndroidToolboxBridge : ToolboxRuntimeBridge {
         return rootBase
     }
 
-    private suspend fun readRootStatus(): ExecResult = suspendCancellableCoroutine { continuation ->
+    private suspend fun readRootStatus(command: String = Engine.status()): ExecResult = suspendCancellableCoroutine { continuation ->
         val running = AtomicReference<Process?>()
         continuation.invokeOnCancellation { running.get()?.destroy() }
         Dispatchers.IO.dispatch(continuation.context, Runnable {
@@ -101,7 +109,7 @@ private class AndroidToolboxBridge : ToolboxRuntimeBridge {
                 return@Runnable
             }
             val result = try {
-                val process = ProcessBuilder("su", "-c", Engine.status()).redirectErrorStream(true).start()
+                val process = ProcessBuilder("su", "-c", command).redirectErrorStream(true).start()
                 running.set(process)
                 if (!continuation.isActive || !AppVisibility.visible.value) {
                     process.destroy()

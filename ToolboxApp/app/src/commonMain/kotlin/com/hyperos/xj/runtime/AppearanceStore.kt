@@ -34,7 +34,7 @@ internal fun AppearanceSettings.toPersistentMap(): Map<String, String> = mapOf(
     // bgImage（ImageBitmap）不持久化：位图不可序列化，重启后需重新选择
 )
 
-/** bgKind 合法取值：持久化里出现其他值时回落 wallpaper。 */
+/** bgKind 合法取值。 */
 private val backgroundKinds = setOf("wallpaper", "image", "gif", "video")
 
 internal fun appearanceFromMap(map: Map<String, String>): AppearanceSettings =
@@ -60,17 +60,17 @@ internal fun appearanceFromMap(map: Map<String, String>): AppearanceSettings =
         barBlur = map["barBlur"]?.toFloatOrNull() ?: 3f,
         wallpaperIndex = map["wallpaperIndex"]?.toIntOrNull() ?: 0,
         bgBlur = map["bgBlur"]?.toFloatOrNull() ?: 2f,
-        customBg = map["customBg"]?.toBooleanStrictOrNull() ?: true,
+        customBg = map["customBg"]?.toBooleanStrictOrNull() ?: false,
         bgImage = null,
-        // 旧配置迁移：从未主动设置背景（仍是默认壁纸且没有路径）时改用内置插画，
-        // 避免升级后继续显示旧默认壁纸；用户主动选过的壁纸（index≠0）保持不动。
+        // 空路径的旧默认图片与首张壁纸迁移到内置视频，用户自选文件保持原样。
         bgKind = run {
             val saved = map["bgKind"]?.takeIf { it in backgroundKinds }
             val path = map["bgPath"] ?: ""
             val wallpaperIndex = map["wallpaperIndex"]?.toIntOrNull() ?: 0
             when {
-                saved == null -> "image"
-                saved == "wallpaper" && path.isEmpty() && wallpaperIndex == 0 -> "image"
+                saved == null -> "video"
+                saved == "image" && path.isEmpty() -> "video"
+                saved == "wallpaper" && path.isEmpty() && wallpaperIndex == 0 -> "video"
                 else -> saved
             }
         },

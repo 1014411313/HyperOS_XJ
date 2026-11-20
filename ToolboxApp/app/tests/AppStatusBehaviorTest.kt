@@ -14,5 +14,10 @@ fun main() {
     check(statusRefreshInterval(3, true) == 1_000L)
     check(statusRefreshInterval(3, false) == 5_000L)
     for (page in listOf(1, 2, 4)) check(statusRefreshInterval(page, true) == 5_000L)
-    println("PASS 14 snapshot freshness/core and refresh interval behavior checks")
+    check(statusRefreshDelay(1_000L, 240L) == 760L)
+    check(statusRefreshDelay(1_000L, 999L) == 1L)
+    check(statusRefreshDelay(1_000L, 1_000L) == 0L)
+    check(statusRefreshDelay(1_000L, 2_500L) == 0L)
+    check(statusRefreshDelay(5_000L, 240L) == 4_760L)
+    println("PASS 19 snapshot freshness/core and refresh interval behavior checks")
 }

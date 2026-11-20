@@ -1,5 +1,7 @@
 package com.hyperos.xj.ui
 
+import android.content.Context
+import android.content.res.AssetFileDescriptor
 import android.graphics.Matrix
 import android.graphics.SurfaceTexture
 import android.media.MediaMetadataRetriever
@@ -55,12 +57,12 @@ actual fun AppMediaBackground(kind: String, path: String, blurDp: Float, modifie
         return
     }
     if (kind != "video" || !visible) return
-    if (!File(path).isFile) return
+    if (path.isNotEmpty() && !File(path).isFile) return
     val context = LocalContext.current
     var player by remember(path) { mutableStateOf<MediaPlayer?>(null) }
     // 手机竖拍的视频常是「横屏帧 + rotation 元数据」：MediaPlayer 上报的宽高不含旋转，
     // 直接拿去算 center-crop 会把画面放大到只剩局部，所以先读真实尺寸与旋转角。
-    val videoMeta = remember(path) { readVideoMeta(path) }
+    val videoMeta = remember(path) { readVideoMeta(context, path) }
     val textureView = remember(path) {
         TextureView(context).apply {
             // 视频尺寸回调可能早于布局完成，view 宽高为 0 时算出的矩阵会把画面放大到看不见，
@@ -88,7 +90,13 @@ actual fun AppMediaBackground(kind: String, path: String, blurDp: Float, modifie
                         }
                         mediaPlayer.isLooping = true
                         mediaPlayer.setVolume(0f, 0f)
-                        mediaPlayer.setDataSource(path)
+                        if (path.isEmpty()) {
+                            openBuiltinVideo(context).use { asset ->
+                                mediaPlayer.setDataSource(asset.fileDescriptor, asset.startOffset, asset.length)
+                            }
+                        } else {
+                            mediaPlayer.setDataSource(path)
+                        }
                         mediaPlayer.setOnVideoSizeChangedListener { _, videoWidth, videoHeight ->
                             if (videoMeta == null && videoWidth > 0 && videoHeight > 0) {
                                 applyVideoTransform(this@apply, VideoMeta(videoWidth, videoHeight, 0))
@@ -143,10 +151,19 @@ actual fun AppMediaBackground(kind: String, path: String, blurDp: Float, modifie
 /** 视频元数据：宽高为编码方向尺寸，rotation 为显示时需旋转的角度（0/90/180/270）。 */
 private data class VideoMeta(val width: Int, val height: Int, val rotation: Int)
 
-private fun readVideoMeta(path: String): VideoMeta? {
+private fun openBuiltinVideo(context: Context): AssetFileDescriptor =
+    context.assets.openFd("app_bg_default.mp4")
+
+private fun readVideoMeta(context: Context, path: String): VideoMeta? {
     val retriever = MediaMetadataRetriever()
     return try {
-        retriever.setDataSource(path)
+        if (path.isEmpty()) {
+            openBuiltinVideo(context).use { asset ->
+                retriever.setDataSource(asset.fileDescriptor, asset.startOffset, asset.length)
+            }
+        } else {
+            retriever.setDataSource(path)
+        }
         val w = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
         val h = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
         val rot = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
@@ -171,10 +188,12 @@ private fun applyVideoTransform(view: TextureView, meta: VideoMeta) {
     val dispH = if (rot % 180 == 0) meta.height.toFloat() else meta.width.toFloat()
     if (dispW <= 0f || dispH <= 0f) return
     val scale = maxOf(viewWidth / dispW, viewHeight / dispH)
+    val scaleX = scale * meta.width / viewWidth
+    val scaleY = scale * meta.height / viewHeight
     val cx = viewWidth / 2f
     val cy = viewHeight / 2f
     val matrix = Matrix()
+    matrix.postScale(scaleX, scaleY, cx, cy)
     matrix.postRotate(rot.toFloat(), cx, cy)
-    matrix.postScale(scale, scale, cx, cy)
     view.setTransform(matrix)
 }

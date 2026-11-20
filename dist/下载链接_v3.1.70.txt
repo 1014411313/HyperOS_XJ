@@ -1,0 +1,11 @@
+热炸了工具箱 v3.1.70 模块包下载
+
+Gitee（国内推荐）：
+https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/download/v3.1.70/rezhale_toolbox_v3.1.70.zip
+
+GitHub：
+https://github.com/1014411313/HyperOS_XJ/releases/download/v3.1.70/rezhale_toolbox_v3.1.70.zip
+
+全部版本（含历史安装包）：
+https://gitee.com/xiaomirezhale/HyperOS_XJ/releases
+https://github.com/1014411313/HyperOS_XJ/releases

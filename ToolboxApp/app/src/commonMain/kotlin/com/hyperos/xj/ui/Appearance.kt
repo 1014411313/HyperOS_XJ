@@ -46,7 +46,7 @@ data class AppearanceSettings(
     val bgBlur: Float = 2f,
     val customBg: Boolean = false,
     val bgImage: ImageBitmap? = null,
-    val bgKind: String = "image",   // wallpaper / image / gif / video
+    val bgKind: String = "video",   // wallpaper / image / gif / video
     val bgPath: String = "",        // 空 = 用 APK 内置默认背景；否则是 gif/video/图片的绝对路径
 )
 

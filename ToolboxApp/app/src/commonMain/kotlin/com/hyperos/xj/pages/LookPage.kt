@@ -395,7 +395,7 @@ fun LookPage(
                     ActionButton(
                         backdrop = backdrop,
                         text = "清除图片",
-                        onClick = { onAppearanceChange(currentAppearance.copy(bgImage = null, bgKind = "image", bgPath = "")) },
+                        onClick = { onAppearanceChange(currentAppearance.copy(bgImage = null, customBg = false, bgKind = "video", bgPath = "")) },
                         modifier = Modifier.fillMaxWidth(),
                         secondary = true
                     )
@@ -430,19 +430,17 @@ fun LookPage(
                 modifier = Modifier.fillMaxWidth(),
                 secondary = true
             )
-            if (appearance.bgKind == "gif" || appearance.bgKind == "video") {
-                Spacer(Modifier.height(8.dp))
-                ActionButton(
-                    backdrop = backdrop,
-                    text = "清除动态背景",
-                    onClick = {
-                        onAppearanceChange(currentAppearance.copy(bgKind = "wallpaper", bgPath = ""))
-                        showToast("已回到内置壁纸")
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    secondary = true
-                )
-            }
+            Spacer(Modifier.height(8.dp))
+            ActionButton(
+                backdrop = backdrop,
+                text = "恢复默认背景",
+                onClick = {
+                    onAppearanceChange(currentAppearance.copy(bgImage = null, customBg = false, bgKind = "video", bgPath = ""))
+                    showToast("已恢复默认视频背景")
+                },
+                modifier = Modifier.fillMaxWidth(),
+                secondary = true
+            )
             Spacer(Modifier.height(12.dp))
             SliderField(backdrop, "背景模糊度", "${appearance.bgBlur.toInt()}", 0f..20f, { appearance.bgBlur }, { onAppearanceChange(appearance.copy(bgBlur = it)) })
         }

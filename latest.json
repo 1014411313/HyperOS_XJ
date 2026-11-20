@@ -1,11 +1,11 @@
 {
-  "version": "3.1.69",
-  "versionCode": 379,
+  "version": "3.1.70",
+  "versionCode": 380,
   "date": "2026-11-20",
   "url": "",
-  "notes": "充电诊断与APL修复：USB 电流采样增加回退并改为每拍读取；适配器指纹改用协商电压档并迁移旧档案，避免功率读数波动误判换头；高电量恒压段不再把电流自然回落当作塌陷降档",
-  "download": "https://github.com/1014411313/HyperOS_XJ/releases/download/v3.1.69/rezhale_toolbox_v3.1.69.zip",
-  "download_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/download/v3.1.69/rezhale_toolbox_v3.1.69.zip",
-  "release": "https://github.com/1014411313/HyperOS_XJ/releases/tag/v3.1.69",
-  "release_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/tag/v3.1.69"
+  "notes": "主页实时读数在节点不可访问时使用轻量读取，保留后台暂停与失败退避；修正视频背景比例；内置默认动态视频，恢复默认背景与全局恢复默认均恢复该视频。构建与回归通过，新版界面及前台功耗待真机验证。",
+  "download": "https://github.com/1014411313/HyperOS_XJ/releases/download/v3.1.70/rezhale_toolbox_v3.1.70.zip",
+  "download_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/download/v3.1.70/rezhale_toolbox_v3.1.70.zip",
+  "release": "https://github.com/1014411313/HyperOS_XJ/releases/tag/v3.1.70",
+  "release_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/tag/v3.1.70"
 }

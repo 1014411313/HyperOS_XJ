@@ -47,6 +47,7 @@ import com.hyperos.xj.runtime.LocalAppVisible
 import com.hyperos.xj.runtime.LocalPreviewVisible
 import com.hyperos.xj.runtime.appVisible
 import com.hyperos.xj.runtime.statusRefreshInterval
+import com.hyperos.xj.runtime.statusRefreshDelay
 import com.hyperos.xj.runtime.AppearanceStore
 import com.hyperos.xj.runtime.DeviceStatus
 import com.hyperos.xj.runtime.createToolboxBridge
@@ -211,7 +212,7 @@ private fun AppPages(
         while (true) {
             val tickStarted = TimeSource.Monotonic.markNow()
             status = bridge.readStatus()
-            delay((interval - tickStarted.elapsedNow().inWholeMilliseconds).coerceAtLeast(0L))
+            delay(statusRefreshDelay(interval, tickStarted.elapsedNow().inWholeMilliseconds))
         }
     }
 

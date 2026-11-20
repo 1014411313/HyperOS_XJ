@@ -43,6 +43,10 @@ android {
         targetCompatibility = JavaVersion.VERSION_11
     }
 
+    androidResources {
+        noCompress += "mp4"
+    }
+
     packaging {
         resources {
             excludes += arrayOf(

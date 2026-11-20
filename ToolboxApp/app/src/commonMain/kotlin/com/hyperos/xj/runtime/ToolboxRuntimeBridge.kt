@@ -105,6 +105,8 @@ object Engine {
 
     fun status(): String = build("status")
 
+    fun readLive(): String = build("read")
+
     fun power(value: String): String = build("power", "set", value)
 
     fun thermal(mode: String): String = build("thermal", "set", mode)
