@@ -49,8 +49,8 @@ is_gaming() {
 
 charge_gov_limit() {
   case "$1" in
-    level_1) echo 45 ;; level_2) echo 40 ;; level_3) echo 35 ;;
-    level_4) echo 31 ;; level_5) echo 26 ;; *) echo "" ;;
+    level_1) echo 30 ;; level_2) echo 35 ;; level_3) echo 40 ;;
+    level_4) echo 45 ;; level_5) echo 50 ;; *) echo "" ;;
   esac
 }
 
@@ -68,6 +68,7 @@ plan_in_window() {
 
 # 有效功率档 = 用户档，被充电计划/温控联动向下收紧，取最严的一档。
 effective_tier() {
+  local _tier _mode _lim _temp _gov _prev
   _tier=$(power_tier)
   if [ "$(json_get power_plan_on false)" = "true" ] && plan_in_window; then
     _m=$(norm_power "$(json_get power_plan_mode slow)")
@@ -76,11 +77,45 @@ effective_tier() {
   if [ "$(json_get charge_gov true)" = "true" ]; then
     _mode=$(cat "$CONFDIR/current_mode" 2>/dev/null)
     _lim=$(charge_gov_limit "$_mode")
-    if [ -n "$_lim" ] && [ $((BAT_TEMP / 10)) -ge "$_lim" ]; then
-      _want=mid
-      [ $((BAT_TEMP / 10)) -ge $((_lim + 4)) ] && _want=slow
-      [ "$(power_rank "$_want")" -lt "$(power_rank "$_tier")" ] && _tier="$_want"
+    if [ -n "$_lim" ]; then
+      _temp=$((BAT_TEMP / 10))
+      _prev=$(cat "$BT_STATE/charge_gov.state" 2>/dev/null)
+      case "$_prev" in "$_mode|mid"|"$_mode|slow") _gov=${_prev#*|} ;; *) _gov="" ;; esac
+      if [ "$_gov" = "slow" ]; then
+        if [ "$_temp" -lt $((_lim + 2)) ]; then
+          [ "$_temp" -ge $((_lim - 2)) ] && _gov=mid || _gov=""
+        fi
+      elif [ "$_gov" = "mid" ]; then
+        if [ "$_temp" -ge $((_lim + 4)) ]; then _gov=slow
+        elif [ "$_temp" -lt $((_lim - 2)) ]; then _gov=""
+        fi
+      elif [ "$_temp" -ge $((_lim + 4)) ]; then
+        _gov=slow
+      elif [ "$_temp" -ge "$_lim" ]; then
+        _gov=mid
+      else
+        _gov=""
+      fi
+      if [ -n "$_gov" ]; then
+        if ! { printf '%s|%s' "$_mode" "$_gov" > "$BT_STATE/charge_gov.state.tmp" 2>/dev/null &&
+              mv -f "$BT_STATE/charge_gov.state.tmp" "$BT_STATE/charge_gov.state" 2>/dev/null; }; then
+          rm -f "$BT_STATE/charge_gov.state.tmp" 2>/dev/null
+          _fallback=mid
+          [ "$_temp" -ge $((_lim + 4)) ] && _fallback=slow
+          [ "$(power_rank "$_fallback")" -lt "$(power_rank "$_tier")" ] && _tier=$_fallback
+          log "充电温控联动状态写入失败，当前周期保守限为 $_tier"
+          echo "$_tier"
+          return 0
+        fi
+        [ "$(power_rank "$_gov")" -lt "$(power_rank "$_tier")" ] && _tier=$_gov
+      else
+        rm -f "$BT_STATE/charge_gov.state" "$BT_STATE/charge_gov.state.tmp" 2>/dev/null
+      fi
+    else
+      rm -f "$BT_STATE/charge_gov.state" "$BT_STATE/charge_gov.state.tmp" 2>/dev/null
     fi
+  else
+    rm -f "$BT_STATE/charge_gov.state" "$BT_STATE/charge_gov.state.tmp" 2>/dev/null
   fi
   echo "$_tier"
 }
@@ -262,18 +297,8 @@ run_tick() {
     return 0
   fi
 
-  # 离开旁路时先交还充电节点，再应用功率档。
+  # 离开旁路时先交还充电节点。
   [ -f "$CONFDIR/bypass_active" ] && release_charge
-  # APL：每拍算一次 inf 档电流目标（写 state/apl_target_ma，供 power_apply 读取）。
-  if [ "$USB_CONNECTED" = 1 ] && [ "$WIRELESS_CONNECTED" != 1 ]; then
-    apl_tick
-    power_apply "$(effective_tier)"
-    XJ_POWER_ACTIVE=1
-  elif [ "${XJ_POWER_ACTIVE:-0}" = 1 ] || [ -f "$STATE/apl_target_ma" ]; then
-    rm -f "$STATE/apl_target_ma" "$STATE/apl_urgent" 2>/dev/null
-    power_restore
-    XJ_POWER_ACTIVE=0
-  fi
 
   _target="default"
   if { [ "$USB_CONNECTED" = 1 ] || [ "$WIRELESS_CONNECTED" = 1 ]; } && [ "$MTK_MODE" != 1 ]; then
@@ -342,6 +367,19 @@ run_tick() {
     *) apply_default ;;
   esac
   _thermal_rc=$?
+
+  # 温控场景已更新后再计算功率，避免切档这一拍沿用上一档的温度线。
+  if [ "$USB_CONNECTED" = 1 ] && [ "$WIRELESS_CONNECTED" != 1 ]; then
+    _m=$(cat "$CONFDIR/current_mode" 2>/dev/null)
+    diag_charge_tick
+    apl_tick
+    power_apply "$(effective_tier)"
+    XJ_POWER_ACTIVE=1
+  elif [ "${XJ_POWER_ACTIVE:-0}" = 1 ] || [ -f "$STATE/apl_target_ma" ]; then
+    rm -f "$STATE/apl_target_ma" "$STATE/apl_urgent" 2>/dev/null
+    power_restore
+    XJ_POWER_ACTIVE=0
+  fi
 
   [ "$BT_GUARDS_EXTERNAL" = "1" ] || battery_guard_tick
   rear_tick

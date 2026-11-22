@@ -660,7 +660,7 @@ private fun AboutSubPage(
                 HelpBullet("系统默认（default）：还原原厂温控配置并重启系统温控守护，交还系统自行调度。")
                 HelpBullet("无限制（unlimited）：写入空白温控配置，解除系统温控限制，性能优先，发热与功耗自负。")
                 HelpBullet("一档～五档（level_1..level_5）：模块内置的五套温控场景配置，数字越大越保守。")
-                HelpBullet("开启充电温控联动时，档位决定充电降功率的电池温度线：一档 45℃、二档 40℃、三档 35℃、四档 31℃、五档 26℃；超过温度线先降为中功率，再升高 4℃ 降为低功率。")
+                HelpBullet("开启充电温控联动时，降功率温度线与温控档位一致：一档 30℃、二档 35℃、三档 40℃、四档 45℃、五档 50℃。达到温度线先降为中功率；超过温度线 4℃ 降为低功率；温度回落到温度线以下 2℃ 后恢复原功率档。")
                 HelpBullet("「默认档位」在不充电或关闭充电温控时生效；页面切换档位只写入配置，由引擎每 3 秒轮询应用。")
             }
             CollapsibleCard(backdrop, "场景功能说明", initiallyExpanded = false, modifier = Modifier.fillMaxWidth()) {

@@ -60,6 +60,8 @@ import com.kyant.backdrop.effects.vibrancy
 import com.kyant.backdrop.Backdrop
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 private val gearOptions = listOf(
     "系统默认", "无限制",
@@ -104,10 +106,13 @@ fun ThermalPage(
     var appsLoading by remember { mutableStateOf(false) }
     var appCandidates by remember { mutableStateOf(emptyList<Pair<String, String>>()) }
     var loaded by remember { mutableStateOf(false) }
+    val settingsWriteMutex = remember { Mutex() }
 
     fun save(key: String, value: String, title: String? = null) {
         scope.launch {
-            val result = bridge.execResult(Engine.setting(key, value))
+            val result = settingsWriteMutex.withLock {
+                bridge.execResult(Engine.setting(key, value))
+            }
             if (title != null) {
                 showToast(
                     when {

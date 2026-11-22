@@ -7,6 +7,7 @@ import kotlin.math.abs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.coroutineContext
@@ -164,19 +165,39 @@ private class AndroidToolboxBridge : ToolboxRuntimeBridge {
         }
     }
 
-    private fun runAsRoot(command: String): ExecResult {
+    private suspend fun runAsRoot(command: String): ExecResult {
         val backgroundRead = command == Engine.settingsDump() || command in listOf(
             Engine.dtboStatus(), Engine.dtboHasLocal(), Engine.dtboResolve(),
             Engine.dtboDirs(), Engine.dtboList(), Engine.dtboBackups(),
         )
         if (!AppVisibility.visible.value && backgroundRead) return ExecResult("应用不可见，读取已暂停", -1)
         return try {
-            val process = ProcessBuilder("su", "-c", command)
-                .redirectErrorStream(true)
-                .start()
-            val output = BufferedReader(InputStreamReader(process.inputStream)).use { it.readText() }
-            val code = process.waitFor()
-            ExecResult(output.trim(), code)
+            withTimeout(30_000L) {
+                suspendCancellableCoroutine { continuation ->
+                    val processRef = AtomicReference<Process?>()
+                    continuation.invokeOnCancellation { processRef.get()?.destroy() }
+                    Dispatchers.IO.dispatch(continuation.context, Runnable {
+                        if (!continuation.isActive) return@Runnable
+                        try {
+                            val process = ProcessBuilder("su", "-c", command)
+                                .redirectErrorStream(true)
+                                .start()
+                            processRef.set(process)
+                            if (!continuation.isActive) {
+                                process.destroy()
+                                return@Runnable
+                            }
+                            val output = BufferedReader(InputStreamReader(process.inputStream)).use { it.readText() }
+                            val code = process.waitFor()
+                            if (continuation.isActive) continuation.resume(ExecResult(output.trim(), code))
+                        } catch (t: Throwable) {
+                            if (continuation.isActive) continuation.resume(ExecResult(t.message ?: "error", -1))
+                        }
+                    })
+                }
+            }
+        } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
+            ExecResult("Root 命令超时（30 秒）", -1)
         } catch (t: Throwable) {
             ExecResult(t.message ?: "error", -1)
         }

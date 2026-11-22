@@ -267,18 +267,15 @@ case "$1" in
       cloud)
         case "$3" in
           on)
-            cfg_set cloud_guard 1
-            baa_refresh_src >/dev/null 2>&1
-            baa_mount >/dev/null 2>&1
-            setprop ctl.restart batteryantiaging 2>/dev/null
-            ;;
+            cfg_set cloud_guard 1 || exit 1
+            baa_refresh_src >/dev/null 2>&1 && baa_mount >/dev/null 2>&1 || exit $?
+            setprop ctl.restart batteryantiaging 2>/dev/null ;;
           off)
-            cfg_set cloud_guard 0
-            cloud_restore >/dev/null 2>&1
-            baa_refresh_src >/dev/null 2>&1
-            baa_mount >/dev/null 2>&1
-            setprop ctl.restart batteryantiaging 2>/dev/null
-            ;;
+            baa_tgt >/dev/null 2>&1 || exit $?
+            cloud_restore >/dev/null 2>&1 || exit 1
+            cfg_set cloud_guard 0 || exit 1
+            baa_refresh_src >/dev/null 2>&1 && baa_mount >/dev/null 2>&1 || exit $?
+            setprop ctl.restart batteryantiaging 2>/dev/null ;;
           status) cloud_status ;;
           *) cfg_get cloud_guard 1 ;;
         esac ;;

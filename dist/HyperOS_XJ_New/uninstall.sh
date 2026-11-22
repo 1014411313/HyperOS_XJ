@@ -3,9 +3,9 @@ DATA_DIR=/data/adb/rezhale_toolbox
 _ts=$(date +%Y%m%d_%H%M%S)
 
 # ---- 卸载备份包：state/配置/日志打包到 /sdcard/Download（清理前的最后快照机会）----
-# zip 可用优先 zip，否则用 tar（toybox/busybox 都自带）；两者都不可用则打印未能备份并继续。
-# 备份失败绝不中断卸载流程。
+# zip 可用优先 zip，否则用 tar（toybox/busybox 都自带）；备份失败继续还原并保留用户数据。
 _backup_msg=""
+_backup_ok=""
 uninstall_pack_backup() {
   _backup_msg="未能备份（无 zip/tar 可用或打包失败）"
   [ -d "$DATA_DIR" ] || return 0
@@ -19,12 +19,16 @@ uninstall_pack_backup() {
   done
   if [ -n "$_items" ]; then
     if command -v zip >/dev/null 2>&1; then
-      if (cd "$DATA_DIR" && zip -qr "${_out}.zip" $_items 2>/dev/null); then
+      if (cd "$DATA_DIR" && zip -qr "${_out}.zip" $_items 2>/dev/null) &&
+          [ -f "${_out}.zip" ] && [ -s "${_out}.zip" ]; then
+        _backup_ok=1
         _backup_msg="已备份: ${_out}.zip"; return 0
       fi
     fi
     if command -v tar >/dev/null 2>&1; then
-      if tar -czf "${_out}.tar.gz" -C "$DATA_DIR" $_items 2>/dev/null; then
+      if tar -czf "${_out}.tar.gz" -C "$DATA_DIR" $_items 2>/dev/null &&
+          [ -f "${_out}.tar.gz" ] && [ -s "${_out}.tar.gz" ]; then
+        _backup_ok=1
         _backup_msg="已备份: ${_out}.tar.gz"; return 0
       fi
     fi
@@ -78,7 +82,7 @@ rm -f "$DATA_DIR/state/daemon.pid" "$DATA_DIR/state/daemon.lock.d/pid" 2>/dev/nu
 pm uninstall --user 0 com.hyperos.xj >/dev/null 2>&1
 
 # 卸载时清掉模块目录外的用户数据（精确路径）
-[ -z "$_restore_failed" ] && rm -rf "$DATA_DIR" 2>/dev/null
+[ -z "$_restore_failed" ] && [ "$_backup_ok" = 1 ] && rm -rf "$DATA_DIR" 2>/dev/null
 
 case "$MODDIR" in
     /data/adb/modules/*|/data/adb/modules_update/*)
@@ -95,6 +99,7 @@ _body=$( {
   echo "===== 还原说明 ====="
   [ -n "$_restore_ok" ] && echo "还原命令完成（节点值见下方）: $_restore_ok"
   [ -n "$_restore_failed" ] && echo "还原失败: $_restore_failed；已保留 $DATA_DIR 中的配置与备份"
+  [ "$_backup_ok" != 1 ] && [ -d "$DATA_DIR" ] && echo "备份失败: $_backup_msg；已保留 $DATA_DIR 中的用户数据"
   echo "不自动回滚: DTBO 分区。如曾刷入模块镜像，请用备份刷回后重启:"
   echo "  备份目录: /sdcard/Download/dtbo_backup/（主；不可写时自动落在 $DATA_DIR/battery/state/dtbo_backup/，已随本次备份包带走）"
   echo "  其中 manifest.txt 记录每份备份的 sha256 与槽位，before_flash/auto_backup 行即刷入前的分区内容"
@@ -111,7 +116,7 @@ _body=$( {
     [ -e "$_n" ] && echo "  $_n = $(cat "$_n" 2>/dev/null)"
   done
   echo "[文件]"
-  if [ -d "$DATA_DIR" ]; then echo "  $DATA_DIR 仍存在（还原失败时保留，或清理未成功）"; else echo "  $DATA_DIR 已清除"; fi
+  if [ -d "$DATA_DIR" ]; then echo "  $DATA_DIR 仍存在（备份或还原失败时保留，或清理未成功）"; else echo "  $DATA_DIR 已清除"; fi
   if [ -e "$MODDIR/module.prop" ]; then echo "  $MODDIR 仍存在（由后台延迟删除）"; else echo "  $MODDIR 已清除"; fi
 } 2>/dev/null )
 printf '%s\n' "$_body"

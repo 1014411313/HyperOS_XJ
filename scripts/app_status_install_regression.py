@@ -5,7 +5,8 @@
 1) 源码级检查 ToolboxRuntimeBridge.android.kt + StatusSourceCache.kt：面板 700ms 读状态时先取共享快照，
    读不到的 sysfs 节点/快照文件要进冷却，不再每拍刷 SELinux denial；有权限时仍直读。
    NodeDenied/冷却等策略已移到 StatusSourceCache.kt，断言跟着读两个文件。
-2) 用真实 JVM 跑 scripts/status_source_test.py（动态行为，替代纯文本检查）。
+2) 用真实 JVM 跑 scripts/status_source_test.py（动态行为，替代纯文本检查），并隔离运行
+   从 bridge 提取的 runAsRoot：su 替为 sh，验证退出码和真实 30 秒超时终止，不执行 root。
 3) 沙箱里跑真实 customize.sh：pm/dumpsys 用桩，路径改到临时目录，断言安装失败/
    版本不一致/读不到版本时都不报「已安装且与模块版本一致」，且绝不自动卸载旧 App。
 
@@ -186,6 +187,26 @@ def check_bridge_source():
     if "pm uninstall" in bridge:
         fails.append("bridge 不应卸载 App")
 
+    root_marker = "    private suspend fun runAsRoot("
+    if root_marker not in bridge:
+        fails.append("runAsRoot 必须可挂起，阻塞读取不能直接包 withTimeout")
+    else:
+        root = bridge.split(root_marker, 1)[1].split("\n}\n", 1)[0]
+        need("withTimeout(30_000L) {", "一般 Root 命令 30 秒超时", root)
+        need("suspendCancellableCoroutine { continuation ->", "阻塞读取与可取消等待分离", root)
+        need("Dispatchers.IO.dispatch(continuation.context, Runnable {", "阻塞读取在 IO 工作线程运行", root)
+        need("continuation.invokeOnCancellation { processRef.get()?.destroy() }",
+             "超时取消销毁已启动的进程", root)
+        need("processRef.set(process)", "记录待销毁进程", root)
+        need("if (!continuation.isActive) {\n                                process.destroy()\n",
+             "超时与进程启动竞争时销毁新进程", root)
+        need("val code = process.waitFor()", "正常结束读取真实退出码", root)
+        need("continuation.resume(ExecResult(output.trim(), code))", "正常结果保留输出与退出码", root)
+        need("catch (_: kotlinx.coroutines.TimeoutCancellationException)", "超时转为失败结果", root)
+        need('ExecResult("Root 命令超时（30 秒）", -1)', "超时返回明确失败而非成功", root)
+        if "destroyForcibly" in root:
+            fails.append("runAsRoot 不应调用 API26 才有的 destroyForcibly（App 支持 API23）")
+
     need("class NodeDenied", "权限拒绝时中断本轮采样的标记", cache)
     need("fun readNode(", "节点读取策略", cache)
     need("fun readSnapshot(", "快照读取策略", cache)
@@ -218,6 +239,95 @@ def check_status_source_behavior():
         return ["动态行为测试未通过（rc=%d）：\n%s" % (proc.returncode, out[-2000:])]
     if "ALL PASS" not in out:
         return ["动态行为测试未输出 ALL PASS：\n%s" % out[-2000:]]
+    return []
+
+
+def check_root_command_behavior():
+    """缓存编译器编译真实方法体；仅替换 su 为 sh，保留完整 30 秒定时。"""
+    from status_source_test import compiler_classpath, newest_jar
+
+    jars = [newest_jar(group, artifact) for group, artifact in [
+        ("org.jetbrains.kotlin", "kotlin-compiler-embeddable"),
+        ("org.jetbrains.kotlin", "kotlin-stdlib"),
+        ("org.jetbrains.kotlin", "kotlin-reflect"),
+        ("org.jetbrains.kotlinx", "kotlinx-coroutines-core-jvm"),
+        ("org.jetbrains", "annotations"),
+    ]]
+    java = shutil.which("java")
+    if not java or not all(jars):
+        return ["SKIP 缺少缓存 Kotlin 编译器/JVM，无法实测 Root 超时"]
+    bridge = BRIDGE.read_text()
+    marker = "    private suspend fun runAsRoot("
+    if marker not in bridge:
+        return ["找不到可挂起的 runAsRoot，无法实测 Root 超时"]
+    method = marker + bridge.split(marker, 1)[1].split("\n}\n", 1)[0]
+    if method.count('ProcessBuilder("su",') != 1:
+        return ["无法确认唯一 su 启动点，拒绝运行非隔离 Root 测试"]
+    method = method.replace('ProcessBuilder("su",', 'ProcessBuilder("sh",')
+    common = BRIDGE.parents[6] / "commonMain/kotlin/com/hyperos/xj/runtime/ToolboxRuntimeBridge.kt"
+    common_source = common.read_text()
+    result_type = "data class ExecResult(" + common_source.split("data class ExecResult(", 1)[1].split("expect fun", 1)[0]
+    engine = "object Engine {" + common_source.split("object Engine {", 1)[1].split("internal fun parseKv", 1)[0]
+    source = r'''
+import java.io.BufferedReader
+import java.io.File
+import java.io.InputStreamReader
+import java.util.concurrent.atomic.AtomicReference
+import kotlinx.coroutines.*
+import kotlin.coroutines.resume
+
+object AppVisibility { object visible { val value = true } }
+''' + result_type + engine + method + r'''
+
+fun main(args: Array<String>) = runBlocking {
+    for ((command, code, output) in listOf(
+        Triple("printf '  ok  \\n'; exit 0", 0, "ok"),
+        Triple("printf failure >&2; exit 7", 7, "failure"),
+    )) {
+        val result = runAsRoot(command)
+        check(result.exitCode == code && result.output == output) { result }
+        check(result.success == (code == 0)) { result }
+        println("PASS Root 正常结束：退出码 $code，输出及 success 正确")
+    }
+    val pidFile = File(args.single())
+    val started = System.nanoTime()
+    val result = runAsRoot("echo \$\$ > '${pidFile.absolutePath}'; exec sleep 60")
+    val elapsedMs = (System.nanoTime() - started) / 1_000_000
+    val process = ProcessHandle.of(pidFile.readText().trim().toLong()).orElse(null)
+    try {
+        check(result.exitCode == -1 && !result.success) { result }
+        check(result.output == "Root 命令超时（30 秒）") { result }
+        check(elapsedMs in 29_000L..35_000L) { "超时耗时异常：${elapsedMs}ms" }
+        withTimeout(2_000L) {
+            while (process?.isAlive == true) delay(10L)
+        }
+        println("PASS Root 超时：${elapsedMs}ms，进程已终止，返回 -1/失败结果")
+    } finally {
+        if (process?.isAlive == true) process.destroyForcibly()
+    }
+    println("ALL PASS Root 命令行为 3/3")
+}
+'''
+    with tempfile.TemporaryDirectory(prefix="xj-root-test-") as tmp:
+        out = Path(tmp)
+        test = out / "RootCommandTest.kt"
+        test.write_text(source)
+        runtime_cp = compiler_classpath([jars[1], jars[3], jars[4]])
+        compiled = subprocess.run([
+            java, "-cp", compiler_classpath(jars), "org.jetbrains.kotlin.cli.jvm.K2JVMCompiler",
+            "-no-stdlib", "-no-reflect", "-classpath", runtime_cp,
+            "-d", str(out), str(test),
+        ], capture_output=True, text=True, timeout=60)
+        if compiled.returncode != 0:
+            return ["Root 隔离 JVM 编译失败：\n" + compiled.stdout + compiled.stderr]
+        ran = subprocess.run([
+            java, "-cp", str(out) + os.pathsep + runtime_cp,
+            "RootCommandTestKt", str(out / "command.pid"),
+        ], capture_output=True, text=True, timeout=45)
+        output = (ran.stdout + ran.stderr).strip()
+        if ran.returncode != 0 or "ALL PASS Root 命令行为 3/3" not in output:
+            return ["Root 隔离 JVM 行为失败（rc=%d）：\n%s" % (ran.returncode, output)]
+        print(output)
     return []
 
 
@@ -291,16 +401,47 @@ def _run_cases():
 
 def uninstall_cases():
     source = (CUSTOMIZE.parent / "uninstall.sh").read_text()
+    backup = '_backup_msg=""' + source.split('_backup_msg=""', 1)[1].split('_restore_ok=""', 1)[0]
     steps = source.split('_restore_ok=""', 1)[1].split('rm -f "$DATA_DIR/state/daemon.pid"', 1)[0]
     report = source.split('_body=$( {', 1)[1].split('  echo "不自动回滚:', 1)[0]
     cleanup = next(line for line in source.splitlines() if '&& rm -rf "$DATA_DIR"' in line)
     results = []
-    for name, failed_step in [("all_ok", ""), ("apply_failed", "apply"),
-                              ("all_failed", "all")]:
+    for name, failed_step, backup_mode in [
+        ("all_ok", "", "ok"),
+        ("apply_failed", "apply", "ok"),
+        ("all_failed", "all", "ok"),
+        ("tar_fallback", "", "zip_fail"),
+        ("backup_command_failed", "", "fail"),
+        ("backup_empty", "", "empty"),
+        ("backup_missing", "", "missing"),
+        ("backup_unwritable", "", "unwritable"),
+    ]:
         sb = SESSION_ROOT / name
         data = sb / "data"
         data.mkdir(parents=True)
-        (data / "backup").write_text("preserve")
+        (data / "config").mkdir()
+        (data / "config/settings.json").write_text('{"preserve":true}')
+        download = sb / "Download"
+        download.mkdir()
+        if backup_mode == "unwritable":
+            # 用目录占据目标文件名，避免 root 下 chmod 无法可靠模拟写入失败。
+            for suffix in ("zip", "tar.gz"):
+                (download / ("rezhale_toolbox_uninstall_test." + suffix)).mkdir()
+        (sb / "bin").mkdir()
+        for tool in ("zip", "tar"):
+            stub = sb / "bin" / tool
+            stub.write_text('''#!/bin/sh
+printf '%s\\n' "${0##*/}" >> "$BACKUP_LOG"
+case "$BACKUP_MODE" in
+  fail) printf partial > "$2"; exit 1 ;;
+  zip_fail)
+    if [ "${0##*/}" = zip ]; then printf partial > "$2"; exit 1; fi ;;
+  empty) : > "$2"; exit $? ;;
+  missing) exit 0 ;;
+esac
+printf backup > "$2"
+''')
+            stub.chmod(0o755)
         engine = sb / "engine"
         engine.mkdir()
         (engine / "xjctl.sh").write_text('''echo "$*" >> "$CALL_LOG"
@@ -309,14 +450,37 @@ def uninstall_cases():
         script = r'''timeout() {
   printf 'stop %s\n' "$6" >> "$CALL_LOG"
 }
-''' + '_restore_ok=""' + steps + cleanup + '\n' + report
+''' + backup.replace("/sdcard/Download", str(download))
+        script += '_restore_ok=""' + steps + cleanup + '\n' + report
         script += '\n[ -z "$_restore_failed" ]\n'
         env = dict(os.environ, MODDIR=str(sb), DATA_DIR=str(data),
-                   CALL_LOG=str(sb / "calls.log"), FAILED_STEP=failed_step)
+                   CALL_LOG=str(sb / "calls.log"), FAILED_STEP=failed_step,
+                   PATH=str(sb / "bin") + os.pathsep + os.environ.get("PATH", "/usr/bin:/bin"),
+                   BACKUP_LOG=str(sb / "backup_calls.log"), BACKUP_MODE=backup_mode,
+                   _ts="test")
         proc = subprocess.run(["sh", "-c", script], env=env, capture_output=True, text=True)
         c = Case(sb, proc)
         c.eq(proc.returncode, 1 if failed_step else 0, "还原失败返回非零")
-        c.eq(data.exists(), bool(failed_step), "仅还原成功时清理数据")
+        backup_ok = backup_mode in ("ok", "zip_fail")
+        keep_data = bool(failed_step) or not backup_ok
+        c.eq(data.exists(), keep_data, "仅还原和备份均成功时清理数据")
+        if keep_data:
+            settings = data / "config/settings.json"
+            c.eq(settings.read_text() if settings.exists() else None,
+                 '{"preserve":true}', "保留原始用户配置")
+        if backup_ok:
+            suffix = "tar.gz" if backup_mode == "zip_fail" else "zip"
+            archive = download / ("rezhale_toolbox_uninstall_test." + suffix)
+            c.eq(archive.is_file() and archive.stat().st_size > 0, True, "成功备份产物存在且非空")
+            c.has("已备份:", "备份成功应报告产物")
+            c.lacks("备份失败:", "成功备份不报失败")
+        else:
+            c.has("备份失败:", "失败备份应明确报告")
+            c.has("已保留 " + str(data), "失败备份应报告用户数据保留位置")
+            c.lacks("已备份:", "失败备份不能假报成功")
+        backup_calls = (sb / "backup_calls.log").read_text().splitlines()
+        c.eq(backup_calls, ["zip"] if backup_mode == "ok" else ["zip", "tar"],
+             "zip 失败或产物无效时尝试 tar")
         c.eq(len(c.calls("")), 9, "失败后仍尝试其余还原步骤与进程停止")
         c.lacks("已还原:", "不把命令结果当作节点已验证")
         if failed_step:
@@ -340,6 +504,7 @@ def main():
     finally:
         shutil.rmtree(SESSION_ROOT, ignore_errors=True)
     behavior_fails = check_status_source_behavior()
+    root_fails = check_root_command_behavior()
 
     failed = 0
     if bridge_fails:
@@ -358,6 +523,14 @@ def main():
     else:
         print("PASS 数据源动态行为（真实 JVM：EACCES/ENOENT/60不被5覆盖/部分live/真0/恢复）")
 
+    if root_fails:
+        failed += 1
+        print("FAIL Root 命令动态行为（隔离 JVM）")
+        for item in root_fails:
+            print("     - %s" % item)
+    else:
+        print("PASS Root 命令动态行为（隔离 JVM：退出码 / 30 秒超时 / 进程终止 / 失败结果）")
+
     for name, case in results:
         if case.fails:
             failed += 1
@@ -367,7 +540,7 @@ def main():
         else:
             print("PASS %s" % name)
 
-    total = len(results) + 2
+    total = len(results) + 3
     print("%d/%d 通过" % (total - failed, total))
     return 0 if failed == 0 else 1
 

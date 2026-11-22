@@ -99,8 +99,10 @@ json_get() {
 }
 
 json_set() {
+  local _f _k _v _t _jv _esc _rc _tmp
   _f="$CONFDIR/settings.json"; _k="$1"; _v="$2"; _t="${3:-str}"
   seed_settings
+  _tmp="$_f.new.$(date +%s).$$"
   case "$_t" in
     num) _jv="$_v" ;;
     bool) case "$_v" in true|1|on|yes) _jv=true ;; *) _jv=false ;; esac ;;
@@ -122,7 +124,10 @@ json_set() {
       }
       print line
     }
-  ' "$_f" > "$_f.new" 2>/dev/null && cat "$_f.new" > "$_f" && rm -f "$_f.new"
+  ' "$_f" > "$_tmp" 2>/dev/null && mv -f "$_tmp" "$_f" 2>/dev/null
+  _rc=$?
+  rm -f "$_tmp" 2>/dev/null
+  [ "$_rc" -eq 0 ] || return "$_rc"
   config_changed
 }
 

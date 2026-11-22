@@ -10,6 +10,8 @@ DIAG_LOG="$LOGDIR/diag_samples.log"
 DIAG_NODE_WIRED_CURR=/sys/class/xm_power/charger/charger_thermal/wired_chg_curr
 DIAG_USB_SUPPLY=/sys/class/power_supply/usb
 DIAG_USB_IBUS=/sys/class/qcom-battery/ibus_total
+DIAG_QCOM_SUPPLY=/sys/class/qcom-battery
+DIAG_CHARGER_COMMON=/sys/class/xm_power/charger/charger_common
 DIAG_BUF_MAX=60          # 缓冲行数上限（3s/拍约 3 分钟、充电 1s/拍约 1 分钟必落一次）
 DIAG_FLUSH_SEC=30        # 两次落盘的最小间隔（秒）
 DIAG_MAX_BYTES=$((4 * 1024 * 1024))   # 体积上限（约容纳 1 天采样；按天裁剪由 retention.sh 负责）
@@ -24,6 +26,7 @@ DIAG_CV="-"; DIAG_CI="-"; DIAG_CP="-"
 
 DIAG_WIRELESS_SUPPLY=/sys/class/power_supply/wireless
 DIAG_WIRELESS_LAST=""
+DIAG_CHARGE_LAST=""
 
 diag_wireless_read() {
   _dw_value=-
@@ -75,6 +78,43 @@ diag_wireless_tick() {
       || rm -f "$_dw_log.cut.$$"
   fi
   return 0
+}
+
+diag_charge_tick() {
+  _dc_values=""
+  for _dc_node in \
+    "$DIAG_USB_SUPPLY/online" \
+    "$DIAG_USB_SUPPLY/present" \
+    "$DIAG_USB_SUPPLY/type" \
+    "$DIAG_USB_SUPPLY/real_type" \
+    "$DIAG_USB_SUPPLY/voltage_now" \
+    "$DIAG_USB_SUPPLY/voltage_max" \
+    "$DIAG_USB_SUPPLY/current_now" \
+    "$DIAG_USB_SUPPLY/input_current_now" \
+    "$DIAG_USB_SUPPLY/current_max" \
+    "$DIAG_QCOM_SUPPLY/pd_verifed" \
+    "$DIAG_QCOM_SUPPLY/quick_charge_type" \
+    "$DIAG_QCOM_SUPPLY/real_type" \
+    "$DIAG_QCOM_SUPPLY/usb_real_type" \
+    "$DIAG_QCOM_SUPPLY/power_max" \
+    "$DIAG_CHARGER_COMMON/power_max"; do
+    _dc_value=-
+    if [ -r "$_dc_node" ] && IFS= read -r _dc_raw < "$_dc_node"; then
+      case "$_dc_raw" in *[!A-Za-z0-9_.+-]*) _dc_value=- ;; *) [ -n "$_dc_raw" ] && _dc_value=$_dc_raw ;; esac
+    fi
+    _dc_values="$_dc_values ${_dc_node##*/}=$_dc_value"
+  done
+  _dc_state="$IS_CHARGING:${_m:--}$_dc_values"
+  [ "$_dc_state" != "$DIAG_CHARGE_LAST" ] || return 0
+  printf '%s charging=%s mode=%s temp_0.1C=%s battery_current_uA=%s%s\n' \
+    "$(date '+%F %T')" "$IS_CHARGING" "${_m:--}" "$BAT_TEMP" "$BAT_CUR" "$_dc_values" \
+    >> "$LOGDIR/diag_charge.log" 2>/dev/null || return 0
+  DIAG_CHARGE_LAST=$_dc_state
+  if [ "$(wc -c < "$LOGDIR/diag_charge.log")" -gt 262144 ]; then
+    tail -n 500 "$LOGDIR/diag_charge.log" > "$LOGDIR/diag_charge.log.cut.$$" \
+      && mv -f "$LOGDIR/diag_charge.log.cut.$$" "$LOGDIR/diag_charge.log" \
+      || rm -f "$LOGDIR/diag_charge.log.cut.$$"
+  fi
 }
 
 diag_log_tick() {

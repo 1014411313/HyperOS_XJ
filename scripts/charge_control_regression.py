@@ -503,15 +503,18 @@ XJ_NOW=0 XJ_CONFIG_CHANGED=1 XJ_CONNECTION_CHANGED=0 battery_guard_tick
     env = dict(os.environ, BAT=str(bat), BT_STATE=str(state),
                BAT_STATE=str(state), LOGDIR=str(logdir), MODDIR=str(module),
                XJ_READONLY="0")
-    for voltage, shutdown in [(None, False), ("bad", False), ("0", False),
-                              ("3800000", False), ("3300000", True)]:
+    cases = [(None, 50, False), ("bad", 50, False), ("0", 50, False),
+             ("3300000", 50, False), ("3300000", 20, True)]
+    for voltage, soc, shutdown in cases:
+        (bat / "capacity").write_text(str(soc))
         node = bat / "voltage_now"
         if voltage is None:
             node.unlink(missing_ok=True)
         else:
             node.write_text(voltage)
+        env["BAT_CAP"] = str(soc)
         out = run(script, env)
-        assert ("shutdown_requested" in out) == shutdown, (voltage, out)
+        assert ("shutdown_requested" in out) == shutdown, (voltage, soc, out)
 
 
 def thermal_backup_case(sb):
@@ -566,6 +569,108 @@ def thermal_backup_case(sb):
     assert not list(sb.glob("config.restore.*"))
 
 
+def governor_case(sb):
+    state = sb / "state"
+    conf = sb / "config"
+    state.mkdir(parents=True)
+    conf.mkdir()
+    daemon = (ROOT / "engine/xjdaemon.sh").read_text()
+    governor = "charge_gov_limit() {" + daemon.split("charge_gov_limit() {", 1)[1].split("\nplan_in_window() {", 1)[0]
+    governor += "\nplan_in_window() { return 1; }\n"
+    governor += "effective_tier() {" + daemon.split("effective_tier() {", 1)[1].split("\nbypass_decide() {", 1)[0]
+    script = '''
+CONFDIR="$CONF"; BT_STATE="$STATE"
+json_get() { echo true; }
+cfg_get() { [ "$1" = power_limit ] && echo inf || echo "${2:-}"; }
+power_tier() { echo inf; }
+power_rank() { case "$1" in inf) echo 999;; fast) echo 40;; mid) echo 25;; slow) echo 10;; *) echo 999;; esac; }
+''' + governor + "\neffective_tier\n"
+    env = dict(os.environ, CONF=str(conf), STATE=str(state), BT_STATE=str(state))
+    expected = {
+        ("level_1", 29): "inf", ("level_1", 30): "mid", ("level_1", 33): "mid", ("level_1", 34): "slow",
+        ("level_2", 34): "inf", ("level_2", 35): "mid", ("level_3", 39): "inf",
+        ("level_3", 40): "mid", ("level_4", 44): "inf", ("level_4", 45): "mid",
+        ("level_5", 49): "inf", ("level_5", 50): "mid",
+    }
+    for (mode, temp), tier in expected.items():
+        (conf / "current_mode").write_text(mode)
+        (state / "charge_gov.state").unlink(missing_ok=True)
+        out = run(script, dict(env, BAT_TEMP=str(temp * 10))).strip()
+        assert out == tier, (mode, temp, tier, out)
+    (conf / "current_mode").write_text("level_4")
+    (state / "charge_gov.state").write_text("level_4|mid")
+    assert run(script, dict(env, BAT_TEMP="430")).strip() == "mid"
+    assert run(script, dict(env, BAT_TEMP="420")).strip() == "inf"
+    (state / "charge_gov.state").write_text("level_4|slow")
+    assert run(script, dict(env, BAT_TEMP="470")).strip() == "slow"
+    assert run(script, dict(env, BAT_TEMP="460")).strip() == "mid"
+    assert run(script, dict(env, BAT_TEMP="420")).strip() == "inf"
+    (state / "charge_gov.state").write_text("level_4|mid")
+    assert run(script, dict(env, BAT_TEMP="440")).strip() == "mid"
+    assert run(script, dict(env, BAT_TEMP="420")).strip() == "inf"
+    (state / "charge_gov.state").unlink(missing_ok=True)
+    (state / "charge_gov.state.tmp").mkdir()
+    assert run(script, dict(env, BAT_TEMP="450")).strip() == "mid"
+    assert run(script, dict(env, BAT_TEMP="490")).strip() == "slow"
+
+
+def governor_scene_order_case(sb):
+    daemon = (ROOT / "engine/xjdaemon.sh").read_text()
+    tick = 'run_tick() {' + daemon.split('run_tick() {', 1)[1].split('\nbootstrap ||', 1)[0]
+    once = daemon.split('TICK_N=0\n', 1)[1].split('# 单实例', 1)[0]
+    governor = 'effective_tier() {' + daemon.split('effective_tier() {', 1)[1].split('\nbypass_decide() {', 1)[0]
+    script = '''
+THERMAL_DAEMON=test; THERMAL_PATH="$CONFDIR"; CHARGE_INTERVAL=1; POLL_INTERVAL=5
+TICK_N=0; BAT_TEMP=320; BAT_CAP=50; BAT_STATUS=Charging; BAT_CUR=-3000000; BAT_VOLT=4000000
+runtime_now() { XJ_NOW=100; }
+runtime_config_refresh() { XJ_CONFIG_CHANGED=1; }
+sample() { IS_CHARGING=1; }
+connection_read() { USB_CONNECTED=1; WIRELESS_CONNECTED=0; XJ_CONNECTION_CHANGED=0; }
+json_get() { case "$1" in charge_mode|charge_gov|enabled) echo true;; charge_level) echo level_4;; game_mode|power_plan_on) echo false;; *) echo "${2:-}";; esac; }
+cfg_get() { case "$1" in power_limit) echo inf;; apl_enable) echo 0;; *) echo "${2:-}";; esac; }
+power_tier() { echo inf; }
+power_rank() { case "$1" in inf) echo 999;; mid) echo 25;; slow) echo 10;; *) echo 999;; esac; }
+norm_power() { echo "$1"; }
+plan_in_window() { return 1; }
+date() { case "$1" in +%H) echo 12;; +%s) echo 100;; *) echo 2026-11-22;; esac; }
+app_visible() { return 1; }
+screen_on() { return 0; }
+apply_default() { printf 'default' > "$CONFDIR/current_mode"; }
+apply_conf_mode() { printf '%s' "$1" > "$CONFDIR/current_mode"; }
+src_for_mode() { echo "$MODDIR/thermal/${1#level_}/thermal-scene.conf"; }
+guard_apply() { echo "$1"; }
+valid_mode() { return 0; }
+apply_fps() { :; }
+apply_bypass() { :; }
+release_charge() { :; }
+rear_tick() { :; }
+rear_stop() { :; }
+retention_tick() { :; }
+battery_guard_tick() { :; }
+publish_tick() { :; }
+write_status_json() { :; }
+update_status() { :; }
+diag_charge_tick() { :; }
+apl_tick() { :; }
+power_apply() { echo "$1" > "$STATE/effective_tier"; echo "POWER_APPLY=$1"; }
+power_restore() { :; }
+hitemp_guard() { :; }
+hyperos_keepalive() { :; }
+''' + governor + '\n' + tick + '\nset -- --once\n' + once
+    for d in ("conf", "state", "mod"):
+        (sb / d).mkdir(parents=True, exist_ok=True)
+    for level in range(1, 6):
+        path = sb / "mod" / "thermal" / str(level) / "thermal-scene.conf"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("x" * 600)
+    (sb / "conf" / "current_mode").write_text("default")
+    env = dict(os.environ, MODDIR=str(sb / "mod"), CONFDIR=str(sb / "conf"), STATE=str(sb / "state"), BT_STATE=str(sb / "state"), LOGDIR=str(sb / "state"))
+    out = run(script, env)
+    assert "POWER_APPLY=inf" in out, out
+    assert (sb / "conf" / "current_mode").read_text() == "level_4", (sb / "conf" / "current_mode").read_text()
+    assert (sb / "state" / "effective_tier").read_text().strip() == "inf", (sb / "state" / "effective_tier").read_text()
+
+
 def daemon_apply_case(sb):
     sb.mkdir(parents=True)
     (sb / "current_mode").write_text("level_3")
@@ -605,8 +710,10 @@ def main():
         thermal_case(sb / "thermal")
         voltage_shutdown_case(sb / "voltage")
         thermal_backup_case(sb / "backup")
+        governor_case(sb / "governor")
+        governor_scene_order_case(sb / "governor_scene")
         daemon_apply_case(sb / "daemon")
-    print("charge control regression: PASS (APL cursor/thermal targets, inf/APL throttling, node boundaries, shutdown voltage, thermal backup/restore)")
+    print("charge control regression: PASS (APL, governor thresholds/hysteresis, inf/APL throttling, node boundaries, shutdown voltage, thermal backup/restore)")
 
 
 if __name__ == "__main__":

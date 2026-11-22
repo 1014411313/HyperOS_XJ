@@ -17,17 +17,27 @@ blog() { echo "$(date '+%F %T') [battery] $*" >> "$LOGDIR/battery.log" 2>/dev/nu
 SUPPORTED_DEVS="annibale bixi byron dada haotian miro myron nezha onyx pandora popsicle pudding songyuan warsaw xuanyuan"
 
 dev_code() {
-  _d=$(cfg_get dev_code "")
-  case " $SUPPORTED_DEVS " in
-    *" $_d "*) printf '%s' "$_d"; return 0 ;;
-  esac
+  local _configured _found _v _p
+  _configured=$(cfg_get dev_code "")
+  _found=""
   for _p in ro.product.device ro.product.vendor.device ro.product.odm.device ro.product.name; do
     _v=$(getprop "$_p" 2>/dev/null)
+    [ -n "$_v" ] || continue
     case " $SUPPORTED_DEVS " in
-      *" $_v "*) printf '%s' "$_v"; return 0 ;;
+      *" $_v "*)
+        if [ -n "$_found" ] && [ "$_found" != "$_v" ]; then
+          printf '%s' unknown
+          return 0
+        fi
+        _found=$_v ;;
+      *) printf '%s' unknown; return 0 ;;
     esac
   done
-  printf '%s' unknown
+  if [ -n "$_configured" ] && [ "$_configured" != "$_found" ]; then
+    printf '%s' unknown
+  else
+    printf '%s' "${_found:-unknown}"
+  fi
 }
 
 baa_src() {
@@ -48,7 +58,7 @@ baa_fmt_use() {
   case "$_fmt" in
     enc|plain) printf '%s' "$_fmt"; return 0 ;;
   esac
-  _t=$(baa_tgt 2>/dev/null)
+  _t=$(baa_tgt 2>/dev/null) || { printf 'enc'; return 0; }
   [ -f "$_t" ] || { printf 'enc'; return 0; }
   case "$(head -c 8 "$_t" 2>/dev/null)" in
     BAA_ENC:) printf 'enc'; return 0 ;;
@@ -82,6 +92,7 @@ baa_mode_file() {
 # 把选中的变体载荷复制成挂载源（baa_src），返回所选文件名；
 # 变体缺失时返回 1，调用方沿用当前载荷（不改变已有行为）。
 baa_refresh_src() {
+  _tgt=$(baa_tgt) || { blog "BAA target missing: $_tgt"; return 2; }
   _f=$(baa_mode_file) || { blog "BAA 载荷变体缺失（$(dev_code)/$(baa_cloud_variant)），沿用现有载荷"; return 1; }
   _src=$(baa_src)
   _a=$(sha256sum "$_f" 2>/dev/null | awk '{print $1}')
@@ -97,13 +108,12 @@ baa_refresh_src() {
 baa_tgt() {
   _d=$(dev_code)
   _std="/odm/etc/charger/BAA_config_$_d.json"
+  [ -n "$_d" ] && [ "$_d" != "unknown" ] || { printf '%s' "$_std"; return 1; }
   [ -f "$_std" ] && { printf '%s' "$_std"; return 0; }
   for _dir in /odm/etc/charger /vendor/etc/charger /my_product/etc/charger \
               /system/etc/charger /system_ext/etc/charger /product/etc/charger; do
     [ -d "$_dir" ] || continue
     [ -f "$_dir/BAA_config_$_d.json" ] && { printf '%s' "$_dir/BAA_config_$_d.json"; return 0; }
-    _any=$(ls "$_dir"/BAA_config_*.json 2>/dev/null | head -n 1)
-    [ -n "$_any" ] && { printf '%s' "$_any"; return 0; }
   done
   printf '%s' "$_std"
   return 1
@@ -111,7 +121,7 @@ baa_tgt() {
 
 baa_state() {
   _src=$(baa_src)
-  _tgt=$(baa_tgt)
+  _tgt=$(baa_tgt) || { echo inactive; return 2; }
   _s=$(sha256sum "$_src" 2>/dev/null | awk '{print $1}')
   _t=$(sha256sum "$_tgt" 2>/dev/null | awk '{print $1}')
   _sl=$(stat -c '%C' "$_src" 2>/dev/null)
@@ -126,9 +136,10 @@ baa_state() {
 
 # 必须在 PID1 mount namespace 执行；xjctl.sh 在 battery 命令入口会 re-exec 到 PID1。
 baa_mount() {
+  _tgt=$(baa_tgt) || { blog "BAA target missing: $_tgt"; return 2; }
   baa_refresh_src >/dev/null 2>&1
   _src=$(baa_src)
-  _tgt=$(baa_tgt)
+  _tgt=$(baa_tgt) || { blog "BAA target missing: $_tgt"; return 2; }
   if [ ! -f "$_src" ]; then
     blog "BAA source missing: $_src"
     return 1
@@ -164,7 +175,7 @@ baa_mount() {
 }
 
 baa_umount() {
-  _tgt=$(baa_tgt)
+  _tgt=$(baa_tgt) || { blog "BAA target missing: $_tgt"; return 2; }
   if grep -qF " $_tgt " /proc/mounts 2>/dev/null; then
     umount "$_tgt" 2>/dev/null
   fi
@@ -173,7 +184,8 @@ baa_umount() {
 }
 
 pss_state() {
-  _d=$(dumpsys package com.miui.securitycenter 2>/dev/null)
+  _d=$(dumpsys package com.miui.securitycenter 2>/dev/null) || return 1
+  case "$_d" in *disabledComponents:*enabledComponents:*) ;; *) return 1 ;; esac
   _seg=$(echo "$_d" | sed -n '/disabledComponents:/,/enabledComponents:/p')
   case "$_seg" in
     *PowerSaveService*) echo disabled ;;
@@ -182,16 +194,52 @@ pss_state() {
 }
 
 pss_disable() {
-  [ "$(pss_state)" = "disabled" ] && return 0
-  pm disable "$PSS_COMPONENT" >/dev/null 2>&1
-  printf '1' > "$BAT_STATE/pss_disabled_by_module" 2>/dev/null
-  blog "PSS disabled"
+  local _state _pending="$BAT_STATE/pss_disable_pending"
+  _state=$(pss_state) || { blog "PSS state unavailable; disable skipped"; return 1; }
+  if [ -f "$BAT_STATE/pss_disabled_by_module" ]; then return 0; fi
+  if [ -f "$_pending" ]; then
+    case "$(cat "$_pending" 2>/dev/null)" in
+      issued)
+        case "$_state" in
+          disabled) mv -f "$_pending" "$BAT_STATE/pss_disabled_by_module" 2>/dev/null || return 1; return 0 ;;
+          enabled) rm -f "$_pending" 2>/dev/null || return 1 ;;
+          *) return 1 ;;
+        esac ;;
+      *) rm -f "$_pending" 2>/dev/null || return 1 ;;
+    esac
+  fi
+  [ "$_state" = "disabled" ] && return 0
+  printf 'issued' > "$_pending" 2>/dev/null || return 1
+  if ! pm disable "$PSS_COMPONENT" >/dev/null 2>&1; then
+    rm -f "$_pending" 2>/dev/null
+    blog "PSS disable failed"
+    return 1
+  fi
+  _state=$(pss_state) || {
+    blog "PSS state unavailable after disable; pending ownership retained"
+    return 1
+  }
+  if [ "$_state" = "disabled" ]; then
+    mv -f "$_pending" "$BAT_STATE/pss_disabled_by_module" 2>/dev/null || return 1
+    blog "PSS disabled"
+    return 0
+  fi
+  rm -f "$_pending" 2>/dev/null
+  blog "PSS disable failed"
+  return 1
 }
 
 pss_enable() {
-  [ "$(pss_state)" = "enabled" ] && return 0
-  pm enable "$PSS_COMPONENT" >/dev/null 2>&1
-  rm -f "$BAT_STATE/pss_disabled_by_module" 2>/dev/null
+  local _state
+  [ -f "$BAT_STATE/pss_disabled_by_module" ] || return 0
+  _state=$(pss_state) || { blog "PSS state unavailable; restore skipped"; return 1; }
+  if [ "$_state" != "enabled" ]; then
+    pm enable "$PSS_COMPONENT" >/dev/null 2>&1 && [ "$(pss_state)" = "enabled" ] || {
+      blog "PSS enable failed"
+      return 1
+    }
+  fi
+  rm -f "$BAT_STATE/pss_disabled_by_module" 2>/dev/null || return 1
   blog "PSS enabled"
 }
 
@@ -203,23 +251,40 @@ pss_enable() {
 # 轻量：用 pss_dynamic 状态文件记录上次动作，不调 dumpsys（pss_state 很贵）。
 # 拆出 pss_guard_soc，供守护 tick 用已采样 SOC 调用，避免每拍重复读节点/配置。
 pss_guard_soc() {
-  local low=$1 hys=$2 soc=$3 pd
+  local low=$1 hys=$2 soc=$3 pd high
   case "$soc" in ''|*[!0-9]*) return 0 ;; esac
   [ "$soc" -le 100 ] || return 0
+  [ "$low" -lt 100 ] || low=99
+  high=$((low + hys))
+  [ "$high" -le 100 ] || high=100
+  [ "$high" -gt "$low" ] || high=$((low + 1))
   pd=$(cat "$BAT_STATE/pss_dynamic" 2>/dev/null)
   if [ "$soc" -le "$low" ]; then
     # 低电区 → 确保禁用（防锁容）；状态一致时不重复 pm 调用
-    [ "$pd" = "disabled" ] && return 0
-    pm disable "$PSS_COMPONENT" >/dev/null 2>&1
-    printf '1' > "$BAT_STATE/pss_disabled_by_module" 2>/dev/null
-    printf 'disabled' > "$BAT_STATE/pss_dynamic" 2>/dev/null
-    blog "pss_dynamic: SOC=${soc}% <= ${low}% → PSS 禁用（防低电量锁容）"
-  elif [ "$soc" -ge "$((low + hys))" ]; then
-    # 安全区 → 确保启用（恢复健康度显示）
+    { [ "$pd" = "disabled" ] || [ "$pd" = "external_disabled" ]; } && return 0
+    pss_disable || return 1
+    if [ -f "$BAT_STATE/pss_disabled_by_module" ]; then
+      pd=disabled
+    else
+      pd=external_disabled
+    fi
+    printf '%s' "$pd" > "$BAT_STATE/pss_dynamic" 2>/dev/null || return 1
+    blog "pss_dynamic: SOC=${soc}% <= ${low}% → PSS $pd（防低电量锁容）"
+  elif [ "$soc" -ge "$high" ]; then
+    # 外部原本禁用的 PSS 不归本模块恢复。
+    if [ ! -f "$BAT_STATE/pss_disabled_by_module" ]; then
+      [ "$pd" = "enabled" ] && return 0
+      _state=$(pss_state) || return 1
+      if [ "$_state" = "disabled" ]; then
+        printf 'external_disabled' > "$BAT_STATE/pss_dynamic" 2>/dev/null || return 1
+        return 0
+      fi
+      printf 'enabled' > "$BAT_STATE/pss_dynamic" 2>/dev/null || return 1
+      return 0
+    fi
     [ "$pd" = "enabled" ] && return 0
-    pm enable "$PSS_COMPONENT" >/dev/null 2>&1
-    rm -f "$BAT_STATE/pss_disabled_by_module" 2>/dev/null
-    printf 'enabled' > "$BAT_STATE/pss_dynamic" 2>/dev/null
+    pss_enable || return 1
+    printf 'enabled' > "$BAT_STATE/pss_dynamic" 2>/dev/null || return 1
     blog "pss_dynamic: SOC=${soc}% >= $((low + hys))% → PSS 启用（恢复电池健康度显示）"
   fi
   return 0
@@ -239,34 +304,39 @@ pss_guard_tick() {
 }
 
 battery_boot() {
-  [ "$(cfg_get unlock 1)" = "1" ] && baa_mount >/dev/null 2>&1
+  local rc=0
+  if [ "$(cfg_get unlock 1)" = "1" ]; then
+    baa_mount >/dev/null 2>&1 || rc=$?
+  fi
   if [ "$(cfg_get pss_disable 1)" = "1" ]; then
     # pss_low_soc>0（动态模式）时开机不立即禁用：交给 pss_guard_tick 按当前电量决定，
     # 否则「开解容立刻禁用」会和动态模式「只在低电禁用」打架，下一拍又被启用回来。
     _pls=$(cfg_get pss_low_soc 0)
     case "$_pls" in ''|*[!0-9]*) _pls=0 ;; esac
-    [ "$_pls" -gt 0 ] 2>/dev/null || pss_disable
+    [ "$_pls" -gt 0 ] 2>/dev/null || pss_disable || rc=$?
   fi
-  return 0
+  return "$rc"
 }
 
 battery_unlock_on() {
   cfg_set unlock 1
-  baa_mount
+  baa_mount || return $?
   if [ "$(cfg_get pss_disable 1)" = "1" ]; then
     # 同 battery_boot：动态模式开启时交给 pss_guard_tick 按电量决定。
     _pls=$(cfg_get pss_low_soc 0)
     case "$_pls" in ''|*[!0-9]*) _pls=0 ;; esac
-    [ "$_pls" -gt 0 ] 2>/dev/null || pss_disable
+    [ "$_pls" -gt 0 ] 2>/dev/null || pss_disable || return $?
   fi
   setprop ctl.restart batteryantiaging 2>/dev/null
   blog "unlock ON"
 }
 
 battery_unlock_off() {
+  local rc=0
   cfg_set unlock 0
-  baa_umount
-  pss_enable
+  baa_umount || rc=$?
+  pss_enable || rc=$?
+  [ "$rc" -eq 0 ] || return "$rc"
   setprop ctl.restart batteryantiaging 2>/dev/null
   blog "unlock OFF"
 }
@@ -329,10 +399,33 @@ cloud_quarantine() {
   echo "$_n"
 }
 
+# 以目标目录内的临时副本和硬链接原子占位，防止并发新配置被覆盖。
+cloud_restore_one() {
+  local src="$1" dst="$2" tmp
+  if [ -e "$dst" ]; then
+    cmp -s "$src" "$dst" || return 1
+    rm -f "$src" 2>/dev/null || return 1
+    return 0
+  fi
+  tmp="${dst}.restore.$$"
+  [ ! -e "$tmp" ] || return 1
+  cp -p "$src" "$tmp" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; return 1; }
+  if ! ln "$tmp" "$dst" 2>/dev/null; then
+    rm -f "$tmp" 2>/dev/null
+    return 1
+  fi
+  if ! rm -f "$tmp" 2>/dev/null; then
+    return 1
+  fi
+  if ! rm -f "$src" 2>/dev/null; then
+    return 1
+  fi
+}
+
 # 关闭云控屏蔽时归还隔离区文件（按 _sources.log 精确回原路径，回不去则放回云端目录）。
 cloud_restore() {
   [ -d "$CLOUD_QDIR" ] || { echo 0; return 0; }
-  _n=0
+  local _n=0 _failed=0
   for _f in "$CLOUD_QDIR"/*; do
     [ -e "$_f" ] || continue
     _b=$(basename "$_f")
@@ -346,16 +439,36 @@ cloud_restore() {
     case "$_orig" in
       [0-9]*__*) _orig=${_orig#*__} ;;
     esac
-    if [ -n "$_src" ] && [ -d "$(dirname "$_src")" ] && [ ! -e "$_src" ]; then
-      mv "$_f" "$_src" 2>/dev/null && { _n=$((_n + 1)); continue; }
+    if [ -n "$_src" ] && [ -d "$(dirname "$_src")" ]; then
+      if [ -e "$_src" ]; then
+        if cmp -s "$_f" "$_src" && rm -f "$_f" 2>/dev/null; then
+          _n=$((_n + 1)); continue
+        fi
+        _failed=1; blog "云控归还目标冲突，保留隔离文件: $_src"; continue
+      fi
+      cloud_restore_one "$_f" "$_src" && { _n=$((_n + 1)); continue; }
     fi
+    _restored=0
+    _conflict=0
     for _d in $CLOUD_DIRS; do
       [ -d "$_d" ] || continue
-      mv "$_f" "$_d/$_orig" 2>/dev/null && { _n=$((_n + 1)); break; }
+      if [ -e "$_d/$_orig" ]; then _conflict=1; continue; fi
+      if cloud_restore_one "$_f" "$_d/$_orig"; then
+        _n=$((_n + 1)); _restored=1; break
+      fi
     done
+    if [ "$_restored" != "1" ]; then
+      _failed=1
+      if [ "$_conflict" = "1" ]; then
+        blog "云控归还目标冲突，保留隔离文件: $_orig"
+      else
+        blog "云控归还失败: $_f"
+      fi
+    fi
   done
   blog "云控归还: $_n 个"
   echo "$_n"
+  [ "$_failed" = "0" ]
 }
 
 # 主循环巡检触点：cloud_guard=1 才隔离，=0 只更新状态（归还由 xjctl cloud off 触发）。
@@ -451,12 +564,12 @@ bgu_cfg_load() {
   [ "$BGU_CFG_CLOUD" = "1" ] || BGU_CFG_CLOUD=0
   BGU_CFG_SHUT_SOC=$(bgu_int_or "$(cfg_get shutdown_check_soc 20)" 20 0 100)
   BGU_CFG_SHUT_EXIT=$(bgu_int_or "$(cfg_get shutdown_exit_soc 25)" 25 0 100)
-  # 退出阈值必须高于进入阈值，否则会在门槛上抖动。
+  # 进入阈值和回升阈值都必须可达；SOC≤低阈值进入，SOC≥回升阈值退出。
+  [ "$BGU_CFG_SHUT_SOC" -lt 100 ] || BGU_CFG_SHUT_SOC=99
   if [ "$BGU_CFG_SHUT_EXIT" -le "$BGU_CFG_SHUT_SOC" ]; then
     BGU_CFG_SHUT_EXIT=$((BGU_CFG_SHUT_SOC + 5))
-    [ "$BGU_CFG_SHUT_EXIT" -le 100 ] || BGU_CFG_SHUT_EXIT=100
-    [ "$BGU_CFG_SHUT_EXIT" -gt "$BGU_CFG_SHUT_SOC" ] || BGU_CFG_SHUT_SOC=$((BGU_CFG_SHUT_EXIT - 1))
   fi
+  [ "$BGU_CFG_SHUT_EXIT" -le 100 ] || BGU_CFG_SHUT_EXIT=100
   BGU_CFG_SHUT_INT=$(bgu_int_or "$(cfg_get shutdown_check_interval 2)" 2 1 60)
   BGU_CFG_LOADED=1
 }
@@ -585,8 +698,7 @@ bgu_baa_tick() {
   BGU_LAST_BAA=$now
   [ "$(baa_state)" != "active" ] || return 0
   blog "BAA inactive detected, remounting"
-  baa_refresh_src >/dev/null 2>&1
-  baa_mount >/dev/null 2>&1
+  baa_mount >/dev/null 2>&1 || return $?
   setprop ctl.restart batteryantiaging 2>/dev/null
   if [ "$(baa_state)" = "active" ]; then
     blog "BAA remounted OK"
@@ -680,12 +792,9 @@ bgu_low_tick() {
   esac
   if [ "$low" = "1" ]; then
     bgu_low_set "$soc"
-    # 低电时允许主动读电压。
     bgu_shutdown_check active
   else
     bgu_low_clear
-    # 正常电量不额外读节点，但仍复用已采 BAT_VOLT 做电压保护。
-    bgu_shutdown_check sampled
   fi
 }
 

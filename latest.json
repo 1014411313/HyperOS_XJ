@@ -1,11 +1,11 @@
 {
-  "version": "3.1.70",
-  "versionCode": 380,
-  "date": "2026-11-20",
+  "version": "3.1.71",
+  "versionCode": 381,
+  "date": "2026-11-22",
   "url": "",
-  "notes": "主页实时读数在节点不可访问时使用轻量读取，保留后台暂停与失败退避；修正视频背景比例；内置默认动态视频，恢复默认背景与全局恢复默认均恢复该视频。构建与回归通过，新版界面及前台功耗待真机验证。",
-  "download": "https://github.com/1014411313/HyperOS_XJ/releases/download/v3.1.70/rezhale_toolbox_v3.1.70.zip",
-  "download_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/download/v3.1.70/rezhale_toolbox_v3.1.70.zip",
-  "release": "https://github.com/1014411313/HyperOS_XJ/releases/tag/v3.1.70",
-  "release_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/tag/v3.1.70"
+  "notes": "修复安装备份失败时的数据保留、BAA机型身份与精确目标、诊断采集边界、充电温控档位与滞回、低电量关机门控、配置原子写入、Root命令超时、PSS所有权恢复及云控配置无覆盖归还。",
+  "download": "https://github.com/1014411313/HyperOS_XJ/releases/download/v3.1.71/rezhale_toolbox_v3.1.71.zip",
+  "download_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/download/v3.1.71/rezhale_toolbox_v3.1.71.zip",
+  "release": "https://github.com/1014411313/HyperOS_XJ/releases/tag/v3.1.71",
+  "release_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/tag/v3.1.71"
 }
