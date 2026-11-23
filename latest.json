@@ -1,11 +1,11 @@
 {
-  "version": "3.1.70",
-  "versionCode": 380,
-  "date": "2026-11-20",
+  "version": "3.1.94",
+  "versionCode": 404,
+  "date": "2026-11-24",
   "url": "",
-  "notes": "主页实时读数在节点不可访问时使用轻量读取，保留后台暂停与失败退避；修正视频背景比例；内置默认动态视频，恢复默认背景与全局恢复默认均恢复该视频。构建与回归通过，新版界面及前台功耗待真机验证。",
-  "download": "https://github.com/1014411313/HyperOS_XJ/releases/download/v3.1.70/rezhale_toolbox_v3.1.70.zip",
-  "download_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/download/v3.1.70/rezhale_toolbox_v3.1.70.zip",
-  "release": "https://github.com/1014411313/HyperOS_XJ/releases/tag/v3.1.70",
-  "release_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/tag/v3.1.70"
+  "notes": "基于 3.1.70 重做解容与云控：修复温控滞回、低电门控、诊断边界、BAA 目标、PSS、云控归还；云控屏蔽扩展与 Joyose 独立屏蔽；新增充满定时断充、健康度修复、fg 硬解容、描述同步；App 电压三位、底栏图标、色轮调色板、毛玻璃调节、水波背景与卡片折叠",
+  "download": "https://github.com/1014411313/HyperOS_XJ/releases/download/v3.1.94/rezhale_toolbox_v3.1.94.zip",
+  "download_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/download/v3.1.94/rezhale_toolbox_v3.1.94.zip",
+  "release": "https://github.com/1014411313/HyperOS_XJ/releases/tag/v3.1.94",
+  "release_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/tag/v3.1.94"
 }
