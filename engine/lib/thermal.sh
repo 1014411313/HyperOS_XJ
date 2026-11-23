@@ -323,6 +323,7 @@ apply_default() {
 }
 
 apply_bypass() {
+  local _node _orig _saved_node _saved_value
   [ "$MTK_MODE" = "1" ] && return 0
   factory_backup || return 1
   ensure_thermal_dir
@@ -331,12 +332,26 @@ apply_bypass() {
   _curmd5=$(md5sum "$THERMAL_PATH/thermal-normal.conf" 2>/dev/null | cut -d' ' -f1)
   if [ -n "$_tmd5" ] && [ "$_curmd5" != "$_tmd5" ]; then
     unlock_files
-    cp -f "$_src" "$THERMAL_PATH/thermal-normal.conf" 2>/dev/null
+    cp -f "$_src" "$THERMAL_PATH/thermal-normal.conf" 2>/dev/null || return 1
     write_map_files >/dev/null
     restart_daemon
     lock_files
   fi
-  set_charge_current "$(bypass_current)"
+  _node=$(detect_charge_node) || return 1
+  CHARGE_NODE=$_node
+  if [ -f "$BT_STATE/bypass_current_saved" ]; then
+    IFS='|' read -r _saved_node _saved_value < "$BT_STATE/bypass_current" || return 1
+    [ "$_saved_node" = "$CHARGE_NODE" ] || return 1
+  fi
+  if [ ! -f "$BT_STATE/bypass_current_saved" ]; then
+    _orig=$(cat "$_node" 2>/dev/null)
+    case "$_orig" in ''|*[!0-9]*) return 1 ;; esac
+    printf '%s|%s\n' "$_node" "$_orig" > "$BT_STATE/bypass_current.tmp" 2>/dev/null &&
+      mv -f "$BT_STATE/bypass_current.tmp" "$BT_STATE/bypass_current" 2>/dev/null || return 1
+    : > "$BT_STATE/bypass_current_saved" 2>/dev/null || return 1
+  fi
+  set_charge_current "$(bypass_current)" || return 1
+  power_publish_target "" idle
   [ "$(cat "$CONFDIR/current_mode" 2>/dev/null)" = "bypass" ] || {
     printf 'bypass' > "$CONFDIR/current_mode"; update_status bypass; log "切换 → 旁路供电"; }
 }
@@ -360,24 +375,38 @@ set_charge_current() {
   [ -f "$CHARGE_NODE" ] && [ -w "$CHARGE_NODE" ] || return 1
   [ "$(cat "$CHARGE_NODE" 2>/dev/null)" = "$1" ] && return 0
   chmod 0644 "$CHARGE_NODE" 2>/dev/null
-  echo "$1" > "$CHARGE_NODE" 2>/dev/null
+  echo "$1" > "$CHARGE_NODE" 2>/dev/null || return 1
+  [ "$(cat "$CHARGE_NODE" 2>/dev/null)" = "$1" ]
 }
 
 bypass_current() {
   _v=$(json_get bypass_current "")
   case "$_v" in ''|*[!0-9]*) _v=500000 ;; esac
-  _orig=$(cat "$CONFDIR/rt_charge_orig" 2>/dev/null)
-  case "$_orig" in ''|*[!0-9]*) ;; *) [ "$_v" -gt "$_orig" ] && _v="$_orig" ;; esac
+  _orig=$(cat "$BT_STATE/bypass_current" 2>/dev/null)
+  _orig=${_orig#*|}
   [ "$_v" -lt 500000 ] && _v=500000
+  case "$_orig" in ''|*[!0-9]*) ;; *) [ "$_v" -gt "$_orig" ] && _v="$_orig" ;; esac
   echo "$_v"
 }
 
 release_charge() {
-  rm -f "$CONFDIR/bypass_active" 2>/dev/null
-  power_restore
+  local node original
+  if [ ! -f "$BT_STATE/bypass_current_saved" ]; then
+    power_restore || return 1
+    rm -f "$CONFDIR/bypass_active" 2>/dev/null
+    return $?
+  fi
+  IFS='|' read -r node original < "$BT_STATE/bypass_current" 2>/dev/null || return 1
+  charge_node_supported "$node" || return 1
+  case "$original" in ''|*[!0-9]*) return 1 ;; esac
+  wnode "$node" "$original" || return 1
+  [ "$(cat "$node" 2>/dev/null)" = "$original" ] || return 1
+  power_restore || return 1
+  rm -f "$BT_STATE/bypass_current" "$BT_STATE/bypass_current_saved" "$CONFDIR/bypass_active"
 }
 
 guard_apply() {
+  [ "${BAT_TEMP_VALID:-1}" = 1 ] || { echo default; return 0; }
   _mode="$1"
   [ "$ENABLE_GUARD" = "1" ] || { echo "$_mode"; return 0; }
   if [ "${BAT_TEMP:-0}" -ge "$TEMP_GUARD" ]; then
@@ -500,10 +529,34 @@ write_app_status_json() {
   js_line thermal_default "$(json_get default_mode default)" str >> "$_frag"
   js_line power_tier "$(power_tier)" str >> "$_frag"
   js_line power_applied "$(cat "$BT_STATE/power_applied" 2>/dev/null)" str >> "$_frag"
+  js_line power_target_ma "$(cat "$BT_STATE/power_target_ma" 2>/dev/null)" str >> "$_frag"
+  js_line power_target_w "$(cat "$BT_STATE/power_target_w" 2>/dev/null)" str >> "$_frag"
+  js_line power_apply_state "$(cat "$BT_STATE/power_apply_state" 2>/dev/null)" str >> "$_frag"
   js_line unlock "$(cfg_get unlock 1)" str >> "$_frag"
   js_line freepps "$(cfg_get freepps 0)" str >> "$_frag"
   js_line cloud_guard "$(cfg_get cloud_guard 1)" str >> "$_frag"
   js_line apl_enable "$(cfg_get apl_enable 0)" str >> "$_frag"
+  js_line charge_gov "$(json_get charge_gov true)" str >> "$_frag"
+  js_line bypass_active "$([ -f "$CONFDIR/bypass_active" ] && echo 1 || echo 0)" str >> "$_frag"
+  js_line thermal_handback "$([ -f "$CONFDIR/.thermal_handback" ] && echo 1 || echo 0)" str >> "$_frag"
+  js_line power_thermal_ma "$(cut -d'|' -f2 "$BT_STATE/power_thermal_ma" 2>/dev/null)" str >> "$_frag"
+  _pps=""
+  for _pn in $PPS_NODES; do
+    [ -e "$_pn" ] || continue
+    _pv=$(cat "$_pn" 2>/dev/null)
+    case "$_pv" in ''|*[!0-9]*) continue ;; esac
+    _pps=$_pv
+    break
+  done
+  js_line pps_verified "$_pps" str >> "$_frag"
+  js_line cloud_blocked "$(cloud_blocked_total)" str >> "$_frag"
+  _dp=$(cat "$STATE/daemon.pid" 2>/dev/null)
+  case "$_dp" in ''|*[!0-9]*) _dp="" ;; *) [ -d "/proc/$_dp" ] || _dp="" ;; esac
+  js_line daemon_pid "$_dp" str >> "$_frag"
+  _du=""
+  [ -z "$_dp" ] || _du=$(( $(date +%s) - $(stat -c %Y "/proc/$_dp" 2>/dev/null || echo 0) ))
+  js_line daemon_uptime "$_du" str >> "$_frag"
+  js_line baa_state "$(baa_state)" str >> "$_frag"
   js_line cycle_fake "$(cfg_get cycle_fake "")" str >> "$_frag"
   js_line term_v "$(cfg_get term_v "")" str >> "$_frag"
   js_line bypass_manual "$([ -f "$CONFDIR/bypass_manual" ] && echo 1 || echo 0)" str >> "$_frag"

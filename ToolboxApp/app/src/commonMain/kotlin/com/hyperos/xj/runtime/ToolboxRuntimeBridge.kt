@@ -33,15 +33,31 @@ data class DeviceStatus(
     val thermalDefault: String = "default",
     val powerTier: String = "inf",
     val powerApplied: String = "",
+    val powerTargetW: Float? = null,
+    val powerApplyState: String = "",
     val unlock: Boolean = true,
     val freepps: Boolean = false,
     val cloudGuard: Boolean = true,
+    val joyoseClean: Boolean = true,
+    val chgCutoff: String = "",
+    val chgCutoffPhase: String = "",
+    val fgHard: String = "",
     val aplEnable: Boolean = false,
     val cycleFake: String = "",
     val termV: String = "",
     val bypassManual: Boolean = false,
     val rearScreen: Boolean = false,
     val rearScreenSupported: Boolean = true,
+    val daemonPid: String = "",
+    val daemonUptime: Int = 0,
+    val baaState: String = "",
+    val chargeGov: Boolean = true,
+    val bypassActive: Boolean = false,
+    val thermalHandback: Boolean = false,
+    val powerThermalMa: Int = 0,
+    val ppsVerified: String = "",
+    val cloudBlocked: Int = 0,
+    val aplTargetMa: Int = 0,
 ) {
     val charging: Boolean get() = status == "充电中" || status == "满电"
 }
@@ -168,6 +184,10 @@ object Engine {
 
     fun checkUpdate(): String = build("update", "check")
 }
+
+internal fun thermalHour(value: String): Int? =
+    value.takeIf { it.length in 1..2 && it.all { c -> c in '0'..'9' } }
+        ?.toIntOrNull()?.takeIf { it in 0..23 }
 
 internal fun parseKv(raw: String): Map<String, String> =
     raw.lineSequence()

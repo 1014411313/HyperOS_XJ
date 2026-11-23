@@ -18,8 +18,9 @@ find_ps() {
 # 每拍采样：写入全局 BAT_TEMP(0.1℃) / BAT_CUR(uA) / BAT_CAP(%) / BAT_VOLT(uV) / BAT_STATUS。
 sample() {
   _b="${BAT:-/sys/class/power_supply/battery}"
+  BAT_TEMP_VALID=0
   BAT_TEMP=; IFS= read -r BAT_TEMP < "$_b/temp" 2>/dev/null
-  case "$BAT_TEMP" in ''|*[!0-9-]*) BAT_TEMP=0 ;; esac
+  case "${BAT_TEMP#-}" in ''|*[!0-9]*) BAT_TEMP=0 ;; *) BAT_TEMP_VALID=1 ;; esac
   BAT_CUR=; IFS= read -r BAT_CUR < "$_b/current_now" 2>/dev/null
   case "$BAT_CUR" in ''|*[!0-9-]*) BAT_CUR=0 ;; esac
   BAT_CAP=; IFS= read -r BAT_CAP < "$_b/capacity" 2>/dev/null
@@ -211,7 +212,24 @@ data_read() {
       [ -r "$_path" ] && { IFS= read -r _v < "$_path"; case "$_path" in *charge_counter) case "$_v" in *[!0-9-]*|"") ;; *) _v=$((_v / 1000)) ;; esac ;; esac; echo "dt|$_lab=$_v"; }
     done
   fi
-  for _e in $TZ; do _n=${_e%%:*}; _f=${_e#*:}; [ -r "$_f" ] && { IFS= read -r _v < "$_f"; echo "tz|$_n=$_v"; }; done
+  for _e in $TZ; do
+    _n=${_e%%:*}; _f=${_e#*:}
+    [ -r "$_f" ] || continue
+    IFS= read -r _v < "$_f"
+    case "$_v" in ''|*[!0-9-]*) _v="" ;; esac
+    # 系统会复用 thermal_zone 编号：缓存路径指向的 zone 可能换成了别的传感器，
+    # 读到负值/空时按 type 重新找当前 zone，避免面板一直显示负数不动。
+    if [ -z "$_v" ] || [ "$_v" -lt 0 ] 2>/dev/null; then
+      _v=""
+      for _z in /sys/class/thermal/thermal_zone*; do
+        [ "$(cat "$_z/type" 2>/dev/null)" = "$_n" ] || continue
+        _vv=$(cat "$_z/temp" 2>/dev/null)
+        case "$_vv" in ''|*[!0-9-]*) continue ;; esac
+        [ "$_vv" -ge 0 ] && { _v=$_vv; break; }
+      done
+    fi
+    [ -n "$_v" ] && [ "$_v" -ge 0 ] && echo "tz|$_n=$_v"
+  done
 }
 
 # 四行输出：机型名 / 机型代号 / 系统 / 底包（原 base.apk sysinfo.sh）。

@@ -5,8 +5,12 @@ import java.io.File
 import java.io.InputStreamReader
 import kotlin.math.abs
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.coroutineContext
@@ -15,6 +19,7 @@ import java.util.concurrent.atomic.AtomicReference
 
 /** 守护每拍写出的状态快照；App 直读免 fork su，过期/缺失/解析失败时回退 root 采样。 */
 private const val SHARED_STATUS_STALE_MS = 15_000L
+private val engineCommandMutex = Mutex()
 
 /**
  * 读不到的数据源冷却这么久再试：面板 700ms 刷一拍，SELinux 拒绝的 sysfs 节点不能跟着刷 denial，
@@ -133,13 +138,38 @@ private class AndroidToolboxBridge : ToolboxRuntimeBridge {
     override fun cachedThermalSettings(): ThermalSettings? = settingsCache
 
     override suspend fun readThermalSettings(): ThermalSettings = withContext(Dispatchers.IO) {
-        mapThermal(parseKv(runAsRoot(Engine.settingsDump()).output)).also { settingsCache = it }
+        settingsCache = null
+        val result = runAsRoot(Engine.settingsDump())
+        if (!result.success) {
+            throw IllegalStateException("读取引擎设置失败（退出码 ${result.exitCode}），请检查 Root 权限和模块状态")
+        }
+        val settings = parseKv(result.output).filterValues { it.isNotBlank() }
+        val required = listOf(
+            "enabled", "default_mode", "charge_mode", "charge_level", "sleep_level",
+            "time_start", "time_end", "time_level", "game_mode", "game_level",
+        )
+        val missing = required.filter { settings[it].isNullOrBlank() }
+        if (missing.isNotEmpty()) {
+            throw IllegalStateException("引擎设置缺少必要字段：${missing.joinToString()}")
+        }
+        val boolValues = setOf("true", "false", "1", "0", "on", "off", "yes", "no")
+        val modes = setOf("default", "unlimited", "level_1", "level_2", "level_3", "level_4", "level_5")
+        val valid = listOf("enabled", "charge_mode", "game_mode").all { settings[it] in boolValues } &&
+            listOf("default_mode", "charge_level", "sleep_level", "time_level", "game_level").all { settings[it] in modes } &&
+            listOf("time_start", "time_end").all { thermalHour(settings[it].orEmpty()) != null } &&
+            listOf("power_plan_start", "power_plan_end").all { key ->
+                settings[key]?.let { thermalHour(it) != null } ?: true
+            }
+        if (!valid) throw IllegalStateException("引擎设置的必要字段格式无效")
+        mapThermal(settings).also { settingsCache = it }
     }
 
     override suspend fun exec(command: String): String = withContext(Dispatchers.IO) {
         invalidateRootBase()
         try {
-            runAsRoot(command).also { settingsCache = null }.output
+            engineCommandMutex.withLock {
+                withContext(NonCancellable) { runAsRoot(command) }
+            }.also { settingsCache = null }.output
         } finally {
             withContext(Dispatchers.Main) {
                 if (!command.startsWith(Engine.build("dtbo")) && command != Engine.status() && command != Engine.settingsDump()) {
@@ -153,7 +183,9 @@ private class AndroidToolboxBridge : ToolboxRuntimeBridge {
     override suspend fun execResult(command: String): ExecResult = withContext(Dispatchers.IO) {
         invalidateRootBase()
         try {
-            runAsRoot(command).also { settingsCache = null }
+            engineCommandMutex.withLock {
+                withContext(NonCancellable) { runAsRoot(command) }
+            }.also { settingsCache = null }
         } finally {
             withContext(Dispatchers.Main) {
                 if (!command.startsWith(Engine.build("dtbo")) && command != Engine.status() && command != Engine.settingsDump()) {
@@ -164,19 +196,40 @@ private class AndroidToolboxBridge : ToolboxRuntimeBridge {
         }
     }
 
-    private fun runAsRoot(command: String): ExecResult {
+    private suspend fun runAsRoot(command: String): ExecResult {
         val backgroundRead = command == Engine.settingsDump() || command in listOf(
             Engine.dtboStatus(), Engine.dtboHasLocal(), Engine.dtboResolve(),
             Engine.dtboDirs(), Engine.dtboList(), Engine.dtboBackups(),
         )
         if (!AppVisibility.visible.value && backgroundRead) return ExecResult("应用不可见，读取已暂停", -1)
+        val timeoutMs = if (command == Engine.build("diag", "pack")) 120_000L else 30_000L
         return try {
-            val process = ProcessBuilder("su", "-c", command)
-                .redirectErrorStream(true)
-                .start()
-            val output = BufferedReader(InputStreamReader(process.inputStream)).use { it.readText() }
-            val code = process.waitFor()
-            ExecResult(output.trim(), code)
+            withTimeout(timeoutMs) {
+                suspendCancellableCoroutine { continuation ->
+                    val processRef = AtomicReference<Process?>()
+                    continuation.invokeOnCancellation { processRef.get()?.destroy() }
+                    Dispatchers.IO.dispatch(continuation.context, Runnable {
+                        if (!continuation.isActive) return@Runnable
+                        try {
+                            val process = ProcessBuilder("su", "-c", command)
+                                .redirectErrorStream(true)
+                                .start()
+                            processRef.set(process)
+                            if (!continuation.isActive) {
+                                process.destroy()
+                                return@Runnable
+                            }
+                            val output = BufferedReader(InputStreamReader(process.inputStream)).use { it.readText() }
+                            val code = process.waitFor()
+                            if (continuation.isActive) continuation.resume(ExecResult(output.trim(), code))
+                        } catch (t: Throwable) {
+                            if (continuation.isActive) continuation.resume(ExecResult(t.message ?: "error", -1))
+                        }
+                    })
+                }
+            }
+        } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
+            ExecResult("Root 命令超时（${timeoutMs / 1000} 秒）", -1)
         } catch (t: Throwable) {
             ExecResult(t.message ?: "error", -1)
         }
@@ -344,15 +397,31 @@ private fun mapStatus(map: Map<String, String>, environment: String = "Root · �
         thermalDefault = map["thermal_default"] ?: "default",
         powerTier = powerTier,
         powerApplied = map["power_applied"] ?: "",
+        powerTargetW = map["power_target_w"]?.toFloatOrNull(),
+        powerApplyState = map["power_apply_state"] ?: "",
         unlock = asBool(map, "unlock", true),
         freepps = asBool(map, "freepps", false),
         cloudGuard = asBool(map, "cloud_guard", true),
+        joyoseClean = asBool(map, "joyose_clean", true),
+        chgCutoff = map["chg_cutoff"].orEmpty(),
+        chgCutoffPhase = map["chg_cutoff_phase"].orEmpty(),
+        fgHard = map["fg_hard"].orEmpty(),
         aplEnable = asBool(map, "apl_enable", false),
         cycleFake = map["cycle_fake"] ?: "",
         termV = map["term_v"] ?: "",
         bypassManual = asBool(map, "bypass_manual", false),
         rearScreen = asBool(map, "rearscreen", false),
         rearScreenSupported = asBool(map, "rearscreen_supported", true),
+        daemonPid = map["daemon_pid"] ?: "",
+        daemonUptime = map["daemon_uptime"]?.toIntOrNull() ?: 0,
+        baaState = map["baa_state"] ?: "",
+        chargeGov = asBool(map, "charge_gov", true),
+        bypassActive = asBool(map, "bypass_active", false),
+        thermalHandback = asBool(map, "thermal_handback", false),
+        powerThermalMa = map["power_thermal_ma"]?.toIntOrNull() ?: 0,
+        ppsVerified = map["pps_verified"] ?: "",
+        cloudBlocked = map["cloud_blocked"]?.toIntOrNull() ?: 0,
+        aplTargetMa = map["apl_target_ma"]?.toIntOrNull() ?: 0,
     )
 }
 

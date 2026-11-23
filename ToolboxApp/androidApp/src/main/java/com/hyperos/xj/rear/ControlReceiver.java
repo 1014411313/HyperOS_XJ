@@ -11,6 +11,7 @@ public class ControlReceiver extends BroadcastReceiver {
     private static final String DEFAULT_BG_PATH = "/data/local/tmp/xj_rear_bg_default.gif";
     private static final File DEFAULT_BG_FILE = new File(DEFAULT_BG_PATH);
 
+    // Manifest 非导出组件由系统按发送 UID 放行自身、system 与 root；onReceive 的 Binder UID 不是发送者。
     @Override
     public void onReceive(Context context, Intent intent) {
         if (intent == null || !ACTION.equals(intent.getAction())) return;

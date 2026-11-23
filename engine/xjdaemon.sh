@@ -47,39 +47,27 @@ is_gaming() {
   return 1
 }
 
-charge_gov_limit() {
-  case "$1" in
-    level_1) echo 45 ;; level_2) echo 40 ;; level_3) echo 35 ;;
-    level_4) echo 31 ;; level_5) echo 26 ;; *) echo "" ;;
-  esac
-}
-
 plan_in_window() {
   _s=$(json_get power_plan_start 23); _e=$(json_get power_plan_end 7)
   case "$_s" in ''|*[!0-9]*) _s=23 ;; esac
   case "$_e" in ''|*[!0-9]*) _e=7 ;; esac
   _s=${_s#0}; [ -n "$_s" ] || _s=0
   _e=${_e#0}; [ -n "$_e" ] || _e=0
+  [ "$_s" -le 23 ] && [ "$_e" -le 23 ] || return 1
   _h=$(date +%H); _h=${_h#0}; [ -n "$_h" ] || _h=0
   if [ "$_s" -eq "$_e" ]; then return 0
   elif [ "$_s" -lt "$_e" ]; then [ "$_h" -ge "$_s" ] && [ "$_h" -lt "$_e" ]
   else [ "$_h" -ge "$_s" ] || [ "$_h" -lt "$_e" ]; fi
 }
 
-# 有效功率档 = 用户档，被充电计划/温控联动向下收紧，取最严的一档。
+# 用户上限与计划上限取严，温度反馈在电流目标层连续调节。
 effective_tier() {
+  local _tier _m
   _tier=$(power_tier)
   if [ "$(json_get power_plan_on false)" = "true" ] && plan_in_window; then
     _m=$(norm_power "$(json_get power_plan_mode slow)")
-    [ "$(power_rank "$_m")" -lt "$(power_rank "$_tier")" ] && _tier="$_m"
-  fi
-  if [ "$(json_get charge_gov true)" = "true" ]; then
-    _mode=$(cat "$CONFDIR/current_mode" 2>/dev/null)
-    _lim=$(charge_gov_limit "$_mode")
-    if [ -n "$_lim" ] && [ $((BAT_TEMP / 10)) -ge "$_lim" ]; then
-      _want=mid
-      [ $((BAT_TEMP / 10)) -ge $((_lim + 4)) ] && _want=slow
-      [ "$(power_rank "$_want")" -lt "$(power_rank "$_tier")" ] && _tier="$_want"
+    if [ "$_tier" = inf ] || { [ "$_m" != inf ] && [ "$(tier_watt "$_m")" -lt "$(tier_watt "$_tier")" ]; }; then
+      _tier=$_m
     fi
   fi
   echo "$_tier"
@@ -209,8 +197,10 @@ run_tick() {
   fi
   if [ -n "$_label" ]; then
     if [ "${XJ_DISABLED_HANDLED:-}" != "$_label" ]; then
-      release_charge
-      rear_stop
+      release_charge || return 1
+      battery_suspend || return 1
+      apply_fps 0 || return 1
+      rear_stop || return 1
       apply_default || return 1
       printf '%s' "$_label" > "$CONFDIR/current_mode"
       update_status "$_label"
@@ -262,18 +252,8 @@ run_tick() {
     return 0
   fi
 
-  # 离开旁路时先交还充电节点，再应用功率档。
-  [ -f "$CONFDIR/bypass_active" ] && release_charge
-  # APL：每拍算一次 inf 档电流目标（写 state/apl_target_ma，供 power_apply 读取）。
-  if [ "$USB_CONNECTED" = 1 ] && [ "$WIRELESS_CONNECTED" != 1 ]; then
-    apl_tick
-    power_apply "$(effective_tier)"
-    XJ_POWER_ACTIVE=1
-  elif [ "${XJ_POWER_ACTIVE:-0}" = 1 ] || [ -f "$STATE/apl_target_ma" ]; then
-    rm -f "$STATE/apl_target_ma" "$STATE/apl_urgent" 2>/dev/null
-    power_restore
-    XJ_POWER_ACTIVE=0
-  fi
+  # 离开旁路时先交还充电节点。
+  if [ -f "$CONFDIR/bypass_active" ] || [ -f "$BT_STATE/bypass_current_saved" ]; then release_charge || return 1; fi
 
   _target="default"
   if { [ "$USB_CONNECTED" = 1 ] || [ "$WIRELESS_CONNECTED" = 1 ]; } && [ "$MTK_MODE" != 1 ]; then
@@ -282,6 +262,8 @@ run_tick() {
       _ts=$(json_get time_start 0); _te=$(json_get time_end 0); _tl=$(json_get time_level level_1)
       case "$_ts" in ''|*[!0-9]*) _ts=0 ;; esac
       case "$_te" in ''|*[!0-9]*) _te=0 ;; esac
+      [ "$_ts" -le 23 ] || _ts=0
+      [ "$_te" -le 23 ] || _te=0
       _h=$(date +%H); _h=${_h#0}; [ -n "$_h" ] || _h=0
       if [ "$_ts" -ne 0 ] && [ "$_te" -ne 0 ] && [ "$_ts" -ne "$_te" ]; then
         if [ "$_ts" -gt "$_te" ]; then { [ "$_h" -ge "$_ts" ] || [ "$_h" -lt "$_te" ]; } && _target="$_tl"; else { [ "$_h" -ge "$_ts" ] && [ "$_h" -lt "$_te" ]; } && _target="$_tl"; fi
@@ -343,9 +325,23 @@ run_tick() {
   esac
   _thermal_rc=$?
 
+  # 温控场景已更新后再计算功率，避免切档这一拍沿用上一档的温度线。
+  if [ "$USB_CONNECTED" = 1 ] && [ "$WIRELESS_CONNECTED" != 1 ]; then
+    _m=$(cat "$CONFDIR/current_mode" 2>/dev/null)
+    diag_charge_tick
+    if [ "${BAT_TEMP_VALID:-1}" = 1 ]; then apl_tick; fi
+    power_apply "$(effective_tier)"
+    XJ_POWER_ACTIVE=1
+  elif [ "${XJ_POWER_ACTIVE:-0}" = 1 ] || [ -f "$STATE/apl_target_ma" ]; then
+    rm -f "$STATE/apl_target_ma" "$STATE/apl_urgent" 2>/dev/null
+    power_restore || return 1
+    XJ_POWER_ACTIVE=0
+  fi
+
   [ "$BT_GUARDS_EXTERNAL" = "1" ] || battery_guard_tick
   rear_tick
   publish_tick
+  [ $((TICK_N % 12)) -eq 0 ] && update_module_desc
   return "$_thermal_rc"
 }
 
@@ -360,10 +356,6 @@ if [ "$1" = "--once" ]; then
   exit $?
 fi
 
-# 单实例：mkdir 原子锁 + pid 存活校验。
-# 不用 flock：实测小米15 Pro（Android 17）的 toybox flock 不支持 `flock -n <fd>`，
-# 会报 Bad file descriptor，导致每次启动都被误判为「已有实例」而退出。
-# 也不遍历 /proc 读 cmdline 找同名进程：目标退出时那个读会阻塞（bug-121）。
 mkdir -p "$STATE" 2>/dev/null
 rm -f "$STATE/daemon.lock" 2>/dev/null
 LOCKDIR="$STATE/daemon.lock.d"

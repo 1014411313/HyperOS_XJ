@@ -1,13 +1,13 @@
 #!/system/bin/sh
 # engine/lib/apl.sh — 自适应功率爬坡器（APL）。被 xjdaemon / xjctl source 的库，不单独常驻。
 # 算法整理自「电池解容工具箱」scripts/apl.sh：按 SOC 分段学习硬件真实上限，插枪先回上限，
-# 给不上（塌陷/高温/硬故障）就退让并锁定，稳定后小幅上探，学习档案只增不减。
+# 给不上（塌陷/硬故障）就退让并锁定，稳定后小幅上探，学习档案只增不减。
 # 本库只负责算目标电流，写 $STATE/apl_target_ma 供 power.sh 的 inf 档读取。
 #
 # 安全边界（永不越界）：
 #   目标 ≤ min(DTBO div_max_curr, apl_max_ma, 20000)
 #   温度线：有温控档位温度上限时以其为降档线，低于（上限 − 2℃）才恢复上探；
-#           无档位线（unlimited/default/bypass）退回 DTBO ffc_temp_high（上探 = -8，降档 = -3）
+#           无档位线时按 DTBO ffc_temp_high-8 判断能否上探；温度降流由 power.sh 执行。
 #   CV 段（vbat ≥ vterm-30mV）、未插枪、power_limit≠inf 一律让路（移除目标文件）
 
 APL_LIB=1
@@ -16,11 +16,6 @@ APL_STATE="$STATE/apl_state"
 APL_WARMUP=90
 APL_TEMP_HYST=2
 APL_ADP_DEBOUNCE=3
-# 超过档位温度上限后直接压到的最小功率（W）
-APL_THERMAL_MIN_W=5
-# 温度保护下的斜率：每拍最多降/升目标电流的百分比（xjdaemon 拍约 0.7s）
-APL_TEMP_SLOPE_DOWN=12
-APL_TEMP_SLOPE_UP=8
 
 # 档位→温度上限映射（单一来源，见 lib/apl_temp.sh）
 [ -f "$DIR/lib/apl_temp.sh" ] && . "$DIR/lib/apl_temp.sh"
@@ -289,7 +284,8 @@ apl_tick() {
         apl_last_tier=$_apl_mode
       fi ;;
   esac
-  _apl_lt=$(apl_level_temp_c "$_apl_mode")
+  _apl_lt=""
+  [ "$(json_get charge_gov true)" != false ] && _apl_lt=$(apl_level_temp_c "$_apl_mode")
   if [ -n "$_apl_lt" ]; then
     # 回落到上限-2℃ 以下才回升（死区由 APL_TEMP_HYST 定义）
     _apl_tup=$(( _apl_lt - APL_TEMP_HYST ))
@@ -386,6 +382,8 @@ apl_tick() {
   _apl_grace=0
   [ "$apl_warm_start" -gt 0 ] && [ $(( _apl_now - apl_warm_start )) -lt 40 ] && _apl_grace=1
   _apl_eval_tgt=$_apl_tgt
+  _apl_power_cap=$(apl_num "$(cat "$BT_STATE/power_target_ma" 2>/dev/null)")
+  [ "$_apl_power_cap" -lt 300 ] || [ "$_apl_power_cap" -ge "$_apl_eval_tgt" ] || _apl_eval_tgt=$_apl_power_cap
   [ "$_apl_eval_tgt" -gt "$_apl_cap" ] && _apl_eval_tgt=$_apl_cap
   _apl_want=$(( _apl_eval_tgt * _apl_mv / 1000 ))
   if [ "$_apl_grace" = "0" ] && [ "$_apl_want" -gt 0 ] && [ "$_apl_pw" -lt $(( _apl_want * 55 / 100 )) ]; then
@@ -410,47 +408,12 @@ apl_tick() {
   _apl_locked=0
   [ "$_apl_now" -lt "$apl_lock_until" ] && _apl_locked=1
 
-  # ---- 温度保护（连续调节）----
-  # 温控档位只定义温度阈值：超过上限就按斜率缓慢降功率（最低 5W）；
-  # 回落到「上限 − 2℃」以下再按斜率缓慢回升；两者之间是死区，保持不动，避免一上一下。
-  if [ -n "$_apl_lt" ] && [ "$_apl_tb" -gt "$_apl_lt" ]; then
-    # 模式温度线退出后，旧模式留下的回升上限不再有效。
-    apl_thermal_prev=0
-  fi
-  if [ -n "$_apl_lt" ]; then
-    _apl_min_ma=$(( APL_THERMAL_MIN_W * 1000 / _apl_mv ))
-    [ "$_apl_min_ma" -lt 300 ] && _apl_min_ma=300
-    _apl_new="$_apl_tgt"
-    if [ "$_apl_tb" -gt "$_apl_lt" ]; then
-      # 首次超限时记住降档前的目标，回升阶段只回到该值，避免和上探逻辑叠加
-      if [ "$apl_thermal_prev" -eq 0 ] && [ "$_apl_tgt" -gt "$_apl_min_ma" ]; then
-        apl_thermal_prev="$_apl_tgt"
-      fi
-      _apl_d=$(( _apl_tgt * APL_TEMP_SLOPE_DOWN / 100 ))
-      [ "$_apl_d" -lt 150 ] && _apl_d=150
-      _apl_new=$(( _apl_tgt - _apl_d ))
-      [ "$_apl_new" -lt "$_apl_min_ma" ] && _apl_new="$_apl_min_ma"
-    elif [ "$_apl_locked" = "0" ] && [ "$_apl_tb" -le "$_apl_tup" ]; then
-      _apl_rcap="$_apl_cap"
-      if [ "$apl_thermal_prev" -gt 0 ] && [ "$apl_thermal_prev" -lt "$_apl_cap" ]; then
-        _apl_rcap="$apl_thermal_prev"
-      fi
-      _apl_d=$(( _apl_tgt * APL_TEMP_SLOPE_UP / 100 ))
-      [ "$_apl_d" -lt 100 ] && _apl_d=100
-      _apl_new=$(( _apl_tgt + _apl_d ))
-      [ "$_apl_new" -gt "$_apl_rcap" ] && _apl_new="$_apl_rcap"
-      [ "$_apl_new" -ge "$_apl_rcap" ] && apl_thermal_prev=0
-    fi
-    if [ "$_apl_new" -ne "$_apl_tgt" ]; then
-      _apl_tgt="$_apl_new"
-      blog "APL 电池 ${_apl_tb}℃（上限 ${_apl_lt}℃）→ 目标 ${_apl_tgt}mA"
-    fi
-  fi
+  apl_thermal_prev=0
 
   # 上探温度门限：有档位线时到上限为止；无档位线（无限制/系统默认）退回 DTBO 阈值
   _apl_up_ok=0
   if [ -n "$_apl_lt" ]; then
-    [ "$_apl_tb" -le "$_apl_lt" ] && _apl_up_ok=1
+    [ "${BAT_TEMP:-0}" -le $((_apl_tup * 10)) ] && _apl_up_ok=1
   else
     [ "$_apl_tb" -lt "$_apl_tup" ] && _apl_up_ok=1
   fi

@@ -1,8 +1,10 @@
 package com.hyperos.xj.pages
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,11 +23,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.findRootCoordinates
 import com.hyperos.xj.runtime.LocalAppVisible
 import com.hyperos.xj.runtime.LocalPreviewVisible
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -35,7 +39,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -55,7 +61,6 @@ import com.hyperos.xj.runtime.rearBgGifPreviewPath
 import com.hyperos.xj.runtime.rearDefaultBgGifPreviewPath
 import com.hyperos.xj.runtime.saveAppBackgroundImage
 import com.hyperos.xj.runtime.writeRearBackgroundImage
-import com.hyperos.xj.ui.AccentPalette
 import com.hyperos.xj.ui.ActionButton
 import com.hyperos.xj.ui.AppearanceSettings
 import com.hyperos.xj.ui.ChipSelector
@@ -66,7 +71,6 @@ import com.hyperos.xj.ui.GlassMode
 import com.hyperos.xj.ui.RearScreenPreview
 import com.hyperos.xj.ui.SectionLabel
 import com.hyperos.xj.ui.SliderField
-import com.hyperos.xj.ui.SwatchPalette
 import com.hyperos.xj.ui.ToggleLine
 import com.hyperos.xj.ui.LocalPageInsets
 import com.hyperos.xj.ui.PageHeader
@@ -77,7 +81,6 @@ import com.kyant.backdrop.Backdrop
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
-private val themeOptions = listOf("极光浅色", "全息流体", "暗黑霓虹", "幻彩极光", "赛博霓虹", "熔岩鎏金", "冰川琉璃", "月海流银")
 private val rearFields = listOf("温度", "电量", "电压", "电流", "功率", "状态", "设计容量", "满充容量", "健康度", "循环", "伪装", "协议", "剩余容量", "电池寿命")
 private val rearFieldIds = listOf("temp", "soc", "volt", "cur", "power", "status", "design", "full", "health", "cycle", "fake", "proto", "rm", "soh")
 private val rearConfPaths = listOf(
@@ -159,23 +162,23 @@ fun LookPage(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         PageHeader(status)
-        GlassCard(backdrop, Modifier.fillMaxWidth()) {
-            SectionLabel("主题预设")
-            ThemeSwatchRow(appearance.themeIndex) {
-                onAppearanceChange(appearance.copy(themeIndex = it))
-                pushRearConfig(rearSelected, rearFont, AccentPalette[it.coerceIn(0, AccentPalette.size - 1)])
+        CollapsibleCard(backdrop, title = "主题颜色", initiallyExpanded = true, modifier = Modifier.fillMaxWidth()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                BasicText("调色板", style = TextStyle(color = XJ.TextSecondary, fontSize = 12.sp))
+                Spacer(Modifier.weight(1f))
+                Box(
+                    Modifier
+                        .size(24.dp)
+                        .clip(CircleShape)
+                        .background(appearance.accentColor())
+                        .border(2.dp, Color.White, CircleShape)
+                )
             }
             Spacer(Modifier.height(10.dp))
-            ChipSelector(
-                backdrop = backdrop,
-                title = "预设名称",
-                options = themeOptions,
-                selectedIndex = appearance.themeIndex,
-                onSelect = {
-                    onAppearanceChange(appearance.copy(themeIndex = it))
-                    pushRearConfig(rearSelected, rearFont, AccentPalette[it.coerceIn(0, AccentPalette.size - 1)])
-                }
-            )
+            ThemeWheel(backdrop, appearance.accentColor()) { color ->
+                onAppearanceChange(appearance.copy(themeColorArgb = color.toArgb().toLong() and 0xFFFFFFFFL))
+                pushRearConfig(rearSelected, rearFont, color)
+            }
         }
 
         CollapsibleCard(
@@ -309,8 +312,7 @@ fun LookPage(
             }
         }
 
-        GlassCard(backdrop, Modifier.fillMaxWidth()) {
-            SectionLabel("玻璃与动效")
+        CollapsibleCard(backdrop, title = "玻璃与动效", initiallyExpanded = false, modifier = Modifier.fillMaxWidth()) {
             ChipSelector(
                 backdrop = backdrop,
                 title = "玻璃材质",
@@ -318,89 +320,59 @@ fun LookPage(
                 selectedIndex = if (appearance.glassMode == GlassMode.Liquid) 0 else 1,
                 onSelect = { onAppearanceChange(appearance.copy(glassMode = if (it == 0) GlassMode.Liquid else GlassMode.Frosted)) }
             )
-            ToggleLine(backdrop, "流畅模式", "减少光环与数值动效", appearance.smoothMode, onCheckedChange = { onAppearanceChange(appearance.copy(smoothMode = it)) })
         }
 
-        GlassCard(backdrop, Modifier.fillMaxWidth()) {
-            SectionLabel("缩放与卡片")
+        CollapsibleCard(backdrop, title = "缩放与卡片", initiallyExpanded = false, modifier = Modifier.fillMaxWidth()) {
             SliderField(backdrop, "界面字体缩放", fmt(appearance.fontScale), 0.8f..1.5f, { appearance.fontScale }, { onAppearanceChange(appearance.copy(fontScale = it)) })
             Spacer(Modifier.height(12.dp))
             SliderField(backdrop, "卡片圆角", "${appearance.cardCorner.toInt()}px", 0f..40f, { appearance.cardCorner }, { onAppearanceChange(appearance.copy(cardCorner = it)) })
-            Spacer(Modifier.height(12.dp))
-            SliderField(backdrop, "卡片模糊度", "${appearance.cardBlur.toInt()}", 0f..44f, { appearance.cardBlur }, { onAppearanceChange(appearance.copy(cardBlur = it)) })
-            Spacer(Modifier.height(12.dp))
-            SliderField(backdrop, "卡片扭曲度", "${appearance.cardDistortion.toInt()}", 0f..150f, { appearance.cardDistortion }, { onAppearanceChange(appearance.copy(cardDistortion = it)) })
-            Spacer(Modifier.height(12.dp))
-            ToggleLine(backdrop, "玻璃卡片质感", null, appearance.cardTexture, onCheckedChange = { onAppearanceChange(appearance.copy(cardTexture = it)) })
-            SliderField(backdrop, "卡片透明度", fmt(appearance.cardAlpha), 0f..0.5f, { appearance.cardAlpha }, { onAppearanceChange(appearance.copy(cardAlpha = it)) })
-        }
-
-        GlassCard(backdrop, Modifier.fillMaxWidth()) {
-            SectionLabel("底栏")
-            ToggleLine(backdrop, "隐藏底栏文字", null, appearance.hideBarText, onCheckedChange = { onAppearanceChange(appearance.copy(hideBarText = it)) })
-            SliderField(backdrop, "底栏宽度", "${appearance.barWidth.toInt()}%", 48f..100f, { appearance.barWidth }, { onAppearanceChange(appearance.copy(barWidth = it)) })
-            SliderField(backdrop, "底栏高度", "${appearance.barHeight.toInt()}px", 44f..84f, { appearance.barHeight }, { onAppearanceChange(appearance.copy(barHeight = it)) })
-            SliderField(backdrop, "底栏透明度", fmt(appearance.barAlpha), 0.04f..0.6f, { appearance.barAlpha }, { onAppearanceChange(appearance.copy(barAlpha = it)) })
-            SliderField(backdrop, "底栏模糊度", "${appearance.barBlur.toInt()}", 0f..20f, { appearance.barBlur }, { onAppearanceChange(appearance.copy(barBlur = it)) })
-            SliderField(backdrop, "底栏纯色背景度", fmt(appearance.barSolid), 0f..1f, { appearance.barSolid }, { onAppearanceChange(appearance.copy(barSolid = it)) })
-            Spacer(Modifier.height(8.dp))
-            BasicText("底栏纯色背景颜色", style = TextStyle(color = XJ.TextSecondary, fontSize = 12.sp))
-            Spacer(Modifier.height(6.dp))
-            SwatchRow(SwatchPalette, appearance.barColorIndex) { onAppearanceChange(appearance.copy(barColorIndex = it)) }
-        }
-
-        GlassCard(backdrop, Modifier.fillMaxWidth()) {
-            SectionLabel("背景")
-            ToggleLine(backdrop, "自定义背景", "从相册选择一张图片", appearance.customBg, onCheckedChange = { onAppearanceChange(appearance.copy(customBg = it)) })
-            if (!appearance.customBg) {
-                Spacer(Modifier.height(6.dp))
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    listOf("青柠凝露", "冰蓝凝露", "紫晶凝露", "琥珀凝露").forEachIndexed { index, label ->
-                        GlassChip(
-                            backdrop = backdrop,
-                            label = label,
-                            selected = appearance.wallpaperIndex == index,
-                            onClick = { onAppearanceChange(appearance.copy(wallpaperIndex = index)) }
-                        )
-                    }
-                }
-            } else {
+            if (appearance.glassMode == GlassMode.Liquid) {
                 Spacer(Modifier.height(12.dp))
-                ActionButton(
-                    backdrop = backdrop,
-                    text = if (appearance.bgImage != null) "更换相册图片" else "选择相册图片",
-                    onClick = {
-                        scope.launch {
-                            pickBackgroundImageBytes()?.let { bytes ->
-                                decodeBackgroundImage(bytes)?.let { bitmap ->
-                                    onAppearanceChange(currentAppearance.copy(bgImage = bitmap, bgKind = "image", bgPath = ""))
-                                    // 落盘：重启后 bgImage（内存位图）消失，靠 bgPath 继续显示用户图
-                                    val saved = saveAppBackgroundImage(bitmap)
-                                        if (saved != null) {
-                                            onAppearanceChange(currentAppearance.copy(bgImage = bitmap, bgKind = "image", bgPath = saved))
-                                        }
+                SliderField(backdrop, "卡片模糊度", "${appearance.cardBlur.toInt()}", 0f..44f, { appearance.cardBlur }, { onAppearanceChange(appearance.copy(cardBlur = it)) })
+                Spacer(Modifier.height(12.dp))
+                SliderField(backdrop, "卡片扭曲度", "${appearance.cardDistortion.toInt()}", 0f..150f, { appearance.cardDistortion }, { onAppearanceChange(appearance.copy(cardDistortion = it)) })
+            }
+            if (appearance.glassMode == GlassMode.Frosted) {
+                Spacer(Modifier.height(12.dp))
+                SliderField(backdrop, "毛玻璃模糊度", "${appearance.frostedBlur.toInt()}", 0f..60f, { appearance.frostedBlur }, { onAppearanceChange(appearance.copy(frostedBlur = it)) })
+                Spacer(Modifier.height(12.dp))
+                SliderField(backdrop, "毛玻璃折射强度", "${appearance.frostedRefract.toInt()}", 0f..40f, { appearance.frostedRefract }, { onAppearanceChange(appearance.copy(frostedRefract = it)) })
+            }
+        }
+
+        CollapsibleCard(backdrop, title = "底栏", initiallyExpanded = false, modifier = Modifier.fillMaxWidth()) {
+            ToggleLine(backdrop, "隐藏底栏文字", null, appearance.hideBarText, onCheckedChange = { onAppearanceChange(appearance.copy(hideBarText = it)) })
+            Spacer(Modifier.height(12.dp))
+            SliderField(backdrop, "底栏宽度", "${appearance.barWidth.toInt()}%", 48f..100f, { appearance.barWidth }, { onAppearanceChange(appearance.copy(barWidth = it)) })
+            Spacer(Modifier.height(12.dp))
+            SliderField(backdrop, "底栏高度", "${appearance.barHeight.toInt()}px", 44f..84f, { appearance.barHeight }, { onAppearanceChange(appearance.copy(barHeight = it)) })
+            Spacer(Modifier.height(12.dp))
+            SliderField(backdrop, "底栏透明度", fmt(appearance.barAlpha), 0.04f..0.6f, { appearance.barAlpha }, { onAppearanceChange(appearance.copy(barAlpha = it)) })
+            Spacer(Modifier.height(12.dp))
+            SliderField(backdrop, "底栏模糊度", "${appearance.barBlur.toInt()}", 0f..20f, { appearance.barBlur }, { onAppearanceChange(appearance.copy(barBlur = it)) })
+        }
+
+        CollapsibleCard(backdrop, title = "背景", initiallyExpanded = false, modifier = Modifier.fillMaxWidth()) {
+            Spacer(Modifier.height(12.dp))
+            ActionButton(
+                backdrop = backdrop,
+                text = if (appearance.bgImage != null) "更换相册图片" else "选择相册图片",
+                onClick = {
+                    scope.launch {
+                        pickBackgroundImageBytes()?.let { bytes ->
+                            decodeBackgroundImage(bytes)?.let { bitmap ->
+                                onAppearanceChange(currentAppearance.copy(bgImage = bitmap, customBg = true, bgKind = "image", bgPath = ""))
+                                // 落盘：重启后 bgImage（内存位图）消失，靠 bgPath 继续显示用户图
+                                val saved = saveAppBackgroundImage(bitmap)
+                                if (saved != null) {
+                                    onAppearanceChange(currentAppearance.copy(bgImage = bitmap, customBg = true, bgKind = "image", bgPath = saved))
                                 }
                             }
                         }
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                )
-                if (appearance.bgImage != null) {
-                    Spacer(Modifier.height(8.dp))
-                    ActionButton(
-                        backdrop = backdrop,
-                        text = "清除图片",
-                        onClick = { onAppearanceChange(currentAppearance.copy(bgImage = null, customBg = false, bgKind = "video", bgPath = "")) },
-                        modifier = Modifier.fillMaxWidth(),
-                        secondary = true
-                    )
-                }
-            }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
             Spacer(Modifier.height(12.dp))
             ActionButton(
                 backdrop = backdrop,
@@ -415,7 +387,7 @@ fun LookPage(
                 },
                 modifier = Modifier.fillMaxWidth()
             )
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(12.dp))
             ActionButton(
                 backdrop = backdrop,
                 text = if (appearance.bgKind == "video") "更换背景视频" else "选择背景视频",
@@ -430,13 +402,13 @@ fun LookPage(
                 modifier = Modifier.fillMaxWidth(),
                 secondary = true
             )
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(12.dp))
             ActionButton(
                 backdrop = backdrop,
                 text = "恢复默认背景",
                 onClick = {
-                    onAppearanceChange(currentAppearance.copy(bgImage = null, customBg = false, bgKind = "video", bgPath = ""))
-                    showToast("已恢复默认视频背景")
+                    onAppearanceChange(currentAppearance.copy(bgImage = null, customBg = true, bgKind = "image", bgPath = ""))
+                    showToast("已恢复默认背景")
                 },
                 modifier = Modifier.fillMaxWidth(),
                 secondary = true
@@ -461,47 +433,80 @@ fun LookPage(
 }
 
 @Composable
-private fun ThemeSwatchRow(selectedIndex: Int, onSelect: (Int) -> Unit) {
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        AccentPalette.forEachIndexed { index, color ->
-            Box(
-                Modifier
-                    .size(28.dp)
-                    .clip(CircleShape)
-                    .background(color)
-                    .border(
-                        width = if (selectedIndex == index) 3.dp else 0.dp,
-                        color = Color.White,
-                        shape = CircleShape
-                    )
-                    .clickable { onSelect(index) }
+private fun ThemeWheel(backdrop: Backdrop, current: Color, onPick: (Color) -> Unit) {
+    val hsv = rgbToHsv(current)
+    var hue by remember { mutableFloatStateOf(hsv[0]) }
+    var sat by remember { mutableFloatStateOf(hsv[1]) }
+    var value by remember { mutableFloatStateOf(hsv[2].coerceIn(0.2f, 1f)) }
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Canvas(
+            Modifier
+                .size(180.dp)
+                .pointerInput(Unit) {
+                    detectTapGestures { pos ->
+                        val radius = size.width / 2f
+                        val dx = pos.x - radius
+                        val dy = pos.y - radius
+                        sat = (kotlin.math.hypot(dx.toDouble(), dy.toDouble()).toFloat() / radius).coerceIn(0f, 1f)
+                        var h = Math.toDegrees(kotlin.math.atan2(dy.toDouble(), dx.toDouble())).toFloat()
+                        if (h < 0f) h += 360f
+                        hue = h % 360f
+                        onPick(hsvColor(hue, sat, value))
+                    }
+                }
+        ) {
+            val radius = size.minDimension / 2f
+            drawCircle(
+                brush = Brush.sweepGradient(List(361) { hsvColor(it.toFloat(), 1f, 1f) }),
+                radius = radius
+            )
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(Color.White, Color.Transparent),
+                    center = center,
+                    radius = radius
+                ),
+                radius = radius
             )
         }
+        Spacer(Modifier.height(10.dp))
+        SliderField(backdrop, "颜色明度", fmt(value), 0.2f..1f, { value }, { v ->
+            value = v
+            onPick(hsvColor(hue, sat, v))
+        })
     }
 }
 
-@Composable
-private fun SwatchRow(
-    colors: List<Color>,
-    selectedIndex: Int,
-    onSelect: (Int) -> Unit
-) {
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        colors.forEachIndexed { index, color ->
-            Box(
-                Modifier
-                    .size(28.dp)
-                    .clip(CircleShape)
-                    .background(color)
-                    .border(
-                        width = if (selectedIndex == index) 3.dp else 0.dp,
-                        color = Color.White,
-                        shape = CircleShape
-                    )
-                    .clickable { onSelect(index) }
-            )
-        }
+private fun hsvColor(h: Float, s: Float, v: Float): Color {
+    val c = v * s
+    val x = c * (1f - kotlin.math.abs((h / 60f) % 2f - 1f))
+    val m = v - c
+    val (r, g, b) = when {
+        h < 60f -> Triple(c, x, 0f)
+        h < 120f -> Triple(x, c, 0f)
+        h < 180f -> Triple(0f, c, x)
+        h < 240f -> Triple(0f, x, c)
+        h < 300f -> Triple(x, 0f, c)
+        else -> Triple(c, 0f, x)
     }
+    return Color((r + m).coerceIn(0f, 1f), (g + m).coerceIn(0f, 1f), (b + m).coerceIn(0f, 1f))
+}
+
+private fun rgbToHsv(color: Color): FloatArray {
+    val r = color.red
+    val g = color.green
+    val b = color.blue
+    val max = maxOf(r, g, b)
+    val min = minOf(r, g, b)
+    val d = max - min
+    var h = when {
+        d == 0f -> 0f
+        max == r -> 60f * (((g - b) / d) % 6f)
+        max == g -> 60f * (((b - r) / d) + 2f)
+        else -> 60f * (((r - g) / d) + 4f)
+    }
+    if (h < 0f) h += 360f
+    return floatArrayOf(h % 360f, if (max == 0f) 0f else d / max, max)
 }
 
 private fun fmt(value: Float): String {

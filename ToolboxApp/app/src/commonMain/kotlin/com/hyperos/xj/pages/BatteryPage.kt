@@ -61,6 +61,8 @@ fun BatteryPage(
     var pps by remember(status.freepps) { mutableStateOf(status.freepps) }
     var ppsBusy by remember { mutableStateOf(false) }
     var cloudBlock by remember { mutableStateOf(status.cloudGuard) }
+    var joyoseClean by remember { mutableStateOf(status.joyoseClean) }
+    var cutoffInput by remember { mutableStateOf("") }
     var apl by remember { mutableStateOf(status.aplEnable) }
     var dtboStatus by remember { mutableStateOf("读取中") }
     var dtboStatusDetail by remember { mutableStateOf("") }
@@ -316,8 +318,7 @@ fun BatteryPage(
                 )
             }
         } else {
-            GlassCard(backdrop, Modifier.fillMaxWidth()) {
-                SectionLabel("电池解容")
+            CollapsibleCard(backdrop, title = "电池解容", initiallyExpanded = true, modifier = Modifier.fillMaxWidth()) {
                 ToggleLine(backdrop, "电池解容", "挂载 BAA，防低电量锁容", unlock, onCheckedChange = { unlock = it; saveBattery("unlock", if (it) "on" else "off", "电池解容") })
                 ToggleLine(backdrop, "公版 PPS 解锁", "FreePPS · Seyud，拔线后应用", pps, onCheckedChange = { enabled ->
                     if (!ppsBusy) {
@@ -338,7 +339,21 @@ fun BatteryPage(
                     }
                 })
                 ToggleLine(backdrop, "云控屏蔽", "拦截云端下发与巡检隔离", cloudBlock, onCheckedChange = { cloudBlock = it; saveBattery("cloud", if (it) "on" else "off", "云控屏蔽") })
+                ToggleLine(backdrop, "Joyose 云控屏蔽", "屏蔽联网，每 30 分钟清理数据", joyoseClean, onCheckedChange = { joyoseClean = it; saveBattery("joyose", if (it) "on" else "off", "Joyose 云控屏蔽") })
                 ToggleLine(backdrop, "自适应功率爬坡 APL", "全速档下动态上探", apl, onCheckedChange = { apl = it; saveBattery("apl", if (it) "on" else "off", "自适应功率爬坡 APL") })
+                Spacer(Modifier.height(12.dp))
+                ActionButton(
+                    backdrop = backdrop,
+                    text = "修复健康度显示",
+                    onClick = {
+                        scope.launch {
+                            val r = bridge.execResult(Engine.batteryRaw("health"))
+                            showToast(if (r.success) "健康度显示已修复" else "修复失败")
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    secondary = true
+                )
             }
 
             CollapsibleCard(backdrop, title = "DTBO", initiallyExpanded = false, modifier = Modifier.fillMaxWidth()) {
@@ -619,8 +634,7 @@ fun BatteryPage(
 
             }
 
-            GlassCard(backdrop, Modifier.fillMaxWidth()) {
-                SectionLabel("循环次数伪装")
+            CollapsibleCard(backdrop, title = "循环次数伪装", initiallyExpanded = false, modifier = Modifier.fillMaxWidth()) {
                 ValueRow("伪装循环次数", status.cycleFake.ifBlank { "未设置" })
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     GlassInput(cycleTarget, { cycleTarget = it }, "输入目标次数", Modifier.weight(1f), numeric = true)
@@ -643,8 +657,43 @@ fun BatteryPage(
                 )
             }
 
-            GlassCard(backdrop, Modifier.fillMaxWidth()) {
-                SectionLabel("关机电压")
+            CollapsibleCard(backdrop, title = "充满断充", initiallyExpanded = false, modifier = Modifier.fillMaxWidth()) {
+                ValueRow("当前设置", if (status.chgCutoff.isBlank()) "未设置" else "${status.chgCutoff} · ${cutoffPhaseText(status.chgCutoffPhase)}")
+                GlassInput(cutoffInput, { cutoffInput = it }, "输入 HH:MM（00:01~08:00）")
+                Spacer(Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    ActionButton(
+                        backdrop,
+                        "应用",
+                        {
+                            scope.launch {
+                                val r = bridge.execResult(Engine.batteryRaw("cutoff", cutoffInput))
+                                showToast(if (r.success) "已设置断充 $cutoffInput" else "失败：时间需 00:01~08:00")
+                            }
+                        },
+                        Modifier.weight(1f)
+                    )
+                    ActionButton(
+                        backdrop,
+                        "关闭",
+                        {
+                            scope.launch {
+                                val r = bridge.execResult(Engine.batteryRaw("cutoff", "off"))
+                                showToast(if (r.success) "断充已关闭" else "失败：关闭")
+                            }
+                        },
+                        Modifier.weight(1f),
+                        secondary = true
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                BasicText(
+                    text = "充满后按设定时长断开充电，拔插恢复；电量 ≤30% 自动恢复。",
+                    style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp)
+                )
+            }
+
+            CollapsibleCard(backdrop, title = "关机电压", initiallyExpanded = false, modifier = Modifier.fillMaxWidth()) {
                 ValueRow("关机电压", "2800~3500 mV · ${status.termV.ifBlank { "未设置" }}")
                 GlassInput(shutdownVoltage, { shutdownVoltage = it }, "输入关机电压 mV", numeric = true)
                 Spacer(Modifier.height(10.dp))
@@ -724,6 +773,12 @@ private data class DtboImage(val path: String, val bytes: Long) {
             bytes >= 1_024 -> "${tenthOf(bytes, 1_024)} KB"
             else -> "$bytes B"
         }
+}
+
+private fun cutoffPhaseText(phase: String): String = when (phase) {
+    "timing" -> "计时中"
+    "cutoff" -> "已断充"
+    else -> "等待充满"
 }
 
 private fun tenthOf(bytes: Long, unit: Long): String {

@@ -11,8 +11,10 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.BasicText
@@ -155,29 +157,33 @@ fun LiquidGauge(
         }
 
         Column(
-            Modifier.width(gaugeSize * 0.64f),
+            Modifier.width(gaugeSize * 0.72f),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            BasicText(
-                text = powerText,
-                maxLines = 1,
-                style = TextStyle(
-                    color = Color.White,
-                    fontSize = powerSize,
-                    fontWeight = FontWeight.Light,
-                    letterSpacing = 0.sp,
-                    textAlign = TextAlign.Center
+            Row(verticalAlignment = Alignment.Bottom) {
+                BasicText(
+                    text = powerText,
+                    maxLines = 1,
+                    style = TextStyle(
+                        color = Color.White,
+                        fontSize = powerSize,
+                        fontWeight = FontWeight.Light,
+                        letterSpacing = 0.sp,
+                        textAlign = TextAlign.Center
+                    )
                 )
-            )
-            BasicText(
-                text = unitText,
-                style = TextStyle(
-                    color = Color.White.copy(alpha = 0.55f),
-                    fontSize = unitSize,
-                    letterSpacing = (0.08f * designUnit * 14f).sp
+                Spacer(Modifier.width((4f * designUnit).dp))
+                BasicText(
+                    text = unitText,
+                    modifier = Modifier.padding(bottom = (6f * designUnit).dp),
+                    style = TextStyle(
+                        color = Color.White.copy(alpha = 0.55f),
+                        fontSize = unitSize,
+                        letterSpacing = 0.sp
+                    )
                 )
-            )
-            Spacer(Modifier.height((5f * designUnit).dp))
+            }
+            Spacer(Modifier.height((8f * designUnit).dp))
             BasicText(
                 text = "电量 ${(animatedProgress * 100f).toInt()}%",
                 style = TextStyle(

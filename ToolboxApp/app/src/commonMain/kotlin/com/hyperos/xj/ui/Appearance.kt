@@ -26,6 +26,7 @@ val SwatchPalette = listOf(
 
 data class AppearanceSettings(
     val themeIndex: Int = 0,
+    val themeColorArgb: Long = 0L,
     val glassMode: GlassMode = GlassMode.Liquid,
     val fontScale: Float = 1f,
     val cardScale: Float = 1f,
@@ -34,7 +35,8 @@ data class AppearanceSettings(
     val cardBlur: Float = 2f,
     val cardDistortion: Float = 121f,
     val cardTexture: Boolean = true,
-    val smoothMode: Boolean = false,
+    val frostedBlur: Float = 38f,
+    val frostedRefract: Float = 20f,
     val hideBarText: Boolean = false,
     val barWidth: Float = 84f,
     val barHeight: Float = 60f,
@@ -44,9 +46,9 @@ data class AppearanceSettings(
     val barBlur: Float = 3f,
     val wallpaperIndex: Int = 0,
     val bgBlur: Float = 2f,
-    val customBg: Boolean = false,
+    val customBg: Boolean = true,
     val bgImage: ImageBitmap? = null,
-    val bgKind: String = "video",   // wallpaper / image / gif / video
+    val bgKind: String = "image",   // wallpaper / image / gif / video
     val bgPath: String = "",        // 空 = 用 APK 内置默认背景；否则是 gif/video/图片的绝对路径
 )
 
@@ -55,4 +57,5 @@ val LocalAppearance = staticCompositionLocalOf { AppearanceSettings() }
 val LocalAccentColor = staticCompositionLocalOf { AccentPalette[0] }
 
 fun AppearanceSettings.accentColor(): Color =
-    AccentPalette[themeIndex.coerceIn(0, AccentPalette.size - 1)]
+    if (themeColorArgb != 0L) Color(themeColorArgb)
+    else AccentPalette[themeIndex.coerceIn(0, AccentPalette.size - 1)]

@@ -91,6 +91,7 @@ class Sandbox:
             d.mkdir(parents=True)
         self.call_log = self.root / "calls.log"
         self.cfg_log = self.root / "cfg.log"
+        self.pss_state = self.root / "pss_state"
         self.baa_state = self.root / "baa_state"
         self.baa_state.write_text("inactive\n")
 
@@ -109,14 +110,14 @@ class Sandbox:
         (self.battery / "voltage_now").write_text("3900000")
 
         for name, body in {
-            "pm": 'echo "pm $*" >> "$CALL_LOG"\n',
             "reboot": 'echo "reboot $*" >> "$CALL_LOG"\n',
             "svc": 'echo "svc $*" >> "$CALL_LOG"\n',
             "setprop": 'echo "setprop $*" >> "$CALL_LOG"\n',
             "mount": 'echo "mount $*" >> "$CALL_LOG"\n',
             "umount": 'echo "umount $*" >> "$CALL_LOG"\n',
             "chcon": 'echo "chcon $*" >> "$CALL_LOG"\n',
-            "dumpsys": 'echo "dumpsys $*" >> "$CALL_LOG"\n',
+            "pm": 'echo "pm $*" >> "$CALL_LOG"\nif [ "${PM_FAIL:-0}" = 0 ]; then if [ "$1" = disable ]; then echo PowerSaveService > "$PSS_STATE"; elif [ "$1" = enable ]; then : > "$PSS_STATE"; fi; exit 0; else exit 1; fi\n',
+            "dumpsys": 'echo "dumpsys $*" >> "$CALL_LOG"\nif [ "$1" = package ]; then if [ "${DUMPSYS_TRUNCATED:-0}" = 1 ]; then echo "disabledComponents:"; else echo "disabledComponents:"; cat "$PSS_STATE" 2>/dev/null; echo "enabledComponents:"; fi; fi\n',
         }.items():
             write_exe(self.bin / name, "#!/bin/sh\n" + body + "exit 0\n")
         self.write_cfg()
@@ -131,6 +132,7 @@ class Sandbox:
         env.update({
             "CALL_LOG": str(self.call_log),
             "CFG_LOG": str(self.cfg_log),
+            "PSS_STATE": str(self.pss_state),
             "FAKE_BAA_MOUNT_OK": "1",
         })
         return env
@@ -246,7 +248,7 @@ echo invalid-now=$(test -f "$BAT_STATE/low_batt" && echo 1 || echo 0)
 
 
 def sampled_voltage_case(sb):
-    # 正常电量不额外读节点，但已采 BAT_VOLT 低于 term_v 仍必须关机。
+    # 正常电量不触发用户自定义关机电压，即使节点或当前样本低于阈值。
     sb.write_cfg(term_v="3400", shutdown_check_soc="20", shutdown_exit_soc="25")
     out = sb.run(r'''
 printf 3900000 > "$BGU_BATT_DIR/voltage_now"
@@ -254,19 +256,18 @@ tick 0 1 0 50 0 3300000
 echo sampled-reboot=$(grep -c "^reboot" "$CALL_LOG" || true)
 echo sampled-low=$(test -f "$BAT_STATE/low_batt" && echo 1 || echo 0)
 echo sampled-poll=[$(battery_poll_interval)]
-# 节点低但采样值正常：正常电量不得因主动读节点误关机
 printf 3300000 > "$BGU_BATT_DIR/voltage_now"
 tick 2 0 0 50 0 3900000
-echo node-not-read=$(grep -c "^reboot" "$CALL_LOG" || true)
+echo node-low-reboot=$(grep -c "^reboot" "$CALL_LOG" || true)
 printf 0 > "$BGU_BATT_DIR/voltage_now"
 tick 4 0 0 50 0 0
-echo invalid-volt=$(grep -c "^reboot" "$CALL_LOG" || true)
+echo invalid-volt-reboot=$(grep -c "^reboot" "$CALL_LOG" || true)
 ''')
-    assert "sampled-reboot=1" in out, out
+    assert "sampled-reboot=0" in out, out
     assert "sampled-low=0" in out, out
     assert "sampled-poll=[]" in out, out
-    assert "node-not-read=1" in out, out
-    assert "invalid-volt=1" in out, out
+    assert "node-low-reboot=0" in out, out
+    assert "invalid-volt-reboot=0" in out, out
 
 
 def config_change_case(sb):
@@ -327,7 +328,36 @@ echo invalid-term-poll=[$(battery_poll_interval)]
 
 
 def pss_case(sb):
+    # 解容关闭时 boot 不禁用 PSS，开机守护拍仅归还模块所有权。
+    sb.write_cfg(unlock="0", pss_low_soc="0")
+    out = sb.run(r'''
+battery_boot
+echo boot-pm=$(test -f "$CALL_LOG" && grep -c "^pm disable" "$CALL_LOG" || echo 0)
+tick 0 1 0 15 0 3900000
+echo idle-pm=$(test -f "$CALL_LOG" && grep -c "^pm disable" "$CALL_LOG" || echo 0)
+''')
+    assert "boot-pm=0" in out, out
+    assert "idle-pm=0" in out, out
+
+    # 解容关闭后动态模式也恢复由模块禁用的 PSS。
+    sb.write_cfg(unlock="1", pss_low_soc="20", pss_low_hyst="5")
+    out = sb.run(r'''
+tick 0 1 0 15 0 3900000
+echo owned=$(test -f "$BAT_STATE/pss_disabled_by_module" && echo 1 || echo 0)
+sed -i 's/^unlock=.*/unlock=0/' "$BT_CONF"
+tick 1 1 0 50 0 3900000
+echo restored=$(test -f "$BAT_STATE/pss_disabled_by_module" && echo 0 || echo 1)
+echo enabled=$(grep -c "^pm enable" "$CALL_LOG" || true)
+''')
+    assert "owned=1" in out, out
+    assert "restored=1" in out, out
+    assert "enabled=1" in out, out
+
     # 静态模式：不在每拍触发 pm/dumpsys，交给开机/开关一次性处理。
+    sb.call_log.write_text("")
+    sb.pss_state.write_text("")
+    (sb.state / "pss_dynamic").unlink(missing_ok=True)
+    (sb.state / "pss_disabled_by_module").unlink(missing_ok=True)
     sb.write_cfg(pss_low_soc="0")
     out = sb.run(r'''
 tick 0 1 0 15 0 3900000
@@ -354,6 +384,104 @@ echo total-pm=$(grep -c "^pm " "$CALL_LOG" || true)
     assert "hold-count=1" in out, out
     assert "enable-count=1" in out, out
     assert "total-pm=2" in out, out
+
+    # pm 失败时不得写入或清除模块所有权标记。
+    failure = sb.run(r'''
+rm -f "$BAT_STATE/pss_disabled_by_module"
+rm -f "$PSS_STATE"
+pm() { return 1; }
+pss_disable; echo disable-rc=$?
+echo disable-owner=$(cat "$BAT_STATE/pss_disabled_by_module" 2>/dev/null)
+printf '1' > "$BAT_STATE/pss_disabled_by_module"
+printf 'PowerSaveService' > "$PSS_STATE"
+pss_enable; echo enable-rc=$?
+echo enable-owner=$(cat "$BAT_STATE/pss_disabled_by_module" 2>/dev/null)
+''')
+    assert "disable-rc=1" in failure, failure
+    assert "disable-owner=" in failure, failure
+    assert "enable-rc=1" in failure, failure
+    assert "enable-owner=1" in failure, failure
+    # 禁用命令失败时，不写入所有权标记。
+    sb.pss_state.write_text("")
+    sb.call_log.write_text("")
+    (sb.state / "pss_disabled_by_module").unlink(missing_ok=True)
+    out = sb.run(r'''
+pm() { return 1; }
+pss_disable; echo disable-rc=$?
+echo disable-owner=$(cat "$BAT_STATE/pss_disabled_by_module" 2>/dev/null)
+''')
+    assert "disable-rc=1" in out, out
+    assert "disable-owner=" in out, out
+    sb.pss_state.write_text("")
+    out = sb.run(r'''
+pss_state() { return 1; }
+pm() { echo unexpected-pm; }
+pss_disable; echo truncated-state-rc=$?
+echo truncated-owner=$(cat "$BAT_STATE/pss_disabled_by_module" 2>/dev/null)
+''')
+    assert "truncated-state-rc=1" in out, out
+    assert "truncated-owner=" in out, out
+    out = sb.run(r'''
+pm() { return 1; }
+pss_state() { n=$(cat "$BAT_STATE/pss_reads" 2>/dev/null); n=$((n + 1)); echo "$n" > "$BAT_STATE/pss_reads"; [ "$n" -eq 2 ] && return 1; echo enabled; }
+pss_disable; echo failed-state-rc=$?
+echo failed-state-owner=$(cat "$BAT_STATE/pss_disabled_by_module" 2>/dev/null)
+echo pending=$(test -e "$BAT_STATE/pss_disable_pending" && echo 1 || echo 0)
+''')
+    assert "failed-state-rc=1" in out, out
+    assert "failed-state-owner=" in out, out
+    assert "pending=0" in out, out
+    (sb.state / "pss_reads").unlink(missing_ok=True)
+    out = sb.run(r'''
+pm() { echo PowerSaveService > "$PSS_STATE"; return 0; }
+pss_state() { n=$(cat "$BAT_STATE/pss_reads" 2>/dev/null); n=$((n + 1)); echo "$n" > "$BAT_STATE/pss_reads"; [ "$n" -eq 2 ] && return 1; [ -s "$PSS_STATE" ] && echo disabled || echo enabled; }
+pss_disable; echo first-rc=$?
+echo pending-first=$(cat "$BAT_STATE/pss_disable_pending" 2>/dev/null)
+echo owner-first=$(cat "$BAT_STATE/pss_disabled_by_module" 2>/dev/null)
+pss_disable; echo retry-rc=$?
+echo pending-retry=$(test -e "$BAT_STATE/pss_disable_pending" && echo 1 || echo 0)
+echo owner-retry=$(test -e "$BAT_STATE/pss_disabled_by_module" && echo 1 || echo 0)
+''')
+    assert "first-rc=1" in out, out
+    assert "pending-first=issued" in out, out
+    assert "owner-first=" in out, out
+    assert "retry-rc=0" in out, out
+    assert "pending-retry=0" in out, out
+    assert "owner-retry=1" in out, out
+
+    # 动态模式不能恢复从未由模块禁用的 PSS。
+    sb.write_cfg(pss_low_soc="20", pss_low_hyst="5")
+    sb.pss_state.write_text("PowerSaveService")
+    sb.call_log.write_text("")
+    (sb.state / "pss_dynamic").unlink(missing_ok=True)
+    (sb.state / "pss_disabled_by_module").unlink(missing_ok=True)
+    out = sb.run(r'''
+tick 0 1 0 50 0 3900000
+echo predisabled-enable=$(grep -c "^pm enable" "$CALL_LOG" || true)
+echo predisabled-mark=$(test -e "$BAT_STATE/pss_disabled_by_module" && echo 1 || echo 0)
+''')
+    assert "predisabled-enable=0" in out, out
+    assert "predisabled-mark=0" in out, out
+    assert (sb.state / "pss_dynamic").read_text() == "external_disabled"
+
+    # 回升阈值封顶100%，高合法进入阈值仍可退出低电状态。
+    sb.write_cfg(pss_low_soc="98", pss_low_hyst="5")
+    sb.pss_state.write_text("")
+    sb.call_log.write_text("")
+    (sb.state / "pss_dynamic").unlink(missing_ok=True)
+    (sb.state / "pss_disabled_by_module").unlink(missing_ok=True)
+    out = sb.run(r'''
+BGU_CFG_LOADED=0
+tick 0 1 0 98 0 3900000
+echo enter-low=$(cat "$BAT_STATE/pss_dynamic")
+tick 1 0 0 99 0 3900000
+echo hold-low=$(cat "$BAT_STATE/pss_dynamic")
+tick 2 0 0 100 0 3900000
+echo exit-high=$(cat "$BAT_STATE/pss_dynamic")
+''')
+    assert "enter-low=disabled" in out, out
+    assert "hold-low=disabled" in out, out
+    assert "exit-high=enabled" in out, out
 
 
 def frequency_case(sb):
@@ -415,6 +543,85 @@ tick 2 1 0 50 0 3900000
 echo after-toggle=$(grep -c "^cloud_tick" "$CALL_LOG" || true)
 ''')
     assert "after-toggle=1" in out, out
+
+
+def cloud_restore_failure_case(sb):
+    sb.write_cfg(cloud_guard="1")
+    # Isolate cloud restore from the Android paths by remapping its constant.
+    cloud_dir = sb.root / "cloud"
+    quarantine = sb.state / "cloud_quarantine"
+    cloud_dir.mkdir()
+    quarantine.mkdir()
+    source = cloud_dir / "config.json"
+    source.write_text("new-cloud-payload")
+    original = sb.root / "missing-original" / "original.json"
+    parked = quarantine / "20261122_010101__config.json"
+    parked.write_text("payload")
+    src_log = quarantine / "_sources.log"
+    src_log.write_text(f"{parked.name}|{original}" + chr(10))
+    out = sb.run(r'''
+CLOUD_DIRS="$TEST_CLOUD_DIR"
+CLOUD_QDIR="$TEST_QUARANTINE"
+ln() { echo "$*" >> "$CALL_LOG"; return 1; }
+cloud_restore; echo restore-rc=$?
+echo retained=$(test -f "$CLOUD_QDIR/20261122_010101__config.json" && echo 1 || echo 0)
+echo source=$(cat "$TEST_CLOUD_DIR/config.json")
+''', TEST_CLOUD_DIR=str(cloud_dir), TEST_QUARANTINE=str(quarantine))
+    assert "restore-rc=1" in out, out
+    assert "retained=1" in out, out
+    assert "source=new-cloud-payload" in out, out
+    assert not sb.call_log.exists() or not sb.call_log.read_text(), sb.call_log.read_text()
+
+    # The exact original path can be recreated while the file is quarantined.
+    source.write_text("new-cloud-payload")
+    src_log.write_text(f"{parked.name}|{source}" + chr(10))
+    out = sb.run(r'''
+CLOUD_DIRS="$TEST_CLOUD_DIR"
+CLOUD_QDIR="$TEST_QUARANTINE"
+cloud_restore; echo collision-rc=$?
+echo retained=$(test -f "$CLOUD_QDIR/20261122_010101__config.json" && echo 1 || echo 0)
+echo source=$(cat "$TEST_CLOUD_DIR/config.json")
+''', TEST_CLOUD_DIR=str(cloud_dir), TEST_QUARANTINE=str(quarantine))
+    assert "collision-rc=1" in out, out
+    assert "retained=1" in out, out
+    assert "source=new-cloud-payload" in out, out
+
+    source.unlink()
+    out = sb.run(r'''
+CLOUD_DIRS="$TEST_CLOUD_DIR"
+CLOUD_QDIR="$TEST_QUARANTINE"
+ln() { printf race > "$2"; return 1; }
+cloud_restore; echo race-rc=$?
+echo retained=$(test -f "$CLOUD_QDIR/20261122_010101__config.json" && echo 1 || echo 0)
+echo raced=$(cat "$TEST_CLOUD_DIR/config.json")
+''', TEST_CLOUD_DIR=str(cloud_dir), TEST_QUARANTINE=str(quarantine))
+    assert "race-rc=1" in out, out
+    assert "retained=1" in out, out
+    assert "raced=race" in out, out
+
+    parked.write_text("new-cloud-payload")
+    src_log.write_text(f"{parked.name}|{source}" + chr(10))
+    source.unlink(missing_ok=True)
+    out = sb.run(r'''
+CLOUD_DIRS="$TEST_CLOUD_DIR"
+CLOUD_QDIR="$TEST_QUARANTINE"
+rm() {
+  case "$*" in *"$CLOUD_QDIR/20261122_010101__config.json"*)
+    if [ ! -e "$BAT_STATE/rm_failed_once" ]; then : > "$BAT_STATE/rm_failed_once"; return 1; fi ;;
+  esac
+  command rm "$@"
+}
+cloud_restore; echo first-rc=$?
+echo target-first=$(cat "$TEST_CLOUD_DIR/config.json")
+echo retained-first=$(test -f "$CLOUD_QDIR/20261122_010101__config.json" && echo 1 || echo 0)
+cloud_restore; echo retry-rc=$?
+echo retained-retry=$(test -f "$CLOUD_QDIR/20261122_010101__config.json" && echo 1 || echo 0)
+''', TEST_CLOUD_DIR=str(cloud_dir), TEST_QUARANTINE=str(quarantine))
+    assert "first-rc=1" in out, out
+    assert "target-first=new-cloud-payload" in out, out
+    assert "retained-first=1" in out, out
+    assert "retry-rc=0" in out, out
+    assert "retained-retry=0" in out, out
 
 
 def smart_fv_case(sb):
@@ -508,9 +715,99 @@ echo hold=$(test -f "$BAT_STATE/fv_hold" && echo 1 || echo 0)
 echo pending=$(test -f "$BAT_STATE/fv_restore_pending" && echo 1 || echo 0)
 echo fv=$(cat "$BGU_SMART_FV")
 ''')
-    assert "hold=0" in out, out
-    assert "pending=0" in out, out
+    assert "hold=1" in out, out
+    assert "pending=1" in out, out
     assert "fv=0" in out, out
+
+
+def battery_shutdown_recovery_case(sb):
+    sb.write_cfg(unlock="1", pss_low_soc="20", pss_low_hyst="5", cycle_fake="999")
+    sb.fv.write_text("4450000")
+    (sb.state / "fv_default.tmp").mkdir()
+    out = sb.run(r'''
+BGU_CFG_LOADED=0
+tick 0 1 0 15 1 4400000
+echo fv-before-snapshot=$(cat "$BGU_SMART_FV")
+echo hold-before-snapshot=$(test -f "$BGU_FV_HOLD" && echo 1 || echo 0)
+''')
+    assert "fv-before-snapshot=4450000" in out, out
+    assert "hold-before-snapshot=0" in out, out
+    (sb.state / "fv_default.tmp").rmdir()
+    sb.cycle1.write_text("999")
+    sb.cycle2.write_text("999")
+    (sb.state / "cycle_real").write_text("555")
+    out = sb.run(r'''
+BGU_CFG_LOADED=0
+tick 0 1 0 15 1 4400000
+echo held=$(cat "$BGU_SMART_FV")
+echo pss-owned=$(test -f "$BAT_STATE/pss_disabled_by_module" && echo 1 || echo 0)
+battery_suspend; echo suspend-rc=$?
+echo fv=$(cat "$BGU_SMART_FV")
+echo charging-fv=$(cat "$BGU_FV_DOWN")
+echo pss-enabled=$(grep -c "^pm enable" "$CALL_LOG" || true)
+echo pss-owner=$(test -f "$BAT_STATE/pss_disabled_by_module" && echo 1 || echo 0)
+echo unlock=$(grep '^unlock=' "$BT_CONF" | cut -d= -f2)
+echo cycle=$(cat "@@CYCLE1@@")
+'''.replace("@@CYCLE1@@", str(sb.cycle1)))
+    assert "held=0" in out, out
+    assert "pss-owned=1" in out, out
+    assert "suspend-rc=0" in out, out
+    assert "fv=4450000" in out, out
+    assert "charging-fv=0" in out, out
+    assert "pss-enabled=1" in out, out
+    assert "pss-owner=0" in out, out
+    assert "unlock=1" in out, out
+    assert "cycle=999" in out, out
+
+    sb.fv.write_text("0")
+    out = sb.run(r'''
+printf 4450000 > "$BGU_FV_DEFAULT"
+echo 555 > "$BGU_QMAX_NODE"
+battery_restore; echo restore-rc=$?
+echo restored-fv=$(cat "$BGU_SMART_FV")
+echo restored-cycle=$(cat "@@CYCLE1@@")
+'''.replace("@@CYCLE1@@", str(sb.cycle1)))
+    assert "restore-rc=0" in out, out
+    assert "restored-fv=4450000" in out, out
+    assert "restored-cycle=555" in out, out
+
+    sb.write_cfg(unlock="1")
+    sb.fv.write_text("4450000")
+    sb.run(r'''
+tick 0 1 0 80 1 4400000
+''')
+    out = sb.run(r'''
+cfg_set() { sed -i "s/^$1=.*/$1=$2/" "$BT_CONF"; }
+baa_umount() { return 0; }
+pss_enable() { return 0; }
+IS_CHARGING=1
+bgu_write_node() { return 1; }
+battery_unlock_off; echo off-rc=$?
+echo off-unlock=$(grep '^unlock=' "$BT_CONF" | cut -d= -f2)
+echo off-pending=$(test -f "$BGU_FV_PENDING" && echo 1 || echo 0)
+''')
+    assert "off-rc=1" in out, out
+    assert "off-unlock=0" in out, out
+    assert "off-pending=1" in out, out
+
+    out = sb.run(r'''
+bgu_write_node() { return 1; }
+battery_restore; echo failed-restore-rc=$?
+''')
+    assert "failed-restore-rc=1" in out, out
+
+    sb.write_cfg(unlock="1")
+    sb.fv.write_text("4450000")
+    out = sb.run(r'''
+tick 0 1 0 80 1 4400000
+sed -i 's/^unlock=.*/unlock=0/' "$BT_CONF"
+bgu_write_node() { return 1; }
+BGU_CFG_UNLOCK=0
+bgu_fv_tick 1 1; echo failed-tick-rc=$?
+echo pending=$(test -f "$BGU_FV_PENDING" && echo 1 || echo 0)
+''')
+    assert "failed-tick-rc=1" in out, out
+    assert "pending=1" in out, out
 
 
 def cycle_case(sb):
@@ -565,9 +862,11 @@ def main():
         ("pss", pss_case),
         ("frequency", frequency_case),
         ("cloud-off", cloud_off_case),
+        ("cloud-restore-failure", cloud_restore_failure_case),
         ("smart-fv", smart_fv_case),
         ("smart-fv-retry", smart_fv_retry_case),
         ("smart-fv-no-snapshot", smart_fv_no_snapshot_case),
+        ("battery-shutdown-recovery", battery_shutdown_recovery_case),
         ("cycle", cycle_case),
         ("read-only", read_only_case),
     ]

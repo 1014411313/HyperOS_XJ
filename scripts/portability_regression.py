@@ -88,8 +88,16 @@ cmd, rest = args[0], args[1:]
 if cmd == "rev-parse":
     if "--show-toplevel" in rest:
         print(os.getcwd())
+    elif "--show-cdup" in rest:
+        print("")
     elif "--verify" in rest:
         sys.exit(1)
+elif cmd in ("symbolic-ref", "diff", "add", "commit", "tag", "ls-files"):
+    result = subprocess.run([os.environ["STUB_REAL_GIT"], cmd, *rest],
+                            cwd=os.getcwd(), capture_output=True, text=True)
+    sys.stdout.write(result.stdout)
+    sys.stderr.write(result.stderr)
+    sys.exit(result.returncode)
 elif cmd == "config":
     if "--get-all" in rest:
         print("store")
@@ -107,8 +115,6 @@ elif cmd == "credential":
     tokens = {"gitee.com": "stub-gitee-token", "github.com": "stub-github-token"}
     print("username=stub-user")
     print("password=" + tokens.get(host, "stub-unknown-token"))
-elif cmd == "diff":
-    sys.exit(0 if "--quiet" not in rest else 1)
 elif cmd == "push":
     joined = " ".join(rest)
     fails = [x for x in os.environ.get("STUB_GIT_PUSH_FAIL", "").split(",") if x]
@@ -469,6 +475,7 @@ class ReleaseFixture:
         self.stub.mkdir()
         self.log.mkdir()
         self._build()
+        self._init_git_repo()
 
     def _build(self):
         project = self.project
@@ -502,12 +509,26 @@ class ReleaseFixture:
         _write(self.stub / "java", JAVA_STUB, 0o755)
         _write(self.stub / "keytool", KEYTOOL_STUB, 0o755)
 
+    def _init_git_repo(self):
+        env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull,
+               "GIT_CONFIG_SYSTEM": os.devnull, "GIT_TERMINAL_PROMPT": "0"}
+        _run([REAL_GIT, "init", "-q", "-b", "master", str(self.project)],
+             env=env, check=True)
+        for key, value in (("user.name", "隔离回归"),
+                           ("user.email", "regression@example.invalid")):
+            _run([REAL_GIT, "-C", str(self.project), "config", key, value],
+                 env=env, check=True)
+        _run([REAL_GIT, "-C", str(self.project), "add", "-A"], env=env, check=True)
+        _run([REAL_GIT, "-C", str(self.project), "commit", "-qm", "fixture"],
+             env=env, check=True)
+
     def env(self, extra=None):
         values = {
             "PATH": f"{self.stub}:{BASE_PATH}",
             "HOME": str(self.home),
             "TMPDIR": str(self.home / "tmp"),
             "STUB_LOG": str(self.log),
+            "STUB_REAL_GIT": REAL_GIT,
             "GIT_CONFIG_GLOBAL": os.devnull,
             "GIT_CONFIG_SYSTEM": os.devnull,
             "GIT_TERMINAL_PROMPT": "0",
@@ -529,8 +550,9 @@ class ReleaseFixture:
             return []
         return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
 
-    def zip_path(self, version):
-        return self.project / "dist" / f"rezhale_toolbox_v{version}.zip"
+    def zip_path(self, version, local=False):
+        name = f"热炸了工具箱_v{version}.zip" if local else f"rezhale_toolbox_v{version}.zip"
+        return self.project / "dist" / name
 
 
 class ReleaseCase(unittest.TestCase):
@@ -594,17 +616,90 @@ class ReleaseBoundaryRegression(ReleaseCase):
             self.assertEqual(result.returncode, 2, args)
             self.assertIn("--local 只打包当前版本", result.stderr)
 
+    def test_publish_rejects_non_master_branch_before_build(self):
+        env = self.fx.env()
+        _run([REAL_GIT, "-C", str(self.fx.project), "checkout", "-qb", "topic"],
+             env=env, check=True)
+        result = self.fx.run(["3.1.67"], {"GITEE_TOKEN": "stub", "GITHUB_TOKEN": "stub"})
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("只允许在 master 分支", result.stderr)
+        self.assertFalse((self.fx.log / "gradlew.log").exists())
+        self.assertFalse((self.fx.log / "curl.log").exists())
+
+    def test_publish_rejects_detached_head_before_build(self):
+        env = self.fx.env()
+        _run([REAL_GIT, "-C", str(self.fx.project), "checkout", "--detach", "HEAD"],
+             env=env, check=True)
+        result = self.fx.run(["3.1.67"], {"GITEE_TOKEN": "stub", "GITHUB_TOKEN": "stub"})
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("拒绝 detached HEAD", result.stderr)
+        self.assertFalse((self.fx.log / "gradlew.log").exists())
+        self.assertFalse((self.fx.log / "curl.log").exists())
+
+    def test_publish_rejects_untracked_release_source_before_build(self):
+        engine_file = self.fx.project / "engine" / "lib" / "new_process.sh"
+        engine_file.parent.mkdir(parents=True, exist_ok=True)
+        engine_file.write_text("#!/bin/sh\\ntrue\\n", encoding="utf-8")
+        result = self.fx.run(["3.1.67"], {"GITEE_TOKEN": "stub", "GITHUB_TOKEN": "stub"})
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("拒绝发行源码目录中的未跟踪文件", result.stderr)
+        self.assertIn("engine/lib/new_process.sh", result.stderr)
+        self.assertFalse((self.fx.log / "gradlew.log").exists())
+        self.assertFalse((self.fx.log / "curl.log").exists())
+
+    def test_shell_syntax_check_rejects_bad_second_file(self):
+        with tempfile.TemporaryDirectory(prefix="syntax batch ") as tmp:
+            root = Path(tmp)
+            _write(root / "a-good.sh", "#!/bin/sh\\ntrue\\n")
+            _write(root / "z-bad.sh", "if then\\n")
+            result = _run([
+                "find", str(root), "-type", "f", "-name", "*.sh", "-exec", "sh", "-c",
+                'for file do sh -n "$file" || exit; done', "sh", "{}", "+",
+            ])
+            self.assertNotEqual(result.returncode, 0)
+
+    def test_publish_does_not_stage_unrelated_untracked_files(self):
+        marker = self.fx.project / "unrelated.txt"
+        marker.write_text("untracked content\\n", encoding="utf-8")
+        result = self.fx.run(["3.1.67"], {"GITEE_TOKEN": "stub", "GITHUB_TOKEN": "stub"})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        env = self.fx.env()
+        committed = _run([REAL_GIT, "-C", str(self.fx.project), "diff-tree", "--no-commit-id",
+                          "--name-only", "-r", "HEAD"], env=env, check=True).stdout.splitlines()
+        self.assertNotIn("unrelated.txt", committed)
+        self.assertTrue(marker.is_file())
+        status = _run([REAL_GIT, "-C", str(self.fx.project), "status", "--short"],
+                      env=env, check=True).stdout
+        self.assertIn("?? unrelated.txt", status)
+
+    def test_publish_rejects_existing_index_without_changing_it(self):
+        env = self.fx.env()
+        marker = self.fx.project / "unrelated.txt"
+        marker.write_text("staged content\\n", encoding="utf-8")
+        _run([REAL_GIT, "-C", str(self.fx.project), "add", "--", "unrelated.txt"],
+             env=env, check=True)
+        before = _run([REAL_GIT, "-C", str(self.fx.project), "diff", "--cached", "--binary"],
+                      env=env, check=True).stdout
+        result = self.fx.run(["3.1.67"], {"GITEE_TOKEN": "stub", "GITHUB_TOKEN": "stub"})
+        after = _run([REAL_GIT, "-C", str(self.fx.project), "diff", "--cached", "--binary"],
+                     env=env, check=True).stdout
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("拒绝已有暂存改动", result.stderr)
+        self.assertEqual(after, before)
+        self.assertFalse((self.fx.log / "gradlew.log").exists())
+        self.assertFalse((self.fx.log / "curl.log").exists())
+
     def test_local_builds_current_version_offline_only(self):
         result = self.fx.run(["--local"])
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("完成（--local）", result.stdout)
-        zip_path = self.fx.zip_path("3.1.66")
+        zip_path = self.fx.zip_path("3.1.66", local=True)
         self.assertTrue(zip_path.is_file())
         with zipfile.ZipFile(zip_path) as archive:
             props = dict(line.split("=", 1) for line in
                          archive.read("module.prop").decode("utf-8").splitlines() if "=" in line)
             self.assertEqual((props["version"], props["versionCode"]), ("3.1.66", "376"))
-        self.assertFalse(self.fx.zip_path("3.1.67").exists())
+        self.assertFalse(self.fx.zip_path("3.1.67", local=True).exists())
         self.assertFalse((self.fx.log / "curl.log").exists())
         pushes = [entry for entry in self.fx.read_log("git.log") if "push" in entry]
         self.assertEqual(pushes, [])

@@ -40,3 +40,10 @@ preview.*.log
 
 # 独立子项目（自带 git 仓库，不纳入本仓库）
 baofeiche/
+
+# Python 缓存
+__pycache__/
+*.pyc
+
+# 历史发行快照（本地保留，不入库）
+dist/release-*/

@@ -53,23 +53,21 @@ fun HomePage(
     var applying by remember { mutableStateOf(false) }
     var userTouched by remember { mutableStateOf(false) }
 
-    LaunchedEffect(status.powerTier, userTouched) {
+    LaunchedEffect(status.powerTier) {
         if (!userTouched) powerWatts = tierToWatts(status.powerTier)
     }
 
     LaunchedEffect(powerWatts, userTouched) {
         if (!userTouched) return@LaunchedEffect
         delay(400)
+        val requestedWatts = powerWatts
         applying = true
-        val result = bridge.execResult(Engine.power(if (powerWatts >= 119.5f) "inf" else powerWatts.toInt().toString()))
+        val result = bridge.execResult(Engine.power(if (requestedWatts >= 119.5f) "inf" else requestedWatts.toInt().toString()))
+        val latestStatus = bridge.readStatus()
+        if (powerWatts == requestedWatts) powerWatts = tierToWatts(latestStatus.powerTier)
         applying = false
-        showToast(
-            if (result.success) {
-                if (powerWatts >= 119.5f) "充电功率：全速 已应用" else "充电功率 ${powerWatts.toInt()}W 已应用"
-            } else {
-                "失败：功率写入"
-            }
-        )
+        userTouched = false
+        showToast(if (result.success) "功率上限已保存" else "失败：功率上限未保存")
     }
     val accent = LocalAccentColor.current
     val appearance = LocalAppearance.current
@@ -113,7 +111,7 @@ fun HomePage(
                         charging = status.charging,
                         accent = accent,
                         gaugeSize = 184.dp,
-                        animate = !appearance.smoothMode
+                        animate = true
                     )
                     Spacer(Modifier.height(10.dp))
                     Pill("当前温控档位 · ${status.gear}")
@@ -125,7 +123,7 @@ fun HomePage(
                     listOf(
                         status.status to "状态",
                         status.protocol to "充电协议",
-                        "${fmt1(status.voltageMv / 1000f)}V" to "电压",
+                        "${fmt3(status.voltageMv / 1000f)}V" to "电压",
                         "${fmt1(status.currentMa / 1000f)}A" to "电流",
                         "${fmt1(status.tempC)}℃" to "温度",
                         "${status.remainingMah} mAh" to "剩余容量",
@@ -148,9 +146,33 @@ fun HomePage(
             }
 
             GlassCard(backdrop, Modifier.fillMaxWidth()) {
+                SectionLabel("功能执行状态")
+                MetricGrid(
+                    listOf(
+                        (if (status.daemonPid.isBlank()) "已停止" else "运行中") to "引擎守护",
+                        (when (status.powerApplyState) {
+                            "applied" -> "已执行"
+                            "pending" -> "待下发"
+                            "failed" -> "执行失败"
+                            "idle" -> "未执行"
+                            else -> "未知"
+                        }) to "充电限流",
+                        (if (status.powerThermalMa > 0) "降流中" else if (status.thermalHandback) "已回系统" else "未触发") to "温控降流",
+                        (if (status.aplEnable && status.aplTargetMa > 0) "调节中" else "待机") to "自适应功率",
+                        (when (status.baaState) { "active" -> "已挂载"; "skipped" -> "已跳过"; else -> "未生效" }) to "电池解容",
+                        (when (status.ppsVerified) { "1" -> "已生效"; "0" -> "未生效"; else -> "不可用" }) to "PPS 解锁",
+                        (if (status.cloudBlocked > 0) "累计拦截 ${status.cloudBlocked}" else "无拦截") to "云控屏蔽",
+                        (if (status.bypassActive) "生效中" else "未生效") to "旁路供电",
+                        (if (!status.rearScreenSupported) "不支持" else if (status.rearScreen) "显示中" else "未显示") to "背屏卡片",
+                    ),
+                    columns = 3
+                )
+            }
+
+            GlassCard(backdrop, Modifier.fillMaxWidth()) {
                 SliderField(
                     backdrop = backdrop,
-                    title = "充电功率",
+                    title = "功率上限",
                     valueText = if (powerWatts >= 120f) "全速" else "${powerWatts.toInt()} W",
                     valueRange = 5f..120f,
                     value = { powerWatts },
@@ -166,11 +188,25 @@ fun HomePage(
                 }
                 Spacer(Modifier.height(10.dp))
                 BasicText(
-                    text = when {
-                        applying -> "正在写入 ${powerWatts.toInt()}W…"
-                        powerWatts >= 119.5f -> "当前功率：全速（等效无限制）"
-                        else -> "当前功率：${powerWatts.toInt()}W · 拖动后自动生效"
-                    },
+                    text = "设定上限：${if (powerWatts >= 119.5f) "全速" else "${powerWatts.toInt()}W"}",
+                    style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp)
+                )
+                BasicText(
+                    text = "自动控制目标：${status.powerTargetW?.let { "${fmt1(it)}W" } ?: "等待引擎计算"}",
+                    style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp)
+                )
+                BasicText(
+                    text = "执行状态：${when (status.powerApplyState) {
+                        "applied" -> "已下发限制"
+                        "pending" -> "等待应用"
+                        "failed" -> "应用失败"
+                        "idle" -> "空闲"
+                        else -> "未知"
+                    }}${if (applying) " · 正在保存" else ""}",
+                    style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp)
+                )
+                BasicText(
+                    text = "实测电池功率：${fmt1(status.powerW)}W",
                     style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp)
                 )
             }
@@ -190,6 +226,13 @@ fun HomePage(
 private fun fmt1(value: Float): String {
     val scaled = (value * 10f).toInt()
     return "${scaled / 10}.${kotlin.math.abs(scaled % 10)}"
+}
+
+private fun fmt3(value: Float): String {
+    val scaled = ((value * 1000f) + 0.5f).toInt()
+    val whole = scaled / 1000
+    val frac = kotlin.math.abs(scaled % 1000)
+    return "$whole.${frac.toString().padStart(3, '0')}"
 }
 
 /** 温区按部位显示中文名；同名多路时追加序号（如 接口1 / 接口2）。 */

@@ -10,6 +10,7 @@ expect object AppearanceStore {
 
 internal fun AppearanceSettings.toPersistentMap(): Map<String, String> = mapOf(
     "themeIndex" to themeIndex.toString(),
+    "themeColorArgb" to themeColorArgb.toString(),
     "glassMode" to glassMode.name,
     "fontScale" to fontScale.toString(),
     "cardScale" to cardScale.toString(),
@@ -18,7 +19,8 @@ internal fun AppearanceSettings.toPersistentMap(): Map<String, String> = mapOf(
     "cardBlur" to cardBlur.toString(),
     "cardDistortion" to cardDistortion.toString(),
     "cardTexture" to cardTexture.toString(),
-    "smoothMode" to smoothMode.toString(),
+    "frostedBlur" to frostedBlur.toString(),
+    "frostedRefract" to frostedRefract.toString(),
     "hideBarText" to hideBarText.toString(),
     "barWidth" to barWidth.toString(),
     "barHeight" to barHeight.toString(),
@@ -40,17 +42,19 @@ private val backgroundKinds = setOf("wallpaper", "image", "gif", "video")
 internal fun appearanceFromMap(map: Map<String, String>): AppearanceSettings =
     AppearanceSettings(
         themeIndex = map["themeIndex"]?.toIntOrNull() ?: 0,
+        themeColorArgb = map["themeColorArgb"]?.toLongOrNull() ?: 0L,
         glassMode = map["glassMode"]?.let { name ->
             GlassMode.entries.firstOrNull { it.name == name }
         } ?: GlassMode.Liquid,
         fontScale = map["fontScale"]?.toFloatOrNull() ?: 1f,
         cardScale = map["cardScale"]?.toFloatOrNull() ?: 1f,
         cardCorner = map["cardCorner"]?.toFloatOrNull() ?: 25f,
-        cardAlpha = map["cardAlpha"]?.toFloatOrNull() ?: 0f,
+        cardAlpha = 0f,
         cardBlur = map["cardBlur"]?.toFloatOrNull() ?: 2f,
         cardDistortion = map["cardDistortion"]?.toFloatOrNull() ?: 121f,
-        cardTexture = map["cardTexture"]?.toBooleanStrictOrNull() ?: true,
-        smoothMode = map["smoothMode"]?.toBooleanStrictOrNull() ?: false,
+        cardTexture = true,
+        frostedBlur = map["frostedBlur"]?.toFloatOrNull() ?: 38f,
+        frostedRefract = map["frostedRefract"]?.toFloatOrNull() ?: 20f,
         hideBarText = map["hideBarText"]?.toBooleanStrictOrNull() ?: false,
         barWidth = map["barWidth"]?.toFloatOrNull() ?: 84f,
         barHeight = map["barHeight"]?.toFloatOrNull() ?: 60f,
@@ -60,17 +64,15 @@ internal fun appearanceFromMap(map: Map<String, String>): AppearanceSettings =
         barBlur = map["barBlur"]?.toFloatOrNull() ?: 3f,
         wallpaperIndex = map["wallpaperIndex"]?.toIntOrNull() ?: 0,
         bgBlur = map["bgBlur"]?.toFloatOrNull() ?: 2f,
-        customBg = map["customBg"]?.toBooleanStrictOrNull() ?: false,
+        customBg = map["customBg"]?.toBooleanStrictOrNull() ?: true,
         bgImage = null,
-        // 空路径的旧默认图片与首张壁纸迁移到内置视频，用户自选文件保持原样。
+        // 空路径的旧默认视频与首张壁纸迁移到内置默认图片，用户自选文件保持原样。
         bgKind = run {
             val saved = map["bgKind"]?.takeIf { it in backgroundKinds }
             val path = map["bgPath"] ?: ""
-            val wallpaperIndex = map["wallpaperIndex"]?.toIntOrNull() ?: 0
             when {
-                saved == null -> "video"
-                saved == "image" && path.isEmpty() -> "video"
-                saved == "wallpaper" && path.isEmpty() && wallpaperIndex == 0 -> "video"
+                saved == null -> "image"
+                saved == "video" && path.isEmpty() -> "image"
                 else -> saved
             }
         },

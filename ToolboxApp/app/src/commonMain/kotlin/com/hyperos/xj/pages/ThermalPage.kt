@@ -38,6 +38,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hyperos.xj.runtime.DeviceStatus
 import com.hyperos.xj.runtime.Engine
+import com.hyperos.xj.runtime.ExecResult
+import com.hyperos.xj.runtime.thermalHour
 import com.hyperos.xj.runtime.ThermalSettings
 import com.hyperos.xj.runtime.ToolboxRuntimeBridge
 import com.hyperos.xj.runtime.installedGameCandidates
@@ -58,8 +60,15 @@ import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.vibrancy
 import com.kyant.backdrop.Backdrop
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+
+private val settingsWriteMutex = Mutex()
 
 private val gearOptions = listOf(
     "系统默认", "无限制",
@@ -91,6 +100,7 @@ fun ThermalPage(
     var planStart by remember { mutableStateOf("23") }
     var planEnd by remember { mutableStateOf("07") }
     var planWatts by remember { mutableFloatStateOf(27f) }
+    var planWattsTouched by remember { mutableStateOf(false) }
     var manualBypass by remember { mutableStateOf(status.bypassManual) }
     var gameBypass by remember { mutableStateOf(false) }
     var bypassTempOn by remember { mutableStateOf("0") }
@@ -104,10 +114,16 @@ fun ThermalPage(
     var appsLoading by remember { mutableStateOf(false) }
     var appCandidates by remember { mutableStateOf(emptyList<Pair<String, String>>()) }
     var loaded by remember { mutableStateOf(false) }
+    var settingsReadError by remember { mutableStateOf<String?>(null) }
+
+    suspend fun write(command: String): ExecResult = settingsWriteMutex.withLock {
+        // 一旦开始写入，不因滑条重启 effect 而提前解锁，让 root 命令先完成。
+        withContext(NonCancellable) { bridge.execResult(command) }
+    }
 
     fun save(key: String, value: String, title: String? = null) {
         scope.launch {
-            val result = bridge.execResult(Engine.setting(key, value))
+            val result = write(Engine.setting(key, value))
             if (title != null) {
                 showToast(
                     when {
@@ -119,6 +135,16 @@ fun ThermalPage(
                 )
             }
         }
+    }
+
+    fun updateHour(key: String, value: String, update: (String) -> Unit) {
+        if (value.isEmpty()) {
+            update(value)
+            return
+        }
+        val hour = thermalHour(value) ?: return
+        update(value)
+        save(key, hour.toString())
     }
 
     fun applySettings(s: ThermalSettings) {
@@ -154,19 +180,22 @@ fun ThermalPage(
     }
 
     LaunchedEffect(Unit) {
-        bridge.cachedThermalSettings()?.let {
-            applySettings(it)
+        try {
+            applySettings(bridge.readThermalSettings())
             loaded = true
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            settingsReadError = e.message?.takeIf { it.isNotBlank() } ?: "请检查 Root 权限和模块状态"
         }
-        val s = bridge.readThermalSettings()
-        applySettings(s)
-        loaded = true
     }
 
-    LaunchedEffect(planWatts, loaded) {
-        if (!loaded) return@LaunchedEffect
+    LaunchedEffect(planWatts, loaded, planWattsTouched) {
+        if (!loaded || !planWattsTouched) return@LaunchedEffect
         delay(400)
-        save("power_plan_mode", if (planWatts >= 119.5f) "inf" else planWatts.toInt().toString())
+        val selectedWatts = planWatts
+        val result = write(Engine.setting("power_plan_mode", if (selectedWatts >= 119.5f) "inf" else selectedWatts.toInt().toString()))
+        if (result.success && planWatts == selectedWatts) planWattsTouched = false
     }
 
     Box(Modifier.fillMaxSize()) {
@@ -186,8 +215,11 @@ fun ThermalPage(
             if (!loaded) {
                 GlassCard(backdrop, Modifier.fillMaxWidth()) {
                     BasicText(
-                        text = "正在读取设置…",
-                        style = TextStyle(color = XJ.TextSecondary, fontSize = 13.sp)
+                        text = settingsReadError?.let { "读取设置失败：$it" } ?: "正在读取设置…",
+                        style = TextStyle(
+                            color = if (settingsReadError == null) XJ.TextSecondary else XJ.Danger,
+                            fontSize = 13.sp
+                        )
                     )
                 }
             } else {
@@ -196,8 +228,7 @@ fun ThermalPage(
                     style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp)
                 )
 
-                GlassCard(backdrop, Modifier.fillMaxWidth()) {
-                    SectionLabel("引擎控制")
+                CollapsibleCard(backdrop, title = "引擎控制", initiallyExpanded = true, modifier = Modifier.fillMaxWidth()) {
                     ToggleLine(
                         backdrop = backdrop,
                         title = "引擎总开关",
@@ -217,7 +248,7 @@ fun ThermalPage(
                         onCheckedChange = {
                             chargeGov = it
                             scope.launch {
-                                val result = bridge.execResult(Engine.chargeGov(it))
+                                val result = write(Engine.chargeGov(it))
                                 showToast(
                                     when {
                                         !result.success -> "失败：充电温控联动"
@@ -230,10 +261,9 @@ fun ThermalPage(
                     )
                 }
 
-                GlassCard(backdrop, Modifier.fillMaxWidth()) {
-                    SectionLabel("普通场景温控")
+                CollapsibleCard(backdrop, title = "普通场景温控", initiallyExpanded = true, modifier = Modifier.fillMaxWidth()) {
                     BasicText(
-                        text = "非充电、非游戏时生效；充电中会被充电档位覆盖。档位温度上限同时作为充电功率降档线",
+                        text = "非充电、非游戏时生效；充电降功率温度线取当前生效的充电温控档位。",
                         style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp)
                     )
                     Spacer(Modifier.height(8.dp))
@@ -288,9 +318,9 @@ fun ThermalPage(
                     Spacer(Modifier.height(12.dp))
                     SectionLabel("定时切换")
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        GlassInput(chargeStartHour, { chargeStartHour = it; save("time_start", it.ifBlank { "0" }) }, "开始时", Modifier.weight(1f), numeric = true)
+                        GlassInput(chargeStartHour, { value -> updateHour("time_start", value) { chargeStartHour = it } }, "开始时（0–23）", Modifier.weight(1f), numeric = true)
                         Spacer(Modifier.width(8.dp))
-                        GlassInput(chargeEndHour, { chargeEndHour = it; save("time_end", it.ifBlank { "0" }) }, "结束时", Modifier.weight(1f), numeric = true)
+                        GlassInput(chargeEndHour, { value -> updateHour("time_end", value) { chargeEndHour = it } }, "结束时（0–23）", Modifier.weight(1f), numeric = true)
                         Spacer(Modifier.width(8.dp))
                         BasicText(
                             text = gearOptions[chargeTimedGear],
@@ -319,7 +349,7 @@ fun ThermalPage(
                     backdrop = backdrop,
                     title = "游戏场景",
                     subtitle = "游戏温控档位",
-                    initiallyExpanded = true,
+                    initiallyExpanded = false,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     ToggleLine(
@@ -400,8 +430,7 @@ fun ThermalPage(
                     )
                 }
 
-                GlassCard(backdrop, Modifier.fillMaxWidth()) {
-                    SectionLabel("游戏加速")
+                CollapsibleCard(backdrop, title = "游戏加速", initiallyExpanded = false, modifier = Modifier.fillMaxWidth()) {
                     ToggleLine(
                         backdrop = backdrop,
                         title = "HyperOS 游戏三倍速",
@@ -411,8 +440,7 @@ fun ThermalPage(
                     )
                 }
 
-                GlassCard(backdrop, Modifier.fillMaxWidth()) {
-                    SectionLabel("自动任务")
+                CollapsibleCard(backdrop, title = "自动任务", initiallyExpanded = false, modifier = Modifier.fillMaxWidth()) {
                     ToggleLine(
                         backdrop = backdrop,
                         title = "定时充电计划",
@@ -422,20 +450,26 @@ fun ThermalPage(
                     )
                     Spacer(Modifier.height(8.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        GlassInput(planStart, { planStart = it; save("power_plan_start", it.ifBlank { "0" }) }, "开始", Modifier.weight(1f), numeric = true)
+                        GlassInput(planStart, { value -> updateHour("power_plan_start", value) { planStart = it } }, "开始（0–23）", Modifier.weight(1f), numeric = true)
                         Spacer(Modifier.width(8.dp))
                         BasicText("到", style = TextStyle(color = XJ.TextSecondary, fontSize = 13.sp))
                         Spacer(Modifier.width(8.dp))
-                        GlassInput(planEnd, { planEnd = it; save("power_plan_end", it.ifBlank { "0" }) }, "结束", Modifier.weight(1f), numeric = true)
+                        GlassInput(planEnd, { value -> updateHour("power_plan_end", value) { planEnd = it } }, "结束（0–23）", Modifier.weight(1f), numeric = true)
+                    }
+                    if (thermalHour(planStart) == null || thermalHour(planEnd) == null) {
+                        BasicText(
+                            text = "计划时间必须为 0–23 时",
+                            style = TextStyle(color = XJ.Danger, fontSize = 11.sp)
+                        )
                     }
                     Spacer(Modifier.height(14.dp))
                     SliderField(
                         backdrop = backdrop,
-                        title = "计划功率",
+                        title = "计划功率上限",
                         valueText = if (planWatts >= 120f) "全速" else "${planWatts.toInt()} W",
                         valueRange = 5f..120f,
                         value = { planWatts },
-                        onValueChange = { planWatts = it }
+                        onValueChange = { planWatts = it; planWattsTouched = true }
                     )
                     Spacer(Modifier.height(6.dp))
                     Row(
@@ -447,13 +481,12 @@ fun ThermalPage(
                     }
                     Spacer(Modifier.height(8.dp))
                     BasicText(
-                        text = "时段内手动改过功率档后不再接管。",
+                        text = "计划时段内作为功率上限；与手动上限取更严格值。",
                         style = TextStyle(color = XJ.TextSecondary, fontSize = 11.sp)
                     )
                 }
 
-                GlassCard(backdrop, Modifier.fillMaxWidth()) {
-                    SectionLabel("旁路供电")
+                CollapsibleCard(backdrop, title = "旁路供电", initiallyExpanded = false, modifier = Modifier.fillMaxWidth()) {
                     ToggleLine(
                         backdrop = backdrop,
                         title = "手动旁路",
@@ -462,7 +495,7 @@ fun ThermalPage(
                         onCheckedChange = {
                             manualBypass = it
                             scope.launch {
-                                val result = bridge.execResult(Engine.bypass(it))
+                                val result = write(Engine.bypass(it))
                                 showToast(
                                     when {
                                         !result.success -> "失败：手动旁路"

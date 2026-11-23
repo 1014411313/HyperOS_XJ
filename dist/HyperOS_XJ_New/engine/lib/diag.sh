@@ -33,6 +33,58 @@ diag_is_sensitive_name() {
   return 1
 }
 
+# 两棵状态树共享预算；不跟随链接，避免把根目录外的文件带进包。
+diag_collect_tree() {
+  local src="$1" dest="$2" depth="${3:-0}" f name real size cap copied
+  [ "$_diag_stop" -eq 0 ] || return 0
+  [ ! -L "$src" ] && [ -d "$src" ] || return 0
+  real=$(readlink -f "$src" 2>/dev/null) || return 0
+  case "$real/" in "$_diag_root/"*) ;; *) return 0 ;; esac
+  if [ "$depth" -ge 32 ]; then
+    printf '截断：目录深度达到 32，未采集 %s\n' "$dest" >> "$_diag_notice"
+    return 0
+  fi
+  for f in "$src"/* "$src"/.[!.]* "$src"/..?*; do
+    [ ! -L "$f" ] || continue
+    name=${f##*/}
+    name=$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')
+    case "$name" in *tmp*|*frag*|cloud_quarantine) continue ;; esac
+    diag_is_sensitive_name "$name" && continue
+    real=$(readlink -f "$f" 2>/dev/null) || continue
+    case "$real" in "$_diag_root/"*) ;; *) continue ;; esac
+    if [ -d "$f" ]; then
+      diag_collect_tree "$f" "$dest/${f##*/}" "$((depth + 1))"
+      [ "$_diag_stop" -eq 0 ] || return 0
+      continue
+    fi
+    [ -f "$f" ] && [ -r "$f" ] || continue
+    if [ "$_diag_files" -ge "$_diag_max_files" ] || [ "$_diag_bytes" -ge "$_diag_max_bytes" ]; then
+      printf '截断：STATE/BT_STATE 共享上限（文件数 %s，总字节 %s）已达，剩余文件未采集。\n' \
+        "$_diag_max_files" "$_diag_max_bytes" >> "$_diag_notice"
+      _diag_stop=1
+      return 0
+    fi
+    size=$(stat -c %s "$f" 2>/dev/null)
+    case "$size" in ''|*[!0-9]*) continue ;; esac
+    cap=$_diag_max_file_bytes
+    [ "$cap" -le "$((_diag_max_bytes - _diag_bytes))" ] || cap=$((_diag_max_bytes - _diag_bytes))
+    mkdir -p "$dest" 2>/dev/null || continue
+    # 即使源文件在 stat 后增长，实际读取仍受剩余预算限制。
+    if head -c "$cap" "$f" > "$dest/${f##*/}" 2>/dev/null; then
+      copied=$(stat -c %s "$dest/${f##*/}" 2>/dev/null)
+      _diag_files=$((_diag_files + 1))
+      _diag_bytes=$((_diag_bytes + copied))
+      if [ "$size" -gt "$copied" ]; then
+        printf '截断：%s 原始 %s 字节，保留 %s 字节（单文件上限 %s，总字节上限 %s）。\n' \
+          "$dest/${f##*/}" "$size" "$copied" "$_diag_max_file_bytes" "$_diag_max_bytes" >> "$_diag_notice"
+      fi
+    else
+      rm -f "$dest/${f##*/}" 2>/dev/null
+    fi
+  done
+  return 0
+}
+
 # sysfs 逐项采集：存在才采（输出「标签 = 值」），并把 _sysfs_n 计数加一。
 diag_node_line() {
   [ -e "$2" ] || return 1
@@ -212,40 +264,20 @@ diag_pack() {
     cp -f "$_f" "$_stage/config/$_b" 2>/dev/null && _cn=$((_cn + 1))
   done
 
-  # ---- state/：STATE 运行态全量（含子目录；敏感名过滤；tmp/frag 临时件跳过） ----
-  _sn=0
-  mkdir -p "$_stage/state" 2>/dev/null
-  for _f in "$STATE"/*; do
-    if [ -d "$_f" ]; then
-      cp -r "$_f" "$_stage/state/" 2>/dev/null && _sn=$((_sn + 1))
-      continue
-    fi
-    [ -f "$_f" ] || continue
-    _b=$(basename "$_f")
-    case "$_b" in *tmp*|*frag*) continue ;; esac
-    diag_is_sensitive_name "$_b" && continue
-    cp -f "$_f" "$_stage/state/$_b" 2>/dev/null && _sn=$((_sn + 1))
-  done
-
-  # ---- battery_state/：BAT_STATE 运行态（功率/载荷/满压等电池子系统）----
-  # 排查「功率不正常」的直接证据在这里：power_sig / power_write_ts / power_orig_*
-  # / fv_default / cloud 状态。云控隔离目录体积不可控，只计数不复制。
-  _bsn=0
-  mkdir -p "$_stage/battery_state" 2>/dev/null
-  for _f in "$BT_STATE"/*; do
-    if [ -d "$_f" ]; then
-      _b=$(basename "$_f")
-      diag_is_sensitive_name "$_b" && continue
-      [ "$_b" = "cloud_quarantine" ] && continue
-      cp -r "$_f" "$_stage/battery_state/" 2>/dev/null && _bsn=$((_bsn + 1))
-      continue
-    fi
-    [ -f "$_f" ] || continue
-    _b=$(basename "$_f")
-    case "$_b" in *tmp*|*frag*) continue ;; esac
-    diag_is_sensitive_name "$_b" && continue
-    cp -f "$_f" "$_stage/battery_state/$_b" 2>/dev/null && _bsn=$((_bsn + 1))
-  done
+  # ---- state/、battery_state/：递归过滤，共享 512 文件 / 单文件 1 MiB / 总计 8 MiB ----
+  _diag_files=0; _diag_bytes=0; _diag_stop=0
+  _diag_max_files=512; _diag_max_file_bytes=1048576; _diag_max_bytes=8388608
+  _diag_notice="$_stage/state_collection.txt"
+  printf 'STATE/BT_STATE 共享采集上限：%s 个文件，单文件 %s 字节，合计 %s 字节；跳过符号链接、敏感名、tmp/frag 和 cloud_quarantine。\n' \
+    "$_diag_max_files" "$_diag_max_file_bytes" "$_diag_max_bytes" > "$_diag_notice"
+  mkdir -p "$_stage/state" "$_stage/battery_state" 2>/dev/null
+  _diag_root=$(readlink -f "$STATE" 2>/dev/null)
+  [ -n "$_diag_root" ] && [ "$_diag_root" != / ] && diag_collect_tree "$STATE" "$_stage/state"
+  _sn=$_diag_files
+  _diag_root=$(readlink -f "$BT_STATE" 2>/dev/null)
+  [ -n "$_diag_root" ] && [ "$_diag_root" != / ] && diag_collect_tree "$BT_STATE" "$_stage/battery_state"
+  _bsn=$((_diag_files - _sn))
+  printf '实际采集：%s 个文件，%s 字节。\n' "$_diag_files" "$_diag_bytes" >> "$_diag_notice"
 
   # ---- runtime.txt：daemon 存活证据（/proc cmdline 扫描 + pid 核验）与时间基准 ----
   {

@@ -447,6 +447,158 @@ expect_has 'online=- present=-' "$(tail -n 1 "$wireless_log")"
 [ "$(wc -l < "$wireless_log")" -eq 5 ] && ok || bad "节点失效只应记录一次"
 teardown
 
+setup "充电诊断：协商状态变化记录，稳定状态不重复写"
+. "$REPO/engine/lib/diag_log.sh"
+LOGDIR="$T/log"
+mkdir -p "$LOGDIR/usb" "$LOGDIR/qcom" "$LOGDIR/xm"
+DIAG_CHARGE_LAST=""
+DIAG_USB_SUPPLY="$T/usb"
+IS_CHARGING=1
+_m=level_3
+BAT_TEMP=340
+BAT_CUR=-1200000
+for node in "$DIAG_USB_SUPPLY" "$T/qcom" "$T/xm"; do mkdir -p "$node"; done
+printf '1\n' > "$DIAG_USB_SUPPLY/online"
+printf '1\n' > "$DIAG_USB_SUPPLY/present"
+printf 'USB_PD\n' > "$DIAG_USB_SUPPLY/type"
+printf '9000000\n' > "$DIAG_USB_SUPPLY/voltage_max"
+printf 'PDO1\n' > "$T/qcom/real_type"
+printf '65000000\n' > "$T/qcom/power_max"
+printf '50000000\n' > "$T/xm/power_max"
+DIAG_QCOM_SUPPLY="$T/qcom"
+DIAG_CHARGER_COMMON="$T/xm"
+diag_charge_tick
+[ "$(wc -l < "$LOGDIR/diag_charge.log")" -eq 1 ] && ok || bad "首次充电状态应记录一次"
+diag_charge_tick
+[ "$(wc -l < "$LOGDIR/diag_charge.log")" -eq 1 ] && ok || bad "稳定状态不应重复记录"
+printf 'PDO2\n' > "$T/qcom/real_type"
+diag_charge_tick
+expect_has 'real_type=PDO2' "$(tail -n 1 "$LOGDIR/diag_charge.log")"
+expect_has 'charging=1 mode=level_3 temp_0.1C=340' "$(tail -n 1 "$LOGDIR/diag_charge.log")"
+teardown
+
+# ---------- 状态目录诊断采集 ----------
+diag_tree_setup() {
+  . "$REPO/engine/lib/diag.sh"
+  _diag_files=0; _diag_bytes=0; _diag_stop=0
+  _diag_max_files=8; _diag_max_file_bytes=16; _diag_max_bytes=32
+  _diag_notice="$T/collection.txt"
+  : > "$_diag_notice"
+  mkdir -p "$T/source" "$T/collected"
+  _diag_root=$(readlink -f "$T/source")
+}
+
+setup "诊断递归：逐层过滤敏感名、临时件及隔离目录，保留正常与隐藏文件"
+diag_tree_setup
+mkdir -p "$T/source/normal/deeper" "$T/source/secret_dir" "$T/source/temp.tmp" \
+  "$T/source/normal/frag_cache" "$T/source/normal/cloud_quarantine"
+for entry in normal/deeper/ok normal/deeper/.visible normal/deeper/Api_Key \
+  normal/deeper/access_token normal/deeper/PASSWORD normal/deeper/device.serial \
+  normal/deeper/cache.tmp normal/deeper/data.frag secret_dir/ok temp.tmp/ok \
+  normal/frag_cache/ok normal/cloud_quarantine/ok; do
+  printf 'data' > "$T/source/$entry"
+done
+diag_collect_tree "$T/source" "$T/collected"
+[ "$(find "$T/collected" -type f | wc -l)" -eq 2 ] && ok || bad "过滤后应只保留两个普通文件"
+[ -f "$T/collected/normal/deeper/ok" ] && [ -f "$T/collected/normal/deeper/.visible" ] && ok || bad "正常递归文件丢失"
+[ "$_diag_files" -eq 2 ] && [ "$_diag_bytes" -eq 8 ] && ok || bad "递归计数/字节不正确"
+teardown
+
+setup "诊断上限：单文件截断，保留包内说明"
+diag_tree_setup
+printf '01234567890123456789' > "$T/source/large"
+diag_collect_tree "$T/source" "$T/collected"
+[ "$(wc -c < "$T/collected/large")" -eq 16 ] && ok || bad "单文件超过 16 字节"
+[ "$(cat "$T/collected/large")" = '0123456789012345' ] && ok || bad "截断内容错误"
+expect_has '单文件上限 16' "$(cat "$_diag_notice")"
+teardown
+
+setup "诊断上限：文件数跨两棵状态树共享"
+diag_tree_setup
+_diag_max_files=1
+printf 'abc' > "$T/source/first"
+mkdir "$T/battery"
+printf 'def' > "$T/battery/second"
+diag_collect_tree "$T/source" "$T/collected/state"
+_diag_root=$(readlink -f "$T/battery")
+diag_collect_tree "$T/battery" "$T/collected/battery_state"
+[ "$(find "$T/collected" -type f | wc -l)" -eq 1 ] && ok || bad "共享文件数上限失效"
+expect_has '剩余文件未采集' "$(cat "$_diag_notice")"
+teardown
+
+setup "诊断上限：总字节跨两棵状态树共享，最后文件只读剩余额度"
+diag_tree_setup
+_diag_max_bytes=10
+printf '123456' > "$T/source/first"
+mkdir "$T/battery"
+printf 'abcdef' > "$T/battery/second"
+printf 'more' > "$T/battery/third"
+diag_collect_tree "$T/source" "$T/collected/state"
+_diag_root=$(readlink -f "$T/battery")
+diag_collect_tree "$T/battery" "$T/collected/battery_state"
+[ "$_diag_bytes" -eq 10 ] && [ "$(cat "$T/collected/battery_state/second")" = abcd ] && ok || bad "总字节预算或剩余额度错误"
+[ ! -e "$T/collected/battery_state/third" ] && ok || bad "总字节上限后仍采集"
+expect_has '总字节上限 10' "$(cat "$_diag_notice")"
+expect_has '剩余文件未采集' "$(cat "$_diag_notice")"
+teardown
+
+setup "诊断链接：文件、目录、循环、根链接及同前缀旁路均不外逸"
+diag_tree_setup
+mkdir -p "$T/source-other" "$T/source/nested"
+printf 'outside-data' > "$T/source-other/leak"
+printf 'ok' > "$T/source/nested/ok"
+ln -s "$T/source-other/leak" "$T/source/file_link"
+ln -s "$T/source-other" "$T/source/dir_link"
+ln -s / "$T/source/root_link"
+ln -s "$T/source" "$T/source/nested/loop"
+ln -s "$T/missing" "$T/source/broken"
+mkfifo "$T/source/fifo"
+diag_collect_tree "$T/source" "$T/collected"
+[ "$(find "$T/collected" -type f | wc -l)" -eq 1 ] && ok || bad "链接采集了根目录外文件"
+[ -z "$(find "$T/collected" -type l)" ] && ok || bad "采集结果保留了链接"
+ln -s "$T/source-other" "$T/root_alias"
+diag_collect_tree "$T/root_alias" "$T/collected/root_alias"
+diag_collect_tree "$T/source-other" "$T/collected/prefix_escape"
+[ ! -e "$T/collected/root_alias" ] && [ ! -e "$T/collected/prefix_escape" ] && ok || bad "根链接/前缀目录绕过边界"
+[ "$(cat "$T/source-other/leak")" = outside-data ] && ok || bad "外部文件被修改"
+teardown
+
+setup "诊断递归：深目录有界并留截断说明"
+diag_tree_setup
+nested="$T/source"
+i=0
+while [ "$i" -lt 33 ]; do
+  nested="$nested/d"
+  mkdir "$nested"
+  i=$((i + 1))
+done
+printf 'deep' > "$nested/value"
+diag_collect_tree "$T/source" "$T/collected"
+[ "$_diag_files" -eq 0 ] && ok || bad "深度上限未生效"
+expect_has '目录深度达到 32' "$(cat "$_diag_notice")"
+teardown
+
+setup "诊断打包接线：真实状态采集段使用默认预算，说明随包落盘"
+. "$REPO/engine/lib/diag.sh"
+_stage="$T/stage"
+STATE="$T/state"
+BT_STATE="$T/battery"
+mkdir -p "$_stage" "$STATE" "$BT_STATE"
+printf 'state' > "$STATE/ok"
+printf 'battery' > "$BT_STATE/ok"
+printf 'hidden' > "$BT_STATE/token"
+awk '
+  /^  # ---- state\// { collecting = 1 }
+  /^  # ---- runtime.txt/ { exit }
+  collecting { print }
+' "$REPO/engine/lib/diag.sh" > "$T/collect.sh"
+. "$T/collect.sh"
+[ "$_sn" -eq 1 ] && [ "$_bsn" -eq 1 ] && ok || bad "diag_pack 两棵状态树未正确接线"
+[ -f "$_stage/state/ok" ] && [ -f "$_stage/battery_state/ok" ] && [ ! -e "$_stage/battery_state/token" ] && ok || bad "diag_pack 未使用过滤采集"
+expect_has '512 个文件，单文件 1048576 字节，合计 8388608 字节' "$(cat "$_stage/state_collection.txt")"
+expect_has '实际采集：2 个文件，12 字节' "$(cat "$_stage/state_collection.txt")"
+teardown
+
 # ---------- 第 7 项：留存 ----------
 setup "7 正常：1 小时前执行"
 printf '%s' "$(( $(date +%s) - 3600 ))" > "$STATE/retention.ts"
@@ -857,6 +1009,7 @@ cat > "$T/mod/engine/probe.sh" <<'EOS'
 #!/bin/sh
 XJ_READONLY=1
 export XJ_READONLY
+getprop() { [ "$1" = ro.product.device ] && printf annibale; }
 DIR=$(cd "$(dirname "$0")" && pwd)
 . "$DIR/lib/env.sh"
 . "$DIR/lib/battery.sh"

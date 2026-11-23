@@ -76,7 +76,7 @@ fun BackdropEffectScope.glassEffects(
         GlassMode.Frosted -> {
             colorControls(saturation = 0.82f)
             blur(blurRadius)
-            lens(lensHeight, lensAmount, chromaticAberration = chromaticAberration)
+            lens(lensHeight, lensAmount, depthEffect = depthEffect, chromaticAberration = chromaticAberration)
         }
     }
 }
@@ -105,7 +105,13 @@ fun GlassCard(
                                 appearance.cardDistortion.coerceIn(0f, 150f).dp.toPx()
                             )
                         }
-                        GlassMode.Frosted -> glassEffects(mode, 38f.dp.toPx(), 10f.dp.toPx(), 20f.dp.toPx())
+                        GlassMode.Frosted -> glassEffects(
+                            mode,
+                            appearance.frostedBlur.coerceIn(0f, 60f).dp.toPx(),
+                            (10f + appearance.frostedRefract.coerceIn(0f, 40f) * 0.6f).dp.toPx(),
+                            appearance.frostedRefract.coerceIn(0f, 40f).dp.toPx(),
+                            depthEffect = true
+                        )
                     }
                 },
                 shadow = {
@@ -187,6 +193,7 @@ fun GlassChip(
 ) {
     val mode = LocalGlassMode.current
     val accent = LocalAccentColor.current
+    val appearance = LocalAppearance.current
     BasicText(
         text = label,
         modifier = modifier
@@ -196,7 +203,7 @@ fun GlassChip(
                 effects = {
                     when (mode) {
                         GlassMode.Liquid -> glassEffects(mode, 8f.dp.toPx(), 8f.dp.toPx(), 16f.dp.toPx())
-                        GlassMode.Frosted -> glassEffects(mode, 14f.dp.toPx(), 4f.dp.toPx(), 8f.dp.toPx())
+                        GlassMode.Frosted -> glassEffects(mode, (appearance.frostedBlur * 0.37f).dp.toPx(), (4f + appearance.frostedRefract * 0.2f).dp.toPx(), (appearance.frostedRefract * 0.4f).dp.toPx())
                     }
                 },
                 shadow = null,
@@ -490,6 +497,7 @@ fun ActionButton(
 ) {
     val mode = LocalGlassMode.current
     val accent = LocalAccentColor.current
+    val appearance = LocalAppearance.current
     BasicText(
         text = text,
         modifier = modifier
@@ -499,7 +507,7 @@ fun ActionButton(
                 effects = {
                     when (mode) {
                         GlassMode.Liquid -> glassEffects(mode, 8f.dp.toPx(), 10f.dp.toPx(), 20f.dp.toPx())
-                        GlassMode.Frosted -> glassEffects(mode, 14f.dp.toPx(), 5f.dp.toPx(), 10f.dp.toPx())
+                        GlassMode.Frosted -> glassEffects(mode, (appearance.frostedBlur * 0.37f).dp.toPx(), (5f + appearance.frostedRefract * 0.25f).dp.toPx(), (appearance.frostedRefract * 0.5f).dp.toPx())
                     }
                 },
                 shadow = {

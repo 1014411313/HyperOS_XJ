@@ -69,6 +69,7 @@ fi
 
 TAG="v$VERSION"
 ASSET="rezhale_toolbox_v$VERSION.zip"
+if [ "$LOCAL" = 1 ]; then ASSET="热炸了工具箱_v$VERSION.zip"; fi
 DATE="$(date +%F)"
 [ -n "$NOTES" ] || NOTES="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("notes",""))' "$ROOT/latest.json")"
 
@@ -87,6 +88,17 @@ if [ "$DRY_RUN" = 1 ]; then
 fi
 
 if [ "$LOCAL" != 1 ]; then
+    BRANCH="$(git -C "$ROOT" symbolic-ref --quiet --short HEAD 2>/dev/null)" || {
+        echo '正式发布拒绝 detached HEAD；请切换到 master' >&2; exit 2; }
+    [ "$BRANCH" = master ] || {
+        echo "正式发布只允许在 master 分支，当前为 $BRANCH" >&2; exit 2; }
+    git -C "$ROOT" diff --cached --quiet || {
+        echo '正式发布拒绝已有暂存改动；请先自行处理 index' >&2; exit 2; }
+    UNTRACKED="$(git -C "$ROOT" ls-files --others --exclude-standard -- ToolboxApp dist/HyperOS_XJ_New engine)"
+    [ -z "$UNTRACKED" ] || {
+        echo '正式发布拒绝发行源码目录中的未跟踪文件；请审查并纳入版本控制后重试' >&2
+        printf '%s\\n' "$UNTRACKED" >&2
+        exit 2; }
     git -C "$ROOT" rev-parse -q --verify "refs/tags/$TAG" >/dev/null && {
         echo "标签 $TAG 已存在" >&2; exit 2; }
     git -C "$ROOT" config user.name >/dev/null 2>&1 && git -C "$ROOT" config user.email >/dev/null 2>&1 || {
@@ -231,15 +243,15 @@ https://github.com/$GITHUB_REPO/releases/tag/$TAG
 https://gitee.com/$GITEE_REPO/releases
 https://github.com/$GITHUB_REPO/releases
 EOF
-# Stage only public source, tests, module inputs and release metadata.
-git -C "$ROOT" add -u -- ToolboxApp dist/HyperOS_XJ_New engine scripts latest.json
-for path in ToolboxApp dist/HyperOS_XJ_New engine \
+# Stage only release content, dedicated validation scripts, and release metadata.
+git -C "$ROOT" add -u -- ToolboxApp dist/HyperOS_XJ_New engine
+for path in scripts/package_module.sh scripts/package_module.ps1 \
+    scripts/release_module.sh scripts/portability_regression.py \
     scripts/charge_control_regression.py scripts/rear_guard_regression.py \
     scripts/battery_idle_regression.py scripts/idle_dispatch_regression.py \
     latest.json state/release.json "$LINKS"; do
     [ ! -e "$ROOT/$path" ] || git -C "$ROOT" add -- "$path"
 done
-git -C "$ROOT" reset -q -- state/bugs.json
 
 step "5/7 提交并打标签 $TAG"
 if git -C "$ROOT" diff --cached --quiet; then

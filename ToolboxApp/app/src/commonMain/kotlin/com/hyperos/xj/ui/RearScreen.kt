@@ -450,7 +450,7 @@ private fun rearField(index: Int?, status: DeviceStatus): RearField? {
     return when (id) {
         "temp" -> RearField("温度", fmtRear1(status.tempC) + "℃")
         "soc" -> RearField("电量", status.soc.toString() + "%")
-        "volt" -> RearField("电压", fmtRear2(status.voltageMv / 1000f) + "V")
+        "volt" -> RearField("电压", fmtRear3(status.voltageMv / 1000f) + "V")
         "cur" -> RearField("电流", fmtRear2(status.currentMa / 1000f) + "A")
         "power" -> RearField("功率", fmtRear1(status.powerW) + "W")
         "status" -> RearField("状态", status.status)
@@ -476,4 +476,11 @@ private fun fmtRear2(value: Float): String {
     return "${scaled / 100}.${pad2(kotlin.math.abs(scaled % 100))}"
 }
 
+private fun fmtRear3(value: Float): String {
+    val scaled = ((value * 1000f) + 0.5f).toInt()
+    return "${scaled / 1000}.${pad3(kotlin.math.abs(scaled % 1000))}"
+}
+
 private fun pad2(value: Int): String = if (value < 10) "0$value" else value.toString()
+
+private fun pad3(value: Int): String = value.toString().padStart(3, '0')
