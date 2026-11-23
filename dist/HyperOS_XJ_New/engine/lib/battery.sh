@@ -6,6 +6,8 @@
 BAT_DIR="$MODDIR/battery"
 BAT_STATE="$BT_STATE"
 BAA_LABEL="u:object_r:batteryantiaging_cfg_file:s0"
+COMMON_SRC="$BAT_DIR/baa/payload_BAA_config_common.json"
+COMMON_TGT="/odm/etc/charger/BAA_config_common.json"
 PSS_COMPONENT=com.miui.securitycenter/com.miui.powercenter.provider.PowerSaveService
 
 [ "$XJ_READONLY" = "1" ] || mkdir -p "$BAT_STATE" 2>/dev/null
@@ -30,7 +32,7 @@ dev_code() {
           return 0
         fi
         _found=$_v ;;
-      *) printf '%s' unknown; return 0 ;;
+      *) continue ;;
     esac
   done
   if [ -n "$_configured" ] && [ "$_configured" != "$_found" ]; then
@@ -42,7 +44,16 @@ dev_code() {
 
 baa_src() {
   _d=$(dev_code)
-  printf '%s' "$BAT_DIR/baa/payload_BAA_config_$_d.json"
+  _p="$BAT_DIR/baa/payload_BAA_config_$_d.json"
+  [ -f "$_p" ] && { printf '%s' "$_p"; return 0; }
+  # 机型未识别时源同样兜底到任意机型载荷（排除 common/stock），否则目标找到了也无法挂载。
+  for _f in "$BAT_DIR"/baa/payload_BAA_config_*.json; do
+    [ -f "$_f" ] || continue
+    case "${_f##*/}" in *common*|*stock*) continue ;; esac
+    printf '%s' "$_f"
+    return 0
+  done
+  printf '%s' "$_p"
 }
 
 # 云端下发（cloud push）会在运行期改写下发 BAA 策略，覆盖模块的解容设置。
@@ -108,12 +119,24 @@ baa_refresh_src() {
 baa_tgt() {
   _d=$(dev_code)
   _std="/odm/etc/charger/BAA_config_$_d.json"
-  [ -n "$_d" ] && [ "$_d" != "unknown" ] || { printf '%s' "$_std"; return 1; }
-  [ -f "$_std" ] && { printf '%s' "$_std"; return 0; }
+  if [ -n "$_d" ] && [ "$_d" != "unknown" ]; then
+    [ -f "$_std" ] && { printf '%s' "$_std"; return 0; }
+    for _dir in /odm/etc/charger /vendor/etc/charger /my_product/etc/charger \
+                /system/etc/charger /system_ext/etc/charger /product/etc/charger; do
+      [ -d "$_dir" ] || continue
+      [ -f "$_dir/BAA_config_$_d.json" ] && { printf '%s' "$_dir/BAA_config_$_d.json"; return 0; }
+    done
+  fi
+  # 兜底：机型文件缺失（含识别失败）时取同目录任意机型载荷；common 单独挂载，不能当机型目标。
   for _dir in /odm/etc/charger /vendor/etc/charger /my_product/etc/charger \
               /system/etc/charger /system_ext/etc/charger /product/etc/charger; do
     [ -d "$_dir" ] || continue
-    [ -f "$_dir/BAA_config_$_d.json" ] && { printf '%s' "$_dir/BAA_config_$_d.json"; return 0; }
+    for _f in "$_dir"/BAA_config_*.json; do
+      [ -f "$_f" ] || continue
+      case "${_f##*/}" in BAA_config_common.json) continue ;; esac
+      printf '%s' "$_f"
+      return 0
+    done
   done
   printf '%s' "$_std"
   return 1
@@ -121,7 +144,11 @@ baa_tgt() {
 
 baa_state() {
   _src=$(baa_src)
-  _tgt=$(baa_tgt) || { echo inactive; return 2; }
+  _tgt=$(baa_tgt) || { echo skipped; return 0; }
+  # 目标为空（ROM 无有效 BAA 载荷）判 skipped：不重挂、不误报未生效。
+  _ts=$(stat -c %s "$_tgt" 2>/dev/null)
+  case "$_ts" in ''|*[!0-9]*) _ts=0 ;; esac
+  if [ "$_ts" -le 8 ]; then echo skipped; return 0; fi
   _s=$(sha256sum "$_src" 2>/dev/null | awk '{print $1}')
   _t=$(sha256sum "$_tgt" 2>/dev/null | awk '{print $1}')
   _sl=$(stat -c '%C' "$_src" 2>/dev/null)
@@ -134,8 +161,39 @@ baa_state() {
   fi
 }
 
+# 公共配置独立挂载：失败只记日志，不阻塞机型载荷。
+baa_common_mount() {
+  [ -f "$COMMON_SRC" ] || return 0
+  [ -f "$COMMON_TGT" ] || return 0
+  _ss=$(stat -c %s "$COMMON_SRC" 2>/dev/null)
+  case "$_ss" in ''|*[!0-9]*) _ss=0 ;; esac
+  [ "$_ss" -le 8 ] && return 0
+  _ts=$(stat -c %s "$COMMON_TGT" 2>/dev/null)
+  case "$_ts" in ''|*[!0-9]*) _ts=0 ;; esac
+  [ "$_ts" -le 8 ] && return 0
+  grep -qF " $COMMON_TGT " /proc/mounts 2>/dev/null && umount "$COMMON_TGT" 2>/dev/null
+  _label=$(stat -c '%C' "$COMMON_TGT" 2>/dev/null)
+  [ -n "$_label" ] || _label="$BAA_LABEL"
+  chcon "$_label" "$COMMON_SRC" 2>/dev/null
+  chmod 0644 "$COMMON_SRC" 2>/dev/null
+  if ! mount -o bind "$COMMON_SRC" "$COMMON_TGT" 2>/dev/null; then
+    blog "BAA common mount failed"
+    return 4
+  fi
+  _a=$(sha256sum "$COMMON_SRC" 2>/dev/null | awk '{print $1}')
+  _b=$(sha256sum "$COMMON_TGT" 2>/dev/null | awk '{print $1}')
+  if [ -z "$_a" ] || [ "$_a" != "$_b" ]; then
+    umount "$COMMON_TGT" 2>/dev/null
+    blog "BAA common verify failed, rolled back"
+    return 3
+  fi
+  blog "BAA common mounted: $COMMON_TGT"
+  return 0
+}
+
 # 必须在 PID1 mount namespace 执行；xjctl.sh 在 battery 命令入口会 re-exec 到 PID1。
 baa_mount() {
+  baa_common_mount >/dev/null 2>&1
   _tgt=$(baa_tgt) || { blog "BAA target missing: $_tgt"; return 2; }
   baa_refresh_src >/dev/null 2>&1
   _src=$(baa_src)
@@ -177,9 +235,13 @@ baa_mount() {
 baa_umount() {
   _tgt=$(baa_tgt) || { blog "BAA target missing: $_tgt"; return 2; }
   if grep -qF " $_tgt " /proc/mounts 2>/dev/null; then
-    umount "$_tgt" 2>/dev/null
+    umount "$_tgt" 2>/dev/null || return 1
+    grep -qF " $_tgt " /proc/mounts 2>/dev/null && return 1
   fi
-  setprop ctl.restart batteryantiaging 2>/dev/null
+  if grep -qF " $COMMON_TGT " /proc/mounts 2>/dev/null; then
+    umount "$COMMON_TGT" 2>/dev/null
+  fi
+  setprop ctl.restart batteryantiaging 2>/dev/null || return 1
   blog "BAA umounted: $_tgt"
 }
 
@@ -308,9 +370,8 @@ battery_boot() {
   if [ "$(cfg_get unlock 1)" = "1" ]; then
     baa_mount >/dev/null 2>&1 || rc=$?
   fi
-  if [ "$(cfg_get pss_disable 1)" = "1" ]; then
-    # pss_low_soc>0（动态模式）时开机不立即禁用：交给 pss_guard_tick 按当前电量决定，
-    # 否则「开解容立刻禁用」会和动态模式「只在低电禁用」打架，下一拍又被启用回来。
+  if [ "$(cfg_get unlock 1)" = "1" ] && [ "$(cfg_get pss_disable 1)" = "1" ]; then
+    # pss_low_soc>0（动态模式）时开机不立即禁用：交给 pss_guard_tick 按当前电量决定。
     _pls=$(cfg_get pss_low_soc 0)
     case "$_pls" in ''|*[!0-9]*) _pls=0 ;; esac
     [ "$_pls" -gt 0 ] 2>/dev/null || pss_disable || rc=$?
@@ -333,7 +394,9 @@ battery_unlock_on() {
 
 battery_unlock_off() {
   local rc=0
-  cfg_set unlock 0
+  cfg_set unlock 0 || return 1
+  bgu_cfg_load
+  bgu_fv_tick 1 "$(bgu_now)" || rc=$?
   baa_umount || rc=$?
   pss_enable || rc=$?
   [ "$rc" -eq 0 ] || return "$rc"
@@ -600,6 +663,11 @@ bgu_cycle_tick() {
 
 bgu_pss_tick() {
   local soc
+  if [ "$BGU_CFG_UNLOCK" != "1" ]; then
+    if [ -f "$BAT_STATE/pss_disabled_by_module" ]; then pss_enable || return 1; fi
+    rm -f "$BAT_STATE/pss_dynamic" 2>/dev/null || return 1
+    return 0
+  fi
   [ "$BGU_CFG_PSS_DISABLE" = "1" ] || return 0
   # 静态模式（pss_low_soc=0）由 battery_boot / 开关一次性处理，不在每拍动作。
   [ "$BGU_CFG_PSS_LOW" -gt 0 ] 2>/dev/null || return 0
@@ -617,9 +685,16 @@ bgu_write_node() {
 }
 
 bgu_fv_tick() {
-  local force=$1 now=$2 last ok n cur pending held def changed
-  [ "$BGU_CFG_UNLOCK" = "1" ] || return 0
-  if [ "${IS_CHARGING:-0}" = "1" ]; then
+  local force=$1 now=$2 last ok n cur pending held def changed restore_only
+  restore_only=0
+  if [ "$BGU_CFG_UNLOCK" != "1" ]; then
+    pending=0; [ -f "$BGU_FV_PENDING" ] && pending=1
+    held=0; [ -f "$BGU_FV_HOLD" ] && held=1
+    [ "$pending" = 1 ] || [ "$held" = 1 ] || return 0
+    force=1
+    restore_only=1
+  fi
+  if [ "${IS_CHARGING:-0}" = "1" ] && [ "$restore_only" != 1 ]; then
     # 已压过 0 且未到低频复查点：不读不写，避免每拍访问节点。
     if [ "$force" != "1" ] && [ -f "$BGU_FV_HOLD" ]; then
       last=$(cat "$BGU_FV_CHECK" 2>/dev/null)
@@ -635,8 +710,19 @@ bgu_fv_tick() {
       if [ "$n" = "$BGU_SMART_FV" ]; then
         case "$cur" in
           ''|0|*[!0-9]*) ;;
-          *) [ -f "$BGU_FV_DEFAULT" ] || printf '%s' "$cur" > "$BGU_FV_DEFAULT" 2>/dev/null ;;
+          *)
+            if [ ! -s "$BGU_FV_DEFAULT" ]; then
+              if ! { printf '%s' "$cur" > "$BGU_FV_DEFAULT.tmp" 2>/dev/null &&
+                     mv -f "$BGU_FV_DEFAULT.tmp" "$BGU_FV_DEFAULT" 2>/dev/null; }; then
+                ok=0
+                continue
+              fi
+            fi ;;
         esac
+      fi
+      if [ "$n" = "$BGU_SMART_FV" ] && [ ! -s "$BGU_FV_DEFAULT" ]; then
+        ok=0
+        continue
       fi
       bgu_write_node "$n" 0 || ok=0
     done
@@ -646,6 +732,7 @@ bgu_fv_tick() {
       rm -f "$BGU_FV_PENDING" 2>/dev/null
     else
       printf '1' > "$BGU_FV_PENDING" 2>/dev/null
+      return 1
     fi
     return 0
   fi
@@ -661,10 +748,20 @@ bgu_fv_tick() {
   fi
   def=$(cat "$BGU_FV_DEFAULT" 2>/dev/null)
   case "$def" in
-    ''|0|*[!0-9]*) rm -f "$BGU_FV_HOLD" "$BGU_FV_PENDING" 2>/dev/null; return 0 ;;
+    ''|0|*[!0-9]*)
+      if [ "$pending" = "1" ] || [ "$held" = "1" ]; then
+        [ -f "$BGU_FV_PENDING" ] || printf '1' > "$BGU_FV_PENDING" 2>/dev/null
+        blog "smart_fv 恢复缺少有效原值快照"
+        return 1
+      fi
+      return 0 ;;
   esac
   ok=1; changed=0
-  [ -e "$BGU_SMART_FV" ] || { rm -f "$BGU_FV_HOLD" "$BGU_FV_PENDING" 2>/dev/null; return 0; }
+  if [ ! -e "$BGU_SMART_FV" ]; then
+    [ -f "$BGU_FV_PENDING" ] || printf '1' > "$BGU_FV_PENDING" 2>/dev/null
+    [ "$pending" = "1" ] || blog "smart_fv 恢复失败，节点不可用（目标 $def）"
+    return 1
+  fi
   cur=$(cat "$BGU_SMART_FV" 2>/dev/null)
   if [ "$cur" != "$def" ]; then
     changed=1
@@ -678,6 +775,7 @@ bgu_fv_tick() {
     # 失败只记一次，后续每拍安静重试，避免日志刷屏。
     [ -f "$BGU_FV_PENDING" ] || blog "smart_fv 恢复失败，稍后重试（目标 $def）"
     printf '1' > "$BGU_FV_PENDING" 2>/dev/null
+    return 1
   fi
   return 0
 }
@@ -696,7 +794,9 @@ bgu_baa_tick() {
   fi
   BGU_UNLOCK_PREV=1
   BGU_LAST_BAA=$now
-  [ "$(baa_state)" != "active" ] || return 0
+  case "$(baa_state)" in
+    active|skipped) return 0 ;;
+  esac
   blog "BAA inactive detected, remounting"
   baa_mount >/dev/null 2>&1 || return $?
   setprop ctl.restart batteryantiaging 2>/dev/null
@@ -799,7 +899,7 @@ bgu_low_tick() {
 }
 
 battery_guard_tick() {
-  local cfg conn chg now force
+  local cfg conn chg now force rc tick_rc
   [ "$XJ_READONLY" = "1" ] && return 0
   cfg=${XJ_CONFIG_CHANGED:-0}
   conn=${XJ_CONNECTION_CHANGED:-0}
@@ -813,15 +913,16 @@ battery_guard_tick() {
   if [ "$BGU_INIT" != "1" ] || [ "$conn" = "1" ] || [ "$BGU_LAST_CHG" != "$chg" ]; then
     force=1
   fi
+  rc=0
   bgu_cycle_tick
-  bgu_pss_tick
-  bgu_fv_tick "$force" "$now"
+  bgu_pss_tick || rc=$?
+  bgu_fv_tick "$force" "$now" || { tick_rc=$?; [ "$rc" -ne 0 ] || rc=$tick_rc; }
   bgu_baa_tick "$force" "$now"
   bgu_cloud_tick "$now"
   bgu_low_tick
   BGU_LAST_CHG=$chg
   BGU_INIT=1
-  return 0
+  return "$rc"
 }
 
 # 低电时主循环应使用的 sleep 秒数；正常返回空，由主循环沿用原间隔。
@@ -840,39 +941,54 @@ battery_poll_interval() {
 # ---------- 卸载/关闭时的节点还原 ----------
 # uninstall.sh 在 baa_umount 之后调用：BAA 已交回原厂，这里把 smart_fv 与
 # 循环计数写回模块接管前的值，否则模块删除后节点停在 0 / 伪装值。
-battery_restore() {
-  _sf=/sys/class/xm_power/charger/smart_charge/smart_fv
-  if [ -e "$_sf" ]; then
-    _def=$(cat "$BAT_STATE/fv_default" 2>/dev/null)
-    case "$_def" in
-      ''|0|*[!0-9]*) blog "restore: 无 smart_fv 原值快照，保持系统自管" ;;
-      *)
-        chmod 0664 "$_sf" 2>/dev/null
-        echo "$_def" > "$_sf" 2>/dev/null
-        if [ "$(cat "$_sf" 2>/dev/null)" = "$_def" ]; then
-          blog "restore: smart_fv -> $_def"
-        else
-          blog "restore: smart_fv 写入失败（wanted $_def）"
-        fi ;;
-    esac
+battery_suspend() {
+  local rc=0 tick_rc unlock
+  bgu_cfg_load
+  unlock=$BGU_CFG_UNLOCK
+  BGU_CFG_UNLOCK=0
+  bgu_fv_tick 1 "$(bgu_now)" || rc=$?
+  BGU_CFG_UNLOCK=$unlock
+  pss_enable || { tick_rc=$?; [ "$rc" -ne 0 ] || rc=$tick_rc; }
+  if [ "$rc" -eq 0 ]; then
+    rm -f "$BAT_STATE/pss_dynamic" 2>/dev/null || rc=$?
   fi
-  _real=$(cat /sys/class/xm_power/fg_master/qmax_cyclecount 2>/dev/null)
-  case "$_real" in ''|*[!0-9]*) _real=$(cat "$BAT_STATE/cycle_real" 2>/dev/null) ;; esac
-  case "$_real" in
-    ''|*[!0-9]*) blog "restore: 无真实循环值，跳过循环还原" ;;
+  [ "$rc" -eq 0 ] || return "$rc"
+  blog "battery ownership suspended"
+}
+
+battery_restore() {
+  local rc=0 def real n
+  def=$(cat "$BGU_FV_DEFAULT" 2>/dev/null)
+  case "$def" in
+    ''|0|*[!0-9]*)
+      if [ -f "$BGU_FV_HOLD" ] || [ -f "$BGU_FV_PENDING" ]; then
+        blog "restore: smart_fv 原值快照无效"
+        rc=1
+      fi ;;
     *)
-      for _n in /sys/class/xm_power/fg_master/cyclecount \
-                /sys/class/power_supply/battery/cycle_count; do
-        [ -e "$_n" ] || continue
-        [ "$(cat "$_n" 2>/dev/null)" = "$_real" ] && continue
-        chmod 0666 "$_n" 2>/dev/null
-        echo "$_real" > "$_n" 2>/dev/null
-        if [ "$(cat "$_n" 2>/dev/null)" = "$_real" ]; then
-          blog "restore: $_n -> $_real"
+      if ! bgu_write_node "$BGU_SMART_FV" "$def"; then
+        blog "restore: smart_fv 写入失败（wanted $def）"
+        rc=1
+      else
+        blog "restore: smart_fv -> $def"
+      fi ;;
+  esac
+  real=$(cat "$BGU_QMAX_NODE" 2>/dev/null)
+  case "$real" in ''|*[!0-9]*) real=$(cat "$BGU_CYCLE_REAL" 2>/dev/null) ;; esac
+  case "$real" in
+    ''|*[!0-9]*)
+      [ -f "$BGU_CYCLE_REAL" ] && { blog "restore: 无真实循环值，循环还原失败"; rc=1; } ;;
+    *)
+      for n in $BGU_CYCLE_NODES; do
+        [ -e "$n" ] || continue
+        [ "$(cat "$n" 2>/dev/null)" = "$real" ] && continue
+        if bgu_write_node "$n" "$real"; then
+          blog "restore: $n -> $real"
         else
-          blog "restore: $_n 写入失败（wanted $_real）"
+          blog "restore: $n 写入失败（wanted $real）"
+          rc=1
         fi
       done ;;
   esac
-  return 0
+  return "$rc"
 }

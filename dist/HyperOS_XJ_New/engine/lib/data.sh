@@ -18,8 +18,9 @@ find_ps() {
 # 每拍采样：写入全局 BAT_TEMP(0.1℃) / BAT_CUR(uA) / BAT_CAP(%) / BAT_VOLT(uV) / BAT_STATUS。
 sample() {
   _b="${BAT:-/sys/class/power_supply/battery}"
+  BAT_TEMP_VALID=0
   BAT_TEMP=; IFS= read -r BAT_TEMP < "$_b/temp" 2>/dev/null
-  case "$BAT_TEMP" in ''|*[!0-9-]*) BAT_TEMP=0 ;; esac
+  case "${BAT_TEMP#-}" in ''|*[!0-9]*) BAT_TEMP=0 ;; *) BAT_TEMP_VALID=1 ;; esac
   BAT_CUR=; IFS= read -r BAT_CUR < "$_b/current_now" 2>/dev/null
   case "$BAT_CUR" in ''|*[!0-9-]*) BAT_CUR=0 ;; esac
   BAT_CAP=; IFS= read -r BAT_CAP < "$_b/capacity" 2>/dev/null

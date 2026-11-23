@@ -328,7 +328,36 @@ echo invalid-term-poll=[$(battery_poll_interval)]
 
 
 def pss_case(sb):
+    # 解容关闭时 boot 不禁用 PSS，开机守护拍仅归还模块所有权。
+    sb.write_cfg(unlock="0", pss_low_soc="0")
+    out = sb.run(r'''
+battery_boot
+echo boot-pm=$(test -f "$CALL_LOG" && grep -c "^pm disable" "$CALL_LOG" || echo 0)
+tick 0 1 0 15 0 3900000
+echo idle-pm=$(test -f "$CALL_LOG" && grep -c "^pm disable" "$CALL_LOG" || echo 0)
+''')
+    assert "boot-pm=0" in out, out
+    assert "idle-pm=0" in out, out
+
+    # 解容关闭后动态模式也恢复由模块禁用的 PSS。
+    sb.write_cfg(unlock="1", pss_low_soc="20", pss_low_hyst="5")
+    out = sb.run(r'''
+tick 0 1 0 15 0 3900000
+echo owned=$(test -f "$BAT_STATE/pss_disabled_by_module" && echo 1 || echo 0)
+sed -i 's/^unlock=.*/unlock=0/' "$BT_CONF"
+tick 1 1 0 50 0 3900000
+echo restored=$(test -f "$BAT_STATE/pss_disabled_by_module" && echo 0 || echo 1)
+echo enabled=$(grep -c "^pm enable" "$CALL_LOG" || true)
+''')
+    assert "owned=1" in out, out
+    assert "restored=1" in out, out
+    assert "enabled=1" in out, out
+
     # 静态模式：不在每拍触发 pm/dumpsys，交给开机/开关一次性处理。
+    sb.call_log.write_text("")
+    sb.pss_state.write_text("")
+    (sb.state / "pss_dynamic").unlink(missing_ok=True)
+    (sb.state / "pss_disabled_by_module").unlink(missing_ok=True)
     sb.write_cfg(pss_low_soc="0")
     out = sb.run(r'''
 tick 0 1 0 15 0 3900000
@@ -686,9 +715,99 @@ echo hold=$(test -f "$BAT_STATE/fv_hold" && echo 1 || echo 0)
 echo pending=$(test -f "$BAT_STATE/fv_restore_pending" && echo 1 || echo 0)
 echo fv=$(cat "$BGU_SMART_FV")
 ''')
-    assert "hold=0" in out, out
-    assert "pending=0" in out, out
+    assert "hold=1" in out, out
+    assert "pending=1" in out, out
     assert "fv=0" in out, out
+
+
+def battery_shutdown_recovery_case(sb):
+    sb.write_cfg(unlock="1", pss_low_soc="20", pss_low_hyst="5", cycle_fake="999")
+    sb.fv.write_text("4450000")
+    (sb.state / "fv_default.tmp").mkdir()
+    out = sb.run(r'''
+BGU_CFG_LOADED=0
+tick 0 1 0 15 1 4400000
+echo fv-before-snapshot=$(cat "$BGU_SMART_FV")
+echo hold-before-snapshot=$(test -f "$BGU_FV_HOLD" && echo 1 || echo 0)
+''')
+    assert "fv-before-snapshot=4450000" in out, out
+    assert "hold-before-snapshot=0" in out, out
+    (sb.state / "fv_default.tmp").rmdir()
+    sb.cycle1.write_text("999")
+    sb.cycle2.write_text("999")
+    (sb.state / "cycle_real").write_text("555")
+    out = sb.run(r'''
+BGU_CFG_LOADED=0
+tick 0 1 0 15 1 4400000
+echo held=$(cat "$BGU_SMART_FV")
+echo pss-owned=$(test -f "$BAT_STATE/pss_disabled_by_module" && echo 1 || echo 0)
+battery_suspend; echo suspend-rc=$?
+echo fv=$(cat "$BGU_SMART_FV")
+echo charging-fv=$(cat "$BGU_FV_DOWN")
+echo pss-enabled=$(grep -c "^pm enable" "$CALL_LOG" || true)
+echo pss-owner=$(test -f "$BAT_STATE/pss_disabled_by_module" && echo 1 || echo 0)
+echo unlock=$(grep '^unlock=' "$BT_CONF" | cut -d= -f2)
+echo cycle=$(cat "@@CYCLE1@@")
+'''.replace("@@CYCLE1@@", str(sb.cycle1)))
+    assert "held=0" in out, out
+    assert "pss-owned=1" in out, out
+    assert "suspend-rc=0" in out, out
+    assert "fv=4450000" in out, out
+    assert "charging-fv=0" in out, out
+    assert "pss-enabled=1" in out, out
+    assert "pss-owner=0" in out, out
+    assert "unlock=1" in out, out
+    assert "cycle=999" in out, out
+
+    sb.fv.write_text("0")
+    out = sb.run(r'''
+printf 4450000 > "$BGU_FV_DEFAULT"
+echo 555 > "$BGU_QMAX_NODE"
+battery_restore; echo restore-rc=$?
+echo restored-fv=$(cat "$BGU_SMART_FV")
+echo restored-cycle=$(cat "@@CYCLE1@@")
+'''.replace("@@CYCLE1@@", str(sb.cycle1)))
+    assert "restore-rc=0" in out, out
+    assert "restored-fv=4450000" in out, out
+    assert "restored-cycle=555" in out, out
+
+    sb.write_cfg(unlock="1")
+    sb.fv.write_text("4450000")
+    sb.run(r'''
+tick 0 1 0 80 1 4400000
+''')
+    out = sb.run(r'''
+cfg_set() { sed -i "s/^$1=.*/$1=$2/" "$BT_CONF"; }
+baa_umount() { return 0; }
+pss_enable() { return 0; }
+IS_CHARGING=1
+bgu_write_node() { return 1; }
+battery_unlock_off; echo off-rc=$?
+echo off-unlock=$(grep '^unlock=' "$BT_CONF" | cut -d= -f2)
+echo off-pending=$(test -f "$BGU_FV_PENDING" && echo 1 || echo 0)
+''')
+    assert "off-rc=1" in out, out
+    assert "off-unlock=0" in out, out
+    assert "off-pending=1" in out, out
+
+    out = sb.run(r'''
+bgu_write_node() { return 1; }
+battery_restore; echo failed-restore-rc=$?
+''')
+    assert "failed-restore-rc=1" in out, out
+
+    sb.write_cfg(unlock="1")
+    sb.fv.write_text("4450000")
+    out = sb.run(r'''
+tick 0 1 0 80 1 4400000
+sed -i 's/^unlock=.*/unlock=0/' "$BT_CONF"
+bgu_write_node() { return 1; }
+BGU_CFG_UNLOCK=0
+bgu_fv_tick 1 1; echo failed-tick-rc=$?
+echo pending=$(test -f "$BGU_FV_PENDING" && echo 1 || echo 0)
+''')
+    assert "failed-tick-rc=1" in out, out
+    assert "pending=1" in out, out
 
 
 def cycle_case(sb):
@@ -747,6 +866,7 @@ def main():
         ("smart-fv", smart_fv_case),
         ("smart-fv-retry", smart_fv_retry_case),
         ("smart-fv-no-snapshot", smart_fv_no_snapshot_case),
+        ("battery-shutdown-recovery", battery_shutdown_recovery_case),
         ("cycle", cycle_case),
         ("read-only", read_only_case),
     ]

@@ -1,11 +1,11 @@
 {
-  "version": "3.1.71",
-  "versionCode": 381,
-  "date": "2026-11-22",
+  "version": "3.1.72",
+  "versionCode": 382,
+  "date": "2026-11-23",
   "url": "",
-  "notes": "修复安装备份失败时的数据保留、BAA机型身份与精确目标、诊断采集边界、充电温控档位与滞回、低电量关机门控、配置原子写入、Root命令超时、PSS所有权恢复及云控配置无覆盖归还。",
-  "download": "https://github.com/1014411313/HyperOS_XJ/releases/download/v3.1.71/rezhale_toolbox_v3.1.71.zip",
-  "download_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/download/v3.1.71/rezhale_toolbox_v3.1.71.zip",
-  "release": "https://github.com/1014411313/HyperOS_XJ/releases/tag/v3.1.71",
-  "release_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/tag/v3.1.71"
+  "notes": "守护启动恢复正式版单实例逻辑，修复重复守护与每分钟重启导致的耗电\n首页新增功能执行状态面板，显示限流、降流、解容、PPS、旁路等实际执行状态\n修复机型识别导致解容未生效；新增公共载荷挂载、目标兜底探测与skipped状态",
+  "download": "https://github.com/1014411313/HyperOS_XJ/releases/download/v3.1.72/rezhale_toolbox_v3.1.72.zip",
+  "download_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/download/v3.1.72/rezhale_toolbox_v3.1.72.zip",
+  "release": "https://github.com/1014411313/HyperOS_XJ/releases/tag/v3.1.72",
+  "release_gitee": "https://gitee.com/xiaomirezhale/HyperOS_XJ/releases/tag/v3.1.72"
 }

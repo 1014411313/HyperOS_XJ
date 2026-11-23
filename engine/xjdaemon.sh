@@ -26,7 +26,11 @@ POLL_INTERVAL=$(profile_get poll_interval 5)
 FG_INTERVAL=$(profile_get foreground_interval 10)
 CHARGE_INTERVAL=$(profile_get charge_interval 1)
 
-screen_on() { [ "$(dumpsys deviceidle get screen 2>/dev/null)" != "false" ]; }
+screen_on() {
+  local value
+  value=$(dumpsys deviceidle get screen 2>/dev/null)
+  [ "$value" = "true" ]
+}
 
 foreground_pkg() {
   _fg=$(dumpsys window 2>/dev/null | grep -m1 'mCurrentFocus' | sed -e 's/.*mCurrentFocus=//' -e 's/}.*//' -e 's/.*[ {]//')
@@ -47,75 +51,28 @@ is_gaming() {
   return 1
 }
 
-charge_gov_limit() {
-  case "$1" in
-    level_1) echo 30 ;; level_2) echo 35 ;; level_3) echo 40 ;;
-    level_4) echo 45 ;; level_5) echo 50 ;; *) echo "" ;;
-  esac
-}
-
 plan_in_window() {
   _s=$(json_get power_plan_start 23); _e=$(json_get power_plan_end 7)
   case "$_s" in ''|*[!0-9]*) _s=23 ;; esac
   case "$_e" in ''|*[!0-9]*) _e=7 ;; esac
   _s=${_s#0}; [ -n "$_s" ] || _s=0
   _e=${_e#0}; [ -n "$_e" ] || _e=0
+  [ "$_s" -le 23 ] && [ "$_e" -le 23 ] || return 1
   _h=$(date +%H); _h=${_h#0}; [ -n "$_h" ] || _h=0
   if [ "$_s" -eq "$_e" ]; then return 0
   elif [ "$_s" -lt "$_e" ]; then [ "$_h" -ge "$_s" ] && [ "$_h" -lt "$_e" ]
   else [ "$_h" -ge "$_s" ] || [ "$_h" -lt "$_e" ]; fi
 }
 
-# 有效功率档 = 用户档，被充电计划/温控联动向下收紧，取最严的一档。
+# 用户上限与计划上限取严，温度反馈在电流目标层连续调节。
 effective_tier() {
-  local _tier _mode _lim _temp _gov _prev
+  local _tier _m
   _tier=$(power_tier)
   if [ "$(json_get power_plan_on false)" = "true" ] && plan_in_window; then
     _m=$(norm_power "$(json_get power_plan_mode slow)")
-    [ "$(power_rank "$_m")" -lt "$(power_rank "$_tier")" ] && _tier="$_m"
-  fi
-  if [ "$(json_get charge_gov true)" = "true" ]; then
-    _mode=$(cat "$CONFDIR/current_mode" 2>/dev/null)
-    _lim=$(charge_gov_limit "$_mode")
-    if [ -n "$_lim" ]; then
-      _temp=$((BAT_TEMP / 10))
-      _prev=$(cat "$BT_STATE/charge_gov.state" 2>/dev/null)
-      case "$_prev" in "$_mode|mid"|"$_mode|slow") _gov=${_prev#*|} ;; *) _gov="" ;; esac
-      if [ "$_gov" = "slow" ]; then
-        if [ "$_temp" -lt $((_lim + 2)) ]; then
-          [ "$_temp" -ge $((_lim - 2)) ] && _gov=mid || _gov=""
-        fi
-      elif [ "$_gov" = "mid" ]; then
-        if [ "$_temp" -ge $((_lim + 4)) ]; then _gov=slow
-        elif [ "$_temp" -lt $((_lim - 2)) ]; then _gov=""
-        fi
-      elif [ "$_temp" -ge $((_lim + 4)) ]; then
-        _gov=slow
-      elif [ "$_temp" -ge "$_lim" ]; then
-        _gov=mid
-      else
-        _gov=""
-      fi
-      if [ -n "$_gov" ]; then
-        if ! { printf '%s|%s' "$_mode" "$_gov" > "$BT_STATE/charge_gov.state.tmp" 2>/dev/null &&
-              mv -f "$BT_STATE/charge_gov.state.tmp" "$BT_STATE/charge_gov.state" 2>/dev/null; }; then
-          rm -f "$BT_STATE/charge_gov.state.tmp" 2>/dev/null
-          _fallback=mid
-          [ "$_temp" -ge $((_lim + 4)) ] && _fallback=slow
-          [ "$(power_rank "$_fallback")" -lt "$(power_rank "$_tier")" ] && _tier=$_fallback
-          log "充电温控联动状态写入失败，当前周期保守限为 $_tier"
-          echo "$_tier"
-          return 0
-        fi
-        [ "$(power_rank "$_gov")" -lt "$(power_rank "$_tier")" ] && _tier=$_gov
-      else
-        rm -f "$BT_STATE/charge_gov.state" "$BT_STATE/charge_gov.state.tmp" 2>/dev/null
-      fi
-    else
-      rm -f "$BT_STATE/charge_gov.state" "$BT_STATE/charge_gov.state.tmp" 2>/dev/null
+    if [ "$_tier" = inf ] || { [ "$_m" != inf ] && [ "$(tier_watt "$_m")" -lt "$(tier_watt "$_tier")" ]; }; then
+      _tier=$_m
     fi
-  else
-    rm -f "$BT_STATE/charge_gov.state" "$BT_STATE/charge_gov.state.tmp" 2>/dev/null
   fi
   echo "$_tier"
 }
@@ -138,21 +95,40 @@ bypass_decide() {
 }
 
 apply_fps() {
+  local _fps _pk _mn _key _value _file
   _fps=$1
   case "$_fps" in ''|*[!0-9]*) _fps=0 ;; esac
-  [ "$(cat "$CONFDIR/.fps_applied" 2>/dev/null)" = "$_fps" ] && return 0
+  if [ "$(cat "$CONFDIR/.fps_applied" 2>/dev/null)" = "$_fps" ]; then
+    [ "$_fps" != 0 ] && return 0
+    [ -f "$CONFDIR/rt_fps_peak_orig" ] || [ -f "$CONFDIR/rt_fps_min_orig" ] || return 0
+  fi
   if [ "$_fps" = "0" ]; then
     _pk=$(cat "$CONFDIR/rt_fps_peak_orig" 2>/dev/null); _mn=$(cat "$CONFDIR/rt_fps_min_orig" 2>/dev/null)
-    [ -n "$_pk" ] && settings put system peak_refresh_rate "$_pk" 2>/dev/null
-    [ -n "$_mn" ] && settings put system min_refresh_rate "$_mn" 2>/dev/null
-    rm -f "$CONFDIR/rt_fps_peak_orig" "$CONFDIR/rt_fps_min_orig" 2>/dev/null
+    for _key in peak_refresh_rate min_refresh_rate; do
+      _file="$CONFDIR/rt_fps_peak_orig"; _value=$_pk
+      [ "$_key" != min_refresh_rate ] || { _file="$CONFDIR/rt_fps_min_orig"; _value=$_mn; }
+      [ -f "$_file" ] || continue
+      [ -n "$_value" ] || return 1
+      if [ "$_value" = null ]; then
+        settings delete system "$_key" >/dev/null 2>&1 || return 1
+      else
+        settings put system "$_key" "$_value" 2>/dev/null || return 1
+      fi
+      [ "$(settings get system "$_key" 2>/dev/null)" = "$_value" ] || return 1
+    done
+    rm -f "$CONFDIR/rt_fps_peak_orig" "$CONFDIR/rt_fps_min_orig" 2>/dev/null || return 1
   else
-    [ -f "$CONFDIR/rt_fps_peak_orig" ] || {
-      settings get system peak_refresh_rate 2>/dev/null > "$CONFDIR/rt_fps_peak_orig"
-      settings get system min_refresh_rate 2>/dev/null > "$CONFDIR/rt_fps_min_orig"
-    }
-    settings put system min_refresh_rate "$_fps" 2>/dev/null
-    settings put system peak_refresh_rate "$_fps" 2>/dev/null
+    for _key in peak_refresh_rate min_refresh_rate; do
+      _file="$CONFDIR/rt_fps_peak_orig"
+      [ "$_key" != min_refresh_rate ] || _file="$CONFDIR/rt_fps_min_orig"
+      if [ ! -s "$_file" ]; then
+        _value=$(settings get system "$_key" 2>/dev/null) || return 1
+        [ -n "$_value" ] || return 1
+        printf '%s' "$_value" > "$_file" || return 1
+      fi
+    done
+    settings put system min_refresh_rate "$_fps" 2>/dev/null || return 1
+    settings put system peak_refresh_rate "$_fps" 2>/dev/null || return 1
   fi
   printf '%s' "$_fps" > "$CONFDIR/.fps_applied"
 }
@@ -244,8 +220,10 @@ run_tick() {
   fi
   if [ -n "$_label" ]; then
     if [ "${XJ_DISABLED_HANDLED:-}" != "$_label" ]; then
-      release_charge
-      rear_stop
+      release_charge || return 1
+      battery_suspend || return 1
+      apply_fps 0 || return 1
+      rear_stop || return 1
       apply_default || return 1
       printf '%s' "$_label" > "$CONFDIR/current_mode"
       update_status "$_label"
@@ -298,7 +276,7 @@ run_tick() {
   fi
 
   # 离开旁路时先交还充电节点。
-  [ -f "$CONFDIR/bypass_active" ] && release_charge
+  if [ -f "$CONFDIR/bypass_active" ] || [ -f "$BT_STATE/bypass_current_saved" ]; then release_charge || return 1; fi
 
   _target="default"
   if { [ "$USB_CONNECTED" = 1 ] || [ "$WIRELESS_CONNECTED" = 1 ]; } && [ "$MTK_MODE" != 1 ]; then
@@ -307,6 +285,8 @@ run_tick() {
       _ts=$(json_get time_start 0); _te=$(json_get time_end 0); _tl=$(json_get time_level level_1)
       case "$_ts" in ''|*[!0-9]*) _ts=0 ;; esac
       case "$_te" in ''|*[!0-9]*) _te=0 ;; esac
+      [ "$_ts" -le 23 ] || _ts=0
+      [ "$_te" -le 23 ] || _te=0
       _h=$(date +%H); _h=${_h#0}; [ -n "$_h" ] || _h=0
       if [ "$_ts" -ne 0 ] && [ "$_te" -ne 0 ] && [ "$_ts" -ne "$_te" ]; then
         if [ "$_ts" -gt "$_te" ]; then { [ "$_h" -ge "$_ts" ] || [ "$_h" -lt "$_te" ]; } && _target="$_tl"; else { [ "$_h" -ge "$_ts" ] && [ "$_h" -lt "$_te" ]; } && _target="$_tl"; fi
@@ -372,12 +352,12 @@ run_tick() {
   if [ "$USB_CONNECTED" = 1 ] && [ "$WIRELESS_CONNECTED" != 1 ]; then
     _m=$(cat "$CONFDIR/current_mode" 2>/dev/null)
     diag_charge_tick
-    apl_tick
+    if [ "${BAT_TEMP_VALID:-1}" = 1 ]; then apl_tick; fi
     power_apply "$(effective_tier)"
     XJ_POWER_ACTIVE=1
   elif [ "${XJ_POWER_ACTIVE:-0}" = 1 ] || [ -f "$STATE/apl_target_ma" ]; then
     rm -f "$STATE/apl_target_ma" "$STATE/apl_urgent" 2>/dev/null
-    power_restore
+    power_restore || return 1
     XJ_POWER_ACTIVE=0
   fi
 
@@ -398,10 +378,6 @@ if [ "$1" = "--once" ]; then
   exit $?
 fi
 
-# 单实例：mkdir 原子锁 + pid 存活校验。
-# 不用 flock：实测小米15 Pro（Android 17）的 toybox flock 不支持 `flock -n <fd>`，
-# 会报 Bad file descriptor，导致每次启动都被误判为「已有实例」而退出。
-# 也不遍历 /proc 读 cmdline 找同名进程：目标退出时那个读会阻塞（bug-121）。
 mkdir -p "$STATE" 2>/dev/null
 rm -f "$STATE/daemon.lock" 2>/dev/null
 LOCKDIR="$STATE/daemon.lock.d"

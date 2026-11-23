@@ -71,7 +71,7 @@
 
         <receiver
             android:name=".rear.ControlReceiver"
-            android:exported="true">
+            android:exported="false">
             <intent-filter>
                 <action android:name="com.hyperos.xj.rear.CONTROL" />
             </intent-filter>

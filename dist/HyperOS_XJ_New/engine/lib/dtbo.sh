@@ -326,12 +326,46 @@ EOF
   printf '%s|%s|%s|%s|%s|%s|%s' "$_file" "$_c" "$_name" "$_size" "$_sha" "$_os" "$_prov"
 }
 
+dtbo_backup_canonical() {
+  case "$1" in /*) ;; *) return 1 ;; esac
+  dtbo_safe_field "$1" && [ -f "$1" ] && [ ! -L "$1" ] || return 1
+  readlink -f "$1" 2>/dev/null
+}
+
+dtbo_registry_dir() {
+  local _registry
+  _registry="$BT_STATE/dtbo_registry"
+  [ ! -L "$_registry" ] || return 1
+  if [ ! -d "$_registry" ]; then
+    [ "$1" = create ] || return 1
+    (umask 077; mkdir -p "$_registry") || return 1
+  fi
+  [ "$(stat -c '%u:%a' "$_registry" 2>/dev/null)" = 0:700 ] || return 1
+  printf '%s' "$_registry"
+}
+
+dtbo_backup_registered() {
+  local _file _registry _key _record _expected
+  _file=$(dtbo_backup_canonical "$1") || return 1
+  _registry=$(dtbo_registry_dir read) || return 1
+  _key=$(printf '%s' "$_file" | sha256sum | awk '{print $1}')
+  dtbo_is_sha "$_key" || return 1
+  _record="$_registry/$_key"
+  [ -f "$_record" ] && [ ! -L "$_record" ] || return 1
+  [ "$(stat -c '%u:%a' "$_record" 2>/dev/null)" = 0:600 ] || return 1
+  _expected="v2|before_flash|$6|$3|$2|$4|$5|$_file"
+  [ "$(cat "$_record")" = "$_expected" ] || return 1
+  [ "$(dtbo_stat_size "$_file")" = "$4" ] && [ "$(dtbo_sha_file "$_file")" = "$5" ]
+}
+
 dtbo_backup_find() {
-  local _dir _dev _slot _size _sha _model _man _v _kind _rmodel _rslot _rdev _rsz _rsha _file
-  _dir="$1"; _dev="$2"; _slot="$3"; _size="$4"; _sha="$5"; _model="$6"
-  _man="$_dir/manifest.txt"
-  [ -f "$_man" ] || return 1
-  while IFS='|' read -r _v _kind _rmodel _rslot _rdev _rsz _rsha _file; do
+  local _dir _dev _slot _size _sha _model _registry _record _v _kind _rmodel _rslot _rdev _rsz _rsha _file
+  _dir=$(readlink -f "$1" 2>/dev/null) || return 1
+  _dev="$2"; _slot="$3"; _size="$4"; _sha="$5"; _model="$6"
+  _registry=$(dtbo_registry_dir read) || return 1
+  for _record in "$_registry"/*; do
+    [ -f "$_record" ] && [ ! -L "$_record" ] || continue
+    IFS='|' read -r _v _kind _rmodel _rslot _rdev _rsz _rsha _file < "$_record"
     [ "$_v" = v2 ] || continue
     case "$_file" in /*) ;; *) continue ;; esac
     case "$_file" in "$_dir"/*) ;; *) continue ;; esac
@@ -339,18 +373,19 @@ dtbo_backup_find() {
     [ "$(dirname "$_file")" = "$_dir" ] || continue
     [ "$_file" = "$(readlink -f "$_file" 2>/dev/null)" ] || continue
     [ "$_rmodel" = "$_model" ] && [ "$_rslot" = "$_slot" ] && [ "$_rdev" = "$_dev" ] && [ "$_rsz" = "$_size" ] && [ "$_rsha" = "$_sha" ] || continue
-    [ -f "$_file" ] || continue
-    [ "$(dtbo_stat_size "$_file" 2>/dev/null)" = "$_size" ] || continue
-    [ "$(dtbo_sha_file "$_file")" = "$_sha" ] || continue
+    dtbo_backup_registered "$_file" "$_dev" "$_slot" "$_size" "$_sha" "$_model" || continue
     printf '%s' "$_file"
     return 0
-  done < "$_man"
+  done
   return 1
 }
 
 dtbo_backup_create() {
-  local _dir _dev _slot _size _sha _model _old _candidate_dir _tag _tmp _out
-  _dir="$1"; _dev="$2"; _slot="$3"; _size="$4"; _sha="$5"; _model="$6"
+  local _dir _dev _slot _size _sha _model _old _candidate_dir _tag _tmp _out _registry _key _record
+  _dir=$(readlink -f "$1" 2>/dev/null) || return 1
+  [ -d "$_dir" ] && dtbo_safe_field "$_dir" || return 1
+  _dev="$2"; _slot="$3"; _size="$4"; _sha="$5"; _model="$6"
+  _registry=$(dtbo_registry_dir create) || return 1
   _old=""
   for _candidate_dir in "$_dir" "$DTBO_BACKUP_PRIMARY" "$DTBO_BACKUP_FALLBACK"; do
     [ -n "$_candidate_dir" ] || continue
@@ -365,27 +400,37 @@ dtbo_backup_create() {
   [ "$(dtbo_stat_size "$_tmp" 2>/dev/null)" = "$_size" ] || { rm -f "$_tmp"; return 1; }
   [ "$(dtbo_sha_file "$_tmp")" = "$_sha" ] || { rm -f "$_tmp"; return 1; }
   mv "$_tmp" "$_out" 2>/dev/null || { rm -f "$_tmp"; return 1; }
-  printf 'v2|before_flash|%s|%s|%s|%s|%s|%s\n' "$_model" "$_slot" "$_dev" "$_size" "$_sha" "$_out" >> "$_dir/manifest.txt" || { rm -f "$_out"; return 1; }
+  [ "$(dtbo_backup_canonical "$_out")" = "$_out" ] || return 1
+  [ "$(dtbo_stat_size "$_out")" = "$_size" ] && [ "$(dtbo_sha_file "$_out")" = "$_sha" ] || return 1
+  _key=$(printf '%s' "$_out" | sha256sum | awk '{print $1}')
+  dtbo_is_sha "$_key" || return 1
+  _record="$_registry/.$_key.$$"
+  (umask 077; printf 'v2|before_flash|%s|%s|%s|%s|%s|%s\n' "$_model" "$_slot" "$_dev" "$_size" "$_sha" "$_out" > "$_record") &&
+    chmod 600 "$_record" && mv -f "$_record" "$_registry/$_key" || { rm -f "$_record"; return 1; }
+  dtbo_backup_registered "$_out" "$_dev" "$_slot" "$_size" "$_sha" "$_model" || return 1
+  # 外置清单仅供人工查看，信任根始终是 root 私有登记。
+  if [ ! -L "$_dir/manifest.txt" ] && { [ ! -e "$_dir/manifest.txt" ] || [ -f "$_dir/manifest.txt" ]; }; then
+    cat "$_registry/$_key" >> "$_dir/manifest.txt" 2>/dev/null
+  fi
   printf '%s' "$_out"
 }
 
 dtbo_backup_list() {
-  local _slot _model _dev _size _dir _v _kind _rmodel _rslot _rdev _rsz _rsha _file
+  local _slot _model _dev _size _registry _record _v _kind _rmodel _rslot _rdev _rsz _rsha _file
   dtbo_need_root || return 1
   _slot=$(dtbo_active_slot) || return 2
   _model=$(dtbo_model)
   [ "$_model" != unknown ] || return 2
   _dev=$(dtbo_dev) || return 2
   _size=$(dtbo_size "$_dev") || return 2
-  for _dir in "$DTBO_BACKUP_PRIMARY" "$DTBO_BACKUP_FALLBACK"; do
-    [ -f "$_dir/manifest.txt" ] || continue
-    while IFS='|' read -r _v _kind _rmodel _rslot _rdev _rsz _rsha _file; do
-      case "$_file" in "$_dir"/*) ;; *) continue ;; esac
-      dtbo_safe_field "$_file" && dtbo_is_sha "$_rsha" || continue
-      [ "$_v" = v2 ] && [ "$_rmodel" = "$_model" ] && [ "$_rslot" = "$_slot" ] && [ "$_rdev" = "$_dev" ] && [ "$_rsz" = "$_size" ] || continue
-      [ -f "$_file" ] && [ "$(dtbo_stat_size "$_file" 2>/dev/null)" = "$_size" ] && [ "$(dtbo_sha_file "$_file")" = "$_rsha" ] || continue
-      printf '%s|%s|%s\n' "$_file" "$_size" "$_rsha"
-    done < "$_dir/manifest.txt"
+  _registry=$(dtbo_registry_dir read) || return 0
+  for _record in "$_registry"/*; do
+    [ -f "$_record" ] && [ ! -L "$_record" ] || continue
+    IFS='|' read -r _v _kind _rmodel _rslot _rdev _rsz _rsha _file < "$_record"
+    dtbo_safe_field "$_file" && dtbo_is_sha "$_rsha" || continue
+    [ "$_v" = v2 ] && [ "$_rmodel" = "$_model" ] && [ "$_rslot" = "$_slot" ] && [ "$_rdev" = "$_dev" ] && [ "$_rsz" = "$_size" ] || continue
+    dtbo_backup_registered "$_file" "$_dev" "$_slot" "$_size" "$_rsha" "$_model" || continue
+    printf '%s|%s|%s\n' "$_file" "$_size" "$_rsha"
   done
 }
 
@@ -453,7 +498,7 @@ dtbo_write_and_verify() {
 dtbo_rollback() {
   local _dev _size _backup _sha _check _got _expected _slot _model _slot_now _dev_now _size_now _model_now
   _dev="$1"; _size="$2"; _backup="$3"; _expected="$4"; _slot="$5"; _model="$6"
-  [ -f "$_backup" ] || { echo "严重错误: 已验证备份不存在，无法回滚: $_backup"; return 1; }
+  dtbo_backup_registered "$_backup" "$_dev" "$_slot" "$_size" "$_expected" "$_model" || { echo "严重错误: 回滚备份私有登记校验失败: $_backup"; return 1; }
   [ "$(dtbo_stat_size "$_backup")" = "$_size" ] || { echo "严重错误: 回滚备份大小异常，保留备份: $_backup"; return 1; }
   _sha=$(dtbo_sha_file "$_backup")
   dtbo_is_sha "$_sha" && [ "$_sha" = "$_expected" ] || { echo "严重错误: 回滚备份 SHA 不匹配，保留备份: $_backup"; return 1; }
@@ -497,13 +542,12 @@ dtbo_preflight() {
   dtbo_is_sha "$_cursha" || { dtbo_lock_release; echo "已拒绝: 无法完整读取当前 DTBO 分区"; return 2; }
 
   if [ "$_restore" = "1" ]; then
-    _backup="$_source"
-    [ "${_backup#/}" != "$_backup" ] || { dtbo_lock_release; echo "已拒绝: restore 必须使用明确绝对备份路径"; return 2; }
+    _backup=$(dtbo_backup_canonical "$_source") || { dtbo_lock_release; echo "已拒绝: restore 必须使用绝对普通备份文件路径"; return 2; }
+    _source="$_backup"
     _isize=$(dtbo_stat_size "$_backup") || { dtbo_lock_release; echo "已拒绝: 备份大小无法读取"; return 2; }
     _isha=$(dtbo_sha_file "$_backup")
     dtbo_is_sha "$_isha" || { dtbo_lock_release; echo "已拒绝: 备份大小/SHA 无法读取"; return 2; }
-    _found=$(dtbo_backup_find "$(dirname "$_backup")" "$_dev" "$_slot" "$_isize" "$_isha" "$_model")
-    [ "$_found" = "$_backup" ] && [ "$_isize" = "$_size" ] || { dtbo_lock_release; echo "已拒绝: 备份未通过机型/槽位/设备/大小/SHA校验"; return 2; }
+    dtbo_backup_registered "$_backup" "$_dev" "$_slot" "$_isize" "$_isha" "$_model" && [ "$_isize" = "$_size" ] || { dtbo_lock_release; echo "已拒绝: 备份未通过机型/槽位/设备/大小/SHA校验"; return 2; }
     _line="restore|$_backup|$_backup|$_isize|$_isha|$_slot|$_dev|$_size|$_cursha|$_model"
     _os_state="compatible"; _os_reason="恢复已验证的本机槽位备份"
   else
@@ -629,7 +673,7 @@ dtbo_restore() {
   local _backup _token _meta _snap _tag _record _snap_record _isize _isha _slot _dev_record _size _cursha _model _slot_now _dev_now _size_now _model_now _check _now_sha _bdir _before _rc _created
   dtbo_need_root || return 1
   _backup="${1:-}"; _token=""; shift 1 2>/dev/null || true
-  dtbo_safe_field "$_backup" || { echo "已拒绝: 备份路径含有不支持的元数据分隔符"; return 2; }
+  _backup=$(dtbo_backup_canonical "$_backup") || { echo "已拒绝: 备份路径必须是普通文件"; return 2; }
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --confirm) [ "$#" -eq 2 ] && [ -z "$_token" ] && [ -n "$2" ] || return 9; _token="$2"; shift 2 ;;
@@ -653,7 +697,7 @@ EOF
   _slot_now=$(dtbo_active_slot); _dev_now=$(dtbo_dev); _size_now=$(dtbo_size "$_dev_now")
   [ "$_slot_now" = "$_slot" ] && [ "$_dev_now" = "$_dev_record" ] && [ "$_size_now" = "$_size" ] || { rm -f "$_meta" "$_snap"; dtbo_lock_release; echo "已拒绝: restore 确认后槽位/目标/大小变化"; return 2; }
   _model_now=$(dtbo_model); [ "$_model_now" = "$_model" ] || { rm -f "$_meta" "$_snap"; dtbo_lock_release; echo "已拒绝: restore 确认后机型变化"; return 2; }
-  [ "$(dtbo_backup_find "$(dirname "$_backup")" "$_dev_now" "$_slot" "$_size" "$_isha" "$_model")" = "$_backup" ] || { rm -f "$_meta" "$_snap"; dtbo_lock_release; echo "已拒绝: 选择的备份身份已变化"; return 2; }
+  dtbo_backup_registered "$_backup" "$_dev_now" "$_slot" "$_size" "$_isha" "$_model" || { rm -f "$_meta" "$_snap"; dtbo_lock_release; echo "已拒绝: 选择的备份身份已变化"; return 2; }
   [ "$(dtbo_stat_size "$_snap")" = "$_isize" ] && [ "$(dtbo_sha_file "$_snap")" = "$_isha" ] || { rm -f "$_meta" "$_snap"; dtbo_lock_release; echo "已拒绝: restore 私有备份快照损坏"; return 2; }
   _check="$DTBO_RUNTIME_DIR/current.$$.tmp"; _now_sha=$(dtbo_hash_device "$_dev_now" "$_size_now" "$_check"); rm -f "$_check" 2>/dev/null
   [ "$_now_sha" = "$_cursha" ] || { rm -f "$_meta" "$_snap"; dtbo_lock_release; echo "已拒绝: restore 确认后目标内容已变化"; return 2; }

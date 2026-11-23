@@ -10,6 +10,19 @@ WIRELESS_CTRL=${WIRELESS_CTRL:-/sys/class/xm_power/charger/charger_thermal/wirel
 WIRED_TH=${WIRED_TH:-/sys/class/xm_power/charger/charger_thermal/wired_thermal_remove}
 WIRELESS_TH=${WIRELESS_TH:-/sys/class/xm_power/charger/charger_thermal/wireless_thermal_remove}
 
+device_current_cap_ma() {
+  local target raw cap battery
+  target=$1
+  battery=${BAT:-/sys/class/power_supply/battery}
+  raw=$(cat "$battery/constant_charge_current_max" 2>/dev/null)
+  case "$raw" in ''|*[!0-9]*) printf '%s' "$target"; return 0 ;; esac
+  [ "$raw" -ge 100000 ] && [ "$raw" -le 100000000 ] || { printf '%s' "$target"; return 0; }
+  cap=$((raw / 1000))
+  [ "$cap" -ge 300 ] || { printf '%s' "$target"; return 0; }
+  [ "$target" -le "$cap" ] && cap=$target
+  printf '%s' "$cap"
+}
+
 max_ma() {
   _m=$(cfg_get max_ma "")
   case "$_m" in
@@ -95,8 +108,9 @@ ctrl_level() {
 # inf 档的温控总闸：电池温度 ≥ thermal_ceil（默认 580 = 58.0℃）时把 wired_thermal_remove
 # 交回驱动 DT 温控表；带滞回，避免在阈值附近反复翻转触发 PMIC 重协商。
 power_thermal_target() {
+  [ "${BAT_TEMP_VALID:-0}" = 1 ] || { printf '%s' 0; return 0; }
   _t=${BAT_TEMP:-0}
-  case "$_t" in ''|*[!0-9-]*) printf '%s' 1; return ;; esac
+  case "${_t#-}" in ''|*[!0-9]*) printf '%s' 0; return ;; esac
   _on=$(cfg_get thermal_ceil 580)
   case "$_on" in ''|*[!0-9]*) _on=580 ;; esac
   _hyst=$(cfg_get thermal_ceil_hyst 30)
@@ -138,8 +152,6 @@ power_closed_loop_ma() {
   case "$_i" in ''|*[!0-9-]*) printf '%s' "$_cn"; return ;; esac
   _i=${_i#-}
   _i=$((_i / 1000))
-  # 偏离过大直接跳回目标，不再逐拍爬（否则被砍狠了要几十秒才恢复）
-  [ "$_cn" -lt $((_want / 2)) ] && _cn="$_want"
   if [ $(( ${TICK_N:-0} % 2 )) -eq 0 ]; then
     [ "$_i" -gt $((_want * 115 / 100)) ] && _cn=$((_cn * 80 / 100))
     [ "$_i" -lt $((_want * 85 / 100)) ] && _cn=$((_cn * 110 / 100))
@@ -150,6 +162,70 @@ power_closed_loop_ma() {
   [ "$_cn" -lt "$_fl" ] && _cn="$_fl"
   printf '%s|%s\n' "$_tier" "$_cn" > "$_f.tmp" 2>/dev/null && mv -f "$_f.tmp" "$_f" 2>/dev/null
   printf '%s' "$_cn"
+}
+
+power_thermal_limit_ma() {
+  local want mode line temp now saved old_mode target last floor step boot saved_boot
+  want=$1
+  mode=$(cat "$CONFDIR/current_mode" 2>/dev/null)
+  line=$(apl_level_temp_c "$mode")
+  if [ "$(json_get charge_gov true)" != true ] || [ -z "$line" ]; then
+    rm -f "$BT_STATE/power_thermal_ma" 2>/dev/null
+    printf '%s' "$want"
+    return 0
+  fi
+  [ "${BAT_TEMP_VALID:-0}" = 1 ] || {
+    saved=$(cat "$BT_STATE/power_thermal_ma" 2>/dev/null)
+    IFS='|' read -r old_mode target last saved_boot <<EOF
+$saved
+EOF
+    case "$target" in ''|*[!0-9]*) target=$want ;; esac
+    [ "$old_mode" = "$mode" ] || target=$want
+    [ "$target" -le "$want" ] || target=$want
+    printf '%s' "$target"
+    return 0
+  }
+  temp=${BAT_TEMP:-}
+  case "${temp#-}" in ''|*[!0-9]*) return 1 ;; esac
+  now=${XJ_NOW:-$(date +%s)}
+  boot=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)
+  saved=$(cat "$BT_STATE/power_thermal_ma" 2>/dev/null)
+  IFS='|' read -r old_mode target last saved_boot <<EOF
+$saved
+EOF
+  case "$target" in ''|*[!0-9]*) target=$want ;; esac
+  case "$last" in ''|*[!0-9]*) last=0 ;; esac
+  [ "$old_mode" = "$mode" ] && [ "$saved_boot" = "$boot" ] || { target=$want; last=0; }
+  [ "$target" -le "$want" ] || target=$want
+  case "${BAT_VOLT:-}" in ''|*[!0-9]*|0) return 1 ;; esac
+  floor=$(awk -v v="$BAT_VOLT" 'BEGIN { printf "%d", 5e9 / v }')
+  [ "$floor" -ge 300 ] || floor=300
+  [ "$floor" -le "$want" ] || floor=$want
+  if [ "$last" = 0 ] || [ "$now" -lt "$last" ] || [ $((now - last)) -ge 2 ]; then
+    if [ "$temp" -ge $((line * 10)) ]; then
+      step=$((target * 12 / 100)); [ "$step" -ge 150 ] || step=150
+      target=$((target - step))
+    elif [ "$temp" -le $(((line - 2) * 10)) ]; then
+      step=$((target * 8 / 100)); [ "$step" -ge 100 ] || step=100
+      target=$((target + step))
+    fi
+    last=$now
+  fi
+  [ "$target" -ge "$floor" ] || target=$floor
+  [ "$target" -le "$want" ] || target=$want
+  printf '%s|%s|%s|%s\n' "$mode" "$target" "$last" "$boot" > "$BT_STATE/power_thermal_ma.tmp" 2>/dev/null &&
+    mv -f "$BT_STATE/power_thermal_ma.tmp" "$BT_STATE/power_thermal_ma" 2>/dev/null || return 1
+  printf '%s' "$target"
+}
+
+power_publish_target() {
+  printf '%s' "$1" > "$BT_STATE/power_target_ma" 2>/dev/null
+  if [ -n "$1" ] && [ "${BAT_VOLT:-0}" -gt 0 ]; then
+    awk -v ma="$1" -v uv="$BAT_VOLT" 'BEGIN { printf "%.1f", ma * uv / 1e9 }' > "$BT_STATE/power_target_w" 2>/dev/null
+  else
+    rm -f "$BT_STATE/power_target_w" 2>/dev/null
+  fi
+  printf '%s' "$2" > "$BT_STATE/power_apply_state" 2>/dev/null
 }
 
 wnode() {
@@ -210,42 +286,67 @@ power_boot_clear_stale() {
 }
 
 save_orig_gate() {
-  [ -s "$BT_STATE/power_orig_ctrl" ] || {
-    _c=$(cat "$WIRED_CTRL" 2>/dev/null)
-    case "$_c" in ''|*[!0-9]*|0) ;; *) printf '%s' "$_c" > "$BT_STATE/power_orig_ctrl" ;; esac
+  local c t
+  [ ! -e "$WIRED_CTRL" ] || [ -f "$BT_STATE/power_orig_ctrl" ] || {
+    c=$(cat "$WIRED_CTRL" 2>/dev/null)
+    case "$c" in ''|*[!0-9]*) return 1 ;; esac
+    printf '%s' "$c" > "$BT_STATE/power_orig_ctrl.tmp" 2>/dev/null &&
+      mv -f "$BT_STATE/power_orig_ctrl.tmp" "$BT_STATE/power_orig_ctrl" || return 1
   }
-  [ -s "$BT_STATE/power_orig_th" ] || {
-    _t=$(cat "$WIRED_TH" 2>/dev/null)
-    case "$_t" in ''|*[!0-9]*|0) ;; *) printf '%s' "$_t" > "$BT_STATE/power_orig_th" ;; esac
+  [ ! -e "$WIRED_TH" ] || [ -f "$BT_STATE/power_orig_th" ] || {
+    t=$(cat "$WIRED_TH" 2>/dev/null)
+    case "$t" in ''|*[!0-9]*) return 1 ;; esac
+    printf '%s' "$t" > "$BT_STATE/power_orig_th.tmp" 2>/dev/null &&
+      mv -f "$BT_STATE/power_orig_th.tmp" "$BT_STATE/power_orig_th" || return 1
   }
+  return 0
 }
 
-# 每个通道只还原自己的有效快照。
 restore_gate() {
-  _c=$(cat "$BT_STATE/power_orig_ctrl" 2>/dev/null)
-  case "$_c" in ''|*[!0-9]*|0) ;; *) wnode "$WIRED_CTRL" "$_c" ;; esac
-  _t=$(cat "$BT_STATE/power_orig_th" 2>/dev/null)
-  case "$_t" in ''|*[!0-9]*|0) ;; *) wnode "$WIRED_TH" "$_t" ;; esac
+  local failed=0 c t
+  if [ -f "$BT_STATE/power_orig_ctrl" ]; then
+    c=$(cat "$BT_STATE/power_orig_ctrl" 2>/dev/null)
+    case "$c" in ''|*[!0-9]*) failed=1 ;;
+      *) wnode "$WIRED_CTRL" "$c" && [ "$(cat "$WIRED_CTRL" 2>/dev/null)" = "$c" ] &&
+           rm -f "$BT_STATE/power_orig_ctrl" || failed=1 ;;
+    esac
+  fi
+  if [ -f "$BT_STATE/power_orig_th" ]; then
+    t=$(cat "$BT_STATE/power_orig_th" 2>/dev/null)
+    case "$t" in ''|*[!0-9]*) failed=1 ;;
+      *) wnode "$WIRED_TH" "$t" && [ "$(cat "$WIRED_TH" 2>/dev/null)" = "$t" ] &&
+           rm -f "$BT_STATE/power_orig_th" || failed=1 ;;
+    esac
+  fi
+  [ "$failed" = 0 ]
 }
 
 save_orig_current() {
-  # 读到的 0 不是有效的原厂值（驱动未就绪/未插枪时该节点就可能是 0），
-  # 存下去后 restore_current 会把充电上限写回 0，表现为卸载后充电极慢。
-  if [ ! -s "$BT_STATE/power_orig_curr" ] || [ "$(cat "$BT_STATE/power_orig_curr" 2>/dev/null)" = "0" ]; then
-    _c=$(cat "$WIRED_CURR" 2>/dev/null)
-    case "$_c" in ''|*[!0-9]*|0) ;; *) printf '%s' "$_c" > "$BT_STATE/power_orig_curr" ;; esac
-  fi
-  if [ ! -s "$BT_STATE/power_orig_wless" ] || [ "$(cat "$BT_STATE/power_orig_wless" 2>/dev/null)" = "0" ]; then
-    _wc=$(cat "$WIRELESS_CURR" 2>/dev/null)
-    case "$_wc" in ''|*[!0-9]*|0) ;; *) printf '%s' "$_wc" > "$BT_STATE/power_orig_wless" ;; esac
-  fi
+  local node file value
+  for node in "$WIRED_CURR" "$WIRED_CURR2"; do
+    [ -e "$node" ] || continue
+    file="$BT_STATE/power_orig_curr"
+    [ "$node" != "$WIRED_CURR2" ] || file="$BT_STATE/power_orig_curr2"
+    [ ! -s "$file" ] || continue
+    value=$(cat "$node" 2>/dev/null)
+    case "$value" in ''|*[!0-9]*|0) return 1 ;; esac
+    printf '%s' "$value" > "$file.tmp" 2>/dev/null && mv -f "$file.tmp" "$file" || return 1
+  done
+  return 0
 }
 
 restore_current() {
-  _o=$(cat "$BT_STATE/power_orig_curr" 2>/dev/null)
-  case "$_o" in ''|*[!0-9]*|0) _o=$(cat "$CONFDIR/rt_charge_orig" 2>/dev/null) ;; esac
-  case "$_o" in ''|*[!0-9]*|0) _o="" ;; esac
-  [ -n "$_o" ] && { wnode "$WIRED_CURR" "$_o"; wnode "$WIRED_CURR2" "$_o"; }
+  local node file value failed=0
+  for node in "$WIRED_CURR" "$WIRED_CURR2"; do
+    file="$BT_STATE/power_orig_curr"
+    [ "$node" != "$WIRED_CURR2" ] || file="$BT_STATE/power_orig_curr2"
+    [ -f "$file" ] || continue
+    value=$(cat "$file" 2>/dev/null)
+    case "$value" in ''|*[!0-9]*|0) failed=1; continue ;; esac
+    wnode "$node" "$value" && [ "$(cat "$node" 2>/dev/null)" = "$value" ] &&
+      rm -f "$file" || failed=1
+  done
+  [ "$failed" = 0 ]
 }
 
 # 节点是否已符合期望值；$1=th $2=lv $3=ma(可空)。输出 1=符合 / 0=需要重写。
@@ -280,8 +381,19 @@ nodes_ok() {
 #   每拍重写 wired_chg_curr，而每次写都触发 PMIC 重协商 PD 契约（功率锯齿）。
 # 其余档：th=0 + ctrl 阶梯 + 按瓦数换算电流。
 power_apply() {
+  if [ "${BAT_TEMP_VALID:-0}" != 1 ]; then
+    if [ -e "$WIRED_TH" ]; then
+      save_orig_gate || { power_publish_target "" failed; return 1; }
+      wnode "$WIRED_TH" 0 || { power_publish_target "" failed; return 1; }
+    fi
+    power_publish_target "" failed
+    return 1
+  fi
+  if [ -n "${BAT_VOLT:-}" ]; then
+    case "$BAT_VOLT" in ''|*[!0-9]*|0) power_publish_target "" failed; return 1 ;; esac
+  fi
   _tier=$(norm_power "$1")
-  _th=1 _lv=0 _ma="" _apl_active=0
+  _th=1 _lv=0 _ma="" _apl_active=0 _thermal_active=0
   if [ "$_tier" = "inf" ]; then
     power_boot_clear_stale
     if _ma=$(apl_target_ma); then
@@ -305,16 +417,32 @@ power_apply() {
     # 离开 inf 档就清「已安顿」与失败计数，让下次回到全速重新算一次（生效档位已含 power_limit 约束）。
     rm -f "$BT_STATE/inf_settled" "$BT_STATE/inf_settle_fail" 2>/dev/null
     _w=$(tier_watt "$_tier")
-    _uv=$(read_voltage_uv)
+    _uv=${BAT_VOLT:-$(read_voltage_uv)}
     _ma=$(watt_to_ma "$_w" "$_uv")
+    _ma=$(device_current_cap_ma "$_ma")
     _ma=$(power_closed_loop_ma "$_tier" "$_ma")
+    _ma=$(device_current_cap_ma "$_ma")
     _lv=$(ctrl_level "$_w")
     _th=0
     _sig="${_tier}|${_th}|${_lv}|${_ma}"
     _chk="$_ma"
   fi
 
+  _before=$_ma
+  _ma=$(power_thermal_limit_ma "$_ma") || { power_publish_target "" failed; return 1; }
+  if [ "$_ma" != "$_before" ]; then
+    _thermal_active=1
+    rm -f "$BT_STATE/inf_settled" "$BT_STATE/inf_node_capped" "$BT_STATE/inf_settle_fail" 2>/dev/null
+    _th=0
+    _chk=$_ma
+    _sig="${_tier}|${_th}|${_lv}|${_ma}|thermal"
+  fi
+  power_publish_target "$_ma" pending
+
   _prev=$(cat "$BT_STATE/power_sig" 2>/dev/null)
+  case "$_prev" in
+    *\|thermal) [ "$_thermal_active" = 1 ] || _chk=$_ma ;;
+  esac
   _was_apl=0
   case "$_prev" in inf\|*\|*\|*\|1) _was_apl=1 ;; esac
   [ "$_tier" = "inf" ] && [ "$_apl_active" = "0" ] && [ "$_was_apl" = "1" ] && \
@@ -326,7 +454,7 @@ power_apply() {
       # 无 APL 时仅在首次达到可用上限后安顿；APL 运行时始终按目标回读。
       if [ "$_apl_active" = "1" ]; then
         [ -f "$STATE/apl_urgent" ] && _need=1
-      elif [ ! -f "$BT_STATE/inf_settled" ] && [ ! -f "$BT_STATE/inf_node_capped" ]; then
+      elif [ "$_thermal_active" != 1 ] && [ ! -f "$BT_STATE/inf_settled" ] && [ ! -f "$BT_STATE/inf_node_capped" ]; then
         _cur=$(cat "$WIRED_CURR" 2>/dev/null)
         case "$_cur" in ''|*[!0-9]*) _cur=0 ;; esac
         [ "$_cur" -ge 10000000 ] || _need=1
@@ -336,6 +464,7 @@ power_apply() {
   if [ "$_need" = "0" ]; then
     [ "$(cat "$BT_STATE/power_applied" 2>/dev/null)" = "$_tier" ] ||
       printf '%s' "$_tier" > "$BT_STATE/power_applied" 2>/dev/null
+    power_publish_target "$_ma" applied
     return 0
   fi
 
@@ -351,19 +480,20 @@ power_apply() {
     [ $((_now - _ts)) -lt "$_gap" ] && return 0
   fi
 
-  save_orig_current
-  save_orig_gate
+  save_orig_current || { power_publish_target "" failed; return 1; }
+  save_orig_gate || { power_publish_target "" failed; return 1; }
+  _write_failed=0
 
   # ---- 闸门节点（thermal_remove / ctrl_limit）----
   # 【为什么不受 60 秒下限约束】温控总闸翻转要即时生效（高温立即交回 DT 温控表），
   #   拖到 60 秒后就是持续高温充电；且写这两个节点不会触发 PMIC 重协商 PD 契约。
   if [ "$(nodes_ok "$_th" "$_lv" "")" = "0" ]; then
     if [ "$_th" = "1" ]; then
-      wnode "$WIRED_TH" 1
-      wnode "$WIRED_CTRL" 0
+      wnode "$WIRED_TH" 1 || _write_failed=1
+      wnode "$WIRED_CTRL" 0 || _write_failed=1
     else
-      wnode "$WIRED_TH" 0
-      wnode "$WIRED_CTRL" "$_lv"
+      wnode "$WIRED_TH" 0 || _write_failed=1
+      wnode "$WIRED_CTRL" "$_lv" || _write_failed=1
     fi
   fi
 
@@ -371,8 +501,11 @@ power_apply() {
   # 【为什么分档处理】inf 档只做「进入时一次性安顿」：已安顿/已封顶就不再写，
   #   否则每次写都会让 PMIC 重协商 PD 契约（功率锯齿）。其余档按闭环值每拍写。
   #   只有真正充电（Charging/Full）才安顿：拔枪时驱动给的默认值插枪后保不住，落旗会永久卡低功率。
+  _write_deferred=0
   _cur_write=0
-  if [ "$_tier" = "inf" ]; then
+  if [ "$_thermal_active" = 1 ]; then
+    _cur_write=1
+  elif [ "$_tier" = "inf" ]; then
     if [ "$_apl_active" = "1" ] && [ "$_th" = "1" ]; then
       # APL 目标变化或回读不符时允许受控更新；紧急标志再额外放行一次。
       _cur_write=1
@@ -390,13 +523,18 @@ power_apply() {
     # 【为什么只有 inf 过全局限流】inf 每次写都触发 PMIC 重协商 PD 契约，必须压住写入频率；
     #   非 inf 的闭环微调靠每 2 拍修正贴住目标，加 60 秒下限会让实际功率明显偏离目标值。
     _may_write=1
-    if [ "$_tier" = "inf" ]; then
-      cg_gap_ok || _may_write=0
+    if [ "$_tier" = "inf" ] && [ "$_thermal_active" != 1 ]; then
+      cg_gap_ok || { _may_write=0; _write_deferred=1; }
     fi
     if [ "$_may_write" = "1" ]; then
-      wnode "$WIRED_CURR" $((_ma * 1000)) && _ma_written=1
-      wnode "$WIRED_CURR2" $((_ma * 1000))
-      [ "$_tier" = "inf" ] && [ "$_ma_written" = "1" ] && cg_note_write
+      if wnode "$WIRED_CURR" $((_ma * 1000)); then _ma_written=1; else _write_failed=1; fi
+      if [ -e "$WIRED_CURR2" ]; then
+        wnode "$WIRED_CURR2" $((_ma * 1000)) || _write_failed=1
+      fi
+      if [ "$_ma_written" = 1 ]; then
+        rm -f "$STATE/apl_urgent" 2>/dev/null
+        [ "$_tier" != inf ] || cg_note_write
+      fi
     fi
   fi
 
@@ -455,8 +593,21 @@ power_apply() {
     fi
   fi
 
+  if [ "$_write_failed" = 1 ]; then
+    power_publish_target "$_ma" failed
+    return 1
+  fi
+  if [ "$_write_deferred" = 1 ]; then
+    power_publish_target "$_ma" pending
+    return 0
+  fi
+  if [ "$_write_failed" = 1 ] || [ ! -e "$WIRED_CURR" ] || [ "$(nodes_ok "$_th" "$_lv" "$_chk")" != 1 ]; then
+    power_publish_target "$_ma" failed
+    return 1
+  fi
   printf '%s' "$_sig" > "$BT_STATE/power_sig" 2>/dev/null
   printf '%s' "$_tier" > "$BT_STATE/power_applied" 2>/dev/null
+  power_publish_target "$_ma" applied
   # 非 inf 同签名节流用的时间戳；inf 档不读它（inf 用 cg_last_write_ts）。
   date +%s > "$BT_STATE/power_write_ts" 2>/dev/null
 }
@@ -464,9 +615,13 @@ power_apply() {
 power_restore() {
   # ctrl / thermal_remove 还原为原厂值（有有效快照才写，无效不写）——
   #   之前无条件写 0 会把驱动原厂的非 0 限流/温控默认值抹掉。
-  restore_gate
-  restore_current
-  rm -f "$BT_STATE/power_applied" "$BT_STATE/power_sig" 2>/dev/null
+  restore_gate || { power_publish_target "" failed; return 1; }
+  restore_current || { power_publish_target "" failed; return 1; }
+  rm -f "$BT_STATE/power_applied" "$BT_STATE/power_sig" "$BT_STATE/power_thermal_ma" \
+    "$BT_STATE/power_target_ma" "$BT_STATE/power_target_w" \
+    "$BT_STATE/inf_settled" "$BT_STATE/inf_node_capped" "$BT_STATE/inf_settle_fail" \
+    "$BT_STATE/closed_loop" "$BT_STATE/cg_last_write_ts" 2>/dev/null || return 1
+  printf '%s' idle > "$BT_STATE/power_apply_state" 2>/dev/null
 }
 
 power_status() {

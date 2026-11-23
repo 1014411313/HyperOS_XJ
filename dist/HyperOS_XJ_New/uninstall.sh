@@ -14,7 +14,7 @@ uninstall_pack_backup() {
   _out="/sdcard/Download/rezhale_toolbox_uninstall_${_ts}"
   # 成员路径都是本脚本内的固定常量（不含空格），zip/tar 两种工具用同一组
   _items=""
-  for _d in config battery log cache state; do
+  for _d in config battery log cache state backup; do
     [ -e "$DATA_DIR/$_d" ] && _items="$_items $_d"
   done
   if [ -n "$_items" ]; then
@@ -40,6 +40,35 @@ echo "$_backup_msg"
 
 _restore_ok=""
 _restore_failed=""
+_recovery_dir=""
+uninstall_keep_recovery() {
+  local _stage _item
+  [ ! -L "$DATA_DIR/recovery" ] || return 1
+  (umask 077; mkdir -p "$DATA_DIR/recovery") || return 1
+  chmod 700 "$DATA_DIR/recovery" || return 1
+  [ "$(stat -c '%u:%a' "$DATA_DIR/recovery" 2>/dev/null)" = 0:700 ] || return 1
+  _stage="$DATA_DIR/recovery/${_ts}_$$"
+  (umask 077; mkdir "$_stage") || return 1
+  [ -f "$MODDIR/engine/xjctl.sh" ] && [ -f "$MODDIR/engine/xjdaemon.sh" ] || return 1
+  for _item in engine battery profiles thermal backup bin default_settings.json module.prop t_blank t_map t_bypass_0 t_bypass_1; do
+    [ -e "$MODDIR/$_item" ] || continue
+    cp -R "$MODDIR/$_item" "$_stage/$_item" || return 1
+  done
+  cat > "$_stage/restore.sh" <<'RECOVERY'
+#!/system/bin/sh
+DIR=$(cd "$(dirname "$0")" && pwd) || exit 1
+rc=0
+for step in 'rear off' 'battery unlock off' 'battery restore' 'power restore' 'battery pps restore' 'setting set enabled false' 'apply'; do
+  sh "$DIR/engine/xjctl.sh" $step || rc=1
+done
+exit "$rc"
+RECOVERY
+  [ "$?" = 0 ] && chmod 700 "$_stage/restore.sh" || return 1
+  _recovery_dir="$_stage"
+}
+if ! uninstall_keep_recovery; then
+  _restore_failed="保存独立恢复工具"
+fi
 uninstall_restore() {
   _step="$1"
   shift
@@ -77,19 +106,6 @@ else
 fi
 # 仍存活的守护负责还原，避免卸载进程与其同时写验证节点。
 uninstall_restore "公版 PPS 验证节点" battery pps restore
-rm -f "$DATA_DIR/state/daemon.pid" "$DATA_DIR/state/daemon.lock.d/pid" 2>/dev/null
-
-pm uninstall --user 0 com.hyperos.xj >/dev/null 2>&1
-
-# 卸载时清掉模块目录外的用户数据（精确路径）
-[ -z "$_restore_failed" ] && [ "$_backup_ok" = 1 ] && rm -rf "$DATA_DIR" 2>/dev/null
-
-case "$MODDIR" in
-    /data/adb/modules/*|/data/adb/modules_update/*)
-        find "$MODDIR" -mindepth 1 -maxdepth 1 ! -name 'uninstall.sh' -exec rm -rf {} + 2>/dev/null
-        ( sleep 2; rm -rf "$MODDIR" ) >/dev/null 2>&1 &
-        ;;
-esac
 
 # ---- 还原说明 + 残留报告：stdout 输出，并尽力留档 /sdcard/Download ----
 # 必须在还原与清理动作完成后输出，才能如实列出「还原后还存在的」节点与文件。
@@ -101,8 +117,11 @@ _body=$( {
   [ -n "$_restore_failed" ] && echo "还原失败: $_restore_failed；已保留 $DATA_DIR 中的配置与备份"
   [ "$_backup_ok" != 1 ] && [ -d "$DATA_DIR" ] && echo "备份失败: $_backup_msg；已保留 $DATA_DIR 中的用户数据"
   echo "不自动回滚: DTBO 分区。如曾刷入模块镜像，请用备份刷回后重启:"
-  echo "  备份目录: /sdcard/Download/dtbo_backup/（主；不可写时自动落在 $DATA_DIR/battery/state/dtbo_backup/，已随本次备份包带走）"
-  echo "  其中 manifest.txt 记录每份备份的 sha256 与槽位，before_flash/auto_backup 行即刷入前的分区内容"
+  echo "  备份目录: /sdcard/Download/dtbo_backup/（主）；$DATA_DIR/battery/state/dtbo_backup/（回退）"
+  echo "  私有登记: $DATA_DIR/battery/state/dtbo_registry/；仅接受本机成功备份时建立的登记"
+  echo "  manifest.txt 仅供查看，不能作为恢复信任依据"
+  [ -n "$_recovery_dir" ] && echo "独立恢复工具: sh $_recovery_dir/restore.sh"
+  echo "App 与其私有数据已保留"
   echo "本次备份包: ${_backup_msg:-未执行}"
   echo "建议: 重启一次，让所有运行时节点彻底回到系统默认"
   echo ""
@@ -116,8 +135,8 @@ _body=$( {
     [ -e "$_n" ] && echo "  $_n = $(cat "$_n" 2>/dev/null)"
   done
   echo "[文件]"
-  if [ -d "$DATA_DIR" ]; then echo "  $DATA_DIR 仍存在（备份或还原失败时保留，或清理未成功）"; else echo "  $DATA_DIR 已清除"; fi
-  if [ -e "$MODDIR/module.prop" ]; then echo "  $MODDIR 仍存在（由后台延迟删除）"; else echo "  $MODDIR 已清除"; fi
+  if [ -d "$DATA_DIR" ]; then echo "  $DATA_DIR 已保留（配置、备份、DTBO 私有登记与恢复材料）"; fi
+  echo "  模块目录由模块管理器清理"
 } 2>/dev/null )
 printf '%s\n' "$_body"
 [ -n "$_rep" ] && printf '%s\n' "$_body" > "$_rep" 2>/dev/null

@@ -134,7 +134,7 @@ def power_env(sb):
                 "WIRED_CTRL": str(nodes / "wired_ctrl"),
                 "WIRELESS_CTRL": str(nodes / "wireless_ctrl"),
                 "WIRED_TH": str(nodes / "wired_th"),
-                "WIRELESS_TH": str(nodes / "wireless_th"), "BAT_TEMP": "400",
+                "WIRELESS_TH": str(nodes / "wireless_th"), "BAT_TEMP": "400", "BAT_TEMP_VALID": "1",
                 "APL_TARGET": str(state / "apl_target_ma")})
     return env, nodes, state
 
@@ -158,6 +158,7 @@ def apl_tick_case(sb):
 . \"%s\"
 date() { echo \"${TEST_NOW:-1000}\"; }
 cfg_get() { case \"$1\" in apl_enable) echo 1;; power_limit) echo inf;; cg_min_write_gap) echo 60;; apl_max_ma) echo 20000;; *) echo \"$2\";; esac; }
+json_get() { echo "${2:-}"; }
 apl_num() { case \"$1\" in ''|*[!0-9]*) echo 0;; *) echo \"$1\";; esac; }
 apl_rd() { case \"$1\" in *online) echo 1;; *constant_charge_current_max) echo \"${BATTERY_MAX:-0}\";; *) echo 0;; esac; }
 apl_vterm_mv() { echo "${APL_VTERM:-4570}"; }
@@ -218,7 +219,7 @@ cat \"$APL_TGT\"
     out = run(reset_script, env).strip()
     assert out == "10000", out
 
-    # 持续超温时APL按斜率降低目标，且不突破5W安全底线。
+    # APL 提供上限，温度连续调节由 power.sh 统一处理。
     env.pop("ADP_REASON", None)
     (conf / "current_mode").write_text("level_1")
     env["LOCK_UNTIL"] = "0"
@@ -226,9 +227,7 @@ cat \"$APL_TGT\"
     env["BAT_CUR"] = "-2100000"
     (state / "apl_target_ma").write_text("2100")
     targets = [int(run(script, env).strip()) for _ in range(4)]
-    assert targets[0] < 2000, targets
-    assert all(b <= a for a, b in zip(targets, targets[1:])), targets
-    assert min(targets) >= 1250, targets
+    assert targets == [2100] * 4, targets
 
     # Leaving the one档 thermal line clears its saved recovery cap and resumes the DTBO policy.
     (state / "apl_state").write_text("1 0 0 0 0 0 5800 900 1 level_1")
@@ -307,7 +306,7 @@ def wireless_restore_case(sb):
     (nodes / "wired_th").write_text("1")
     (nodes / "wireless_th").write_text("0")
     run(f'. "{POWER}"\nsave_orig_current\nsave_orig_gate', env)
-    assert (state / "power_orig_wless").read_text() == "5"
+    assert not (state / "power_orig_wless").exists()
     for name in ("wireless_ctrl", "wireless_th"):
         (nodes / name).write_text("12")
     (nodes / "wireless_curr").write_text("20")
@@ -322,17 +321,24 @@ def wireless_restore_case(sb):
 def power_case(sb):
     env, nodes, state = power_env(sb)
     env["POWER_CFG"] = ""
+    cap_node = Path(env["BAT"]) / "constant_charge_current_max"
+    cap_node.write_text("20000000")
     src = """
 norm_power() { printf '%%s' \"$1\"; }
 cfg_get() { case \"$1\" in apl_enable) [ \"$APL_OFF\" = 1 ] && echo 0 || echo 1;; cg_min_write_gap) echo 60;; thermal_ceil) echo 580;; thermal_ceil_hyst) echo 30;; *) echo \"$2\";; esac; }
 apl_ceiling_ma() { echo 20000; }
 apl_target_ma() { APL_TARGET_ACTIVE=1; cat \"$STATE/apl_target_ma\"; }
+device_current_cap_ma() {
+  _cap=$(cat \"$BAT/constant_charge_current_max\" 2>/dev/null)
+  case \"$_cap\" in ''|*[!0-9]*) echo \"$1\";; *) _cap=$((_cap / 1000)); [ \"$1\" -le \"$_cap\" ] && echo \"$1\" || echo \"$_cap\";; esac
+}
 log() { :; }
 . \"%s\"
 if [ \"$DO_APPLY\" = 1 ]; then power_apply inf; cat \"$WIRED_CURR\"; else printf 'loaded\\n'; fi
 """ % POWER
     env["DO_APPLY"] = "1"
 
+    cap_node.write_text("20000000")
     (state / "apl_target_ma").write_text("12000")
     assert run(src, env).strip().endswith("12000000")
     (state / "apl_target_ma").write_text("7800")
@@ -357,6 +363,14 @@ if [ \"$DO_APPLY\" = 1 ]; then power_apply inf; cat \"$WIRED_CURR\"; else printf
     (state / "power_write_ts").write_text("sentinel")
     assert run(src, env).strip().endswith("7800000")
     assert (state / "power_write_ts").read_text() == "sentinel"
+
+    # Finite watt limits remain below the device-reported current cap.
+    (state / "power_sig").unlink(missing_ok=True)
+    cap_node.write_text("6000000")
+    (state / "apl_target_ma").unlink(missing_ok=True)
+    finite_script = src.replace("power_apply inf;", "power_apply 38;")
+    finite_out = run(finite_script, env).strip()
+    assert finite_out.endswith("6000000"), finite_out
 
     # 无 APL 时保持一次性安顿，不因每拍调用再次写电流节点。
     env2, nodes2, state2 = power_env(sb / "no_apl")
@@ -575,8 +589,7 @@ def governor_case(sb):
     state.mkdir(parents=True)
     conf.mkdir()
     daemon = (ROOT / "engine/xjdaemon.sh").read_text()
-    governor = "charge_gov_limit() {" + daemon.split("charge_gov_limit() {", 1)[1].split("\nplan_in_window() {", 1)[0]
-    governor += "\nplan_in_window() { return 1; }\n"
+    governor = "\nplan_in_window() { return 1; }\n"
     governor += "effective_tier() {" + daemon.split("effective_tier() {", 1)[1].split("\nbypass_decide() {", 1)[0]
     script = '''
 CONFDIR="$CONF"; BT_STATE="$STATE"
@@ -587,31 +600,15 @@ power_rank() { case "$1" in inf) echo 999;; fast) echo 40;; mid) echo 25;; slow)
 ''' + governor + "\neffective_tier\n"
     env = dict(os.environ, CONF=str(conf), STATE=str(state), BT_STATE=str(state))
     expected = {
-        ("level_1", 29): "inf", ("level_1", 30): "mid", ("level_1", 33): "mid", ("level_1", 34): "slow",
-        ("level_2", 34): "inf", ("level_2", 35): "mid", ("level_3", 39): "inf",
-        ("level_3", 40): "mid", ("level_4", 44): "inf", ("level_4", 45): "mid",
-        ("level_5", 49): "inf", ("level_5", 50): "mid",
+        (mode, temp): "inf"
+        for mode in ("level_1", "level_2", "level_3", "level_4", "level_5")
+        for temp in (29, 30, 35, 40, 45, 50, 55)
     }
     for (mode, temp), tier in expected.items():
         (conf / "current_mode").write_text(mode)
         (state / "charge_gov.state").unlink(missing_ok=True)
         out = run(script, dict(env, BAT_TEMP=str(temp * 10))).strip()
         assert out == tier, (mode, temp, tier, out)
-    (conf / "current_mode").write_text("level_4")
-    (state / "charge_gov.state").write_text("level_4|mid")
-    assert run(script, dict(env, BAT_TEMP="430")).strip() == "mid"
-    assert run(script, dict(env, BAT_TEMP="420")).strip() == "inf"
-    (state / "charge_gov.state").write_text("level_4|slow")
-    assert run(script, dict(env, BAT_TEMP="470")).strip() == "slow"
-    assert run(script, dict(env, BAT_TEMP="460")).strip() == "mid"
-    assert run(script, dict(env, BAT_TEMP="420")).strip() == "inf"
-    (state / "charge_gov.state").write_text("level_4|mid")
-    assert run(script, dict(env, BAT_TEMP="440")).strip() == "mid"
-    assert run(script, dict(env, BAT_TEMP="420")).strip() == "inf"
-    (state / "charge_gov.state").unlink(missing_ok=True)
-    (state / "charge_gov.state.tmp").mkdir()
-    assert run(script, dict(env, BAT_TEMP="450")).strip() == "mid"
-    assert run(script, dict(env, BAT_TEMP="490")).strip() == "slow"
 
 
 def governor_scene_order_case(sb):
@@ -688,6 +685,8 @@ hitemp_guard() { :; }
 hyperos_keepalive() { :; }
 json_get() { echo false; }
 release_charge() { :; }
+battery_suspend() { :; }
+apply_fps() { :; }
 rear_stop() { :; }
 apply_default() { return 1; }
 update_status() { echo unexpected_update; }
@@ -713,7 +712,7 @@ def main():
         governor_case(sb / "governor")
         governor_scene_order_case(sb / "governor_scene")
         daemon_apply_case(sb / "daemon")
-    print("charge control regression: PASS (APL, governor thresholds/hysteresis, inf/APL throttling, node boundaries, shutdown voltage, thermal backup/restore)")
+    print("charge control regression: PASS (APL, power ceilings, scene order, inf/APL throttling, node boundaries, shutdown voltage, thermal backup/restore)")
 
 
 if __name__ == "__main__":

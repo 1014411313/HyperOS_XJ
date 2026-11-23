@@ -145,10 +145,27 @@ status_frags() {
   js_line thermal_default "$(json_get default_mode default)" str
   js_line power_tier "$(power_tier)" str
   js_line power_applied "$(cat "$BT_STATE/power_applied" 2>/dev/null)" str
+  js_line power_target_ma "$(cat "$BT_STATE/power_target_ma" 2>/dev/null)" str
+  js_line power_target_w "$(cat "$BT_STATE/power_target_w" 2>/dev/null)" str
+  js_line power_apply_state "$(cat "$BT_STATE/power_apply_state" 2>/dev/null)" str
   js_line unlock "$(cfg_get unlock 1)" str
   js_line freepps "$(cfg_get freepps 0)" str
   js_line cloud_guard "$(cfg_get cloud_guard 1)" str
   js_line apl_enable "$(cfg_get apl_enable 0)" str
+  js_line charge_gov "$(json_get charge_gov true)" str
+  js_line bypass_active "$([ -f "$CONFDIR/bypass_active" ] && echo 1 || echo 0)" str
+  js_line thermal_handback "$([ -f "$CONFDIR/.thermal_handback" ] && echo 1 || echo 0)" str
+  js_line power_thermal_ma "$(cut -d'|' -f2 "$BT_STATE/power_thermal_ma" 2>/dev/null)" str
+  _pps=""
+  for _pn in $PPS_NODES; do
+    [ -e "$_pn" ] || continue
+    _pv=$(cat "$_pn" 2>/dev/null)
+    case "$_pv" in ''|*[!0-9]*) continue ;; esac
+    _pps=$_pv
+    break
+  done
+  js_line pps_verified "$_pps" str
+  js_line cloud_blocked "$(cloud_blocked_total)" str
   # ---- 守护/功能存活上报（参照 v3.12.9 status_kv.sh）：
   #      让「开关开着但功能实际没跑」可见。读不到（进程不在/文件不存在）给空串，不报错。 ----
   _dpid=$(cat "$STATE/daemon.pid" 2>/dev/null)
@@ -224,9 +241,17 @@ case "$1" in
   power)
     case "$2" in
       get) power_tier; echo ;;
-      set) _t=$(norm_power "$3"); cfg_set power_limit "$_t"; power_apply "$_t"; echo "$_t" ;;
+      set)
+        case "$3" in
+          inf|fast|mid|slow) ;;
+          ''|*[!0-9]*) echo "非法功率上限"; exit 2 ;;
+        esac
+        _t=$(norm_power "$3")
+        cfg_set power_limit "$_t" || exit 1
+        [ "$(power_tier)" = "$_t" ] || exit 1
+        echo "saved=$_t" ;;
       status) power_status ;;
-      restore) power_restore; echo restored ;;
+      restore) . "$DIR/lib/thermal.sh"; release_charge || exit 1; echo restored ;;
       *) usage; exit 9 ;;
     esac ;;
 
@@ -235,12 +260,12 @@ case "$1" in
       get) json_get default_mode default; echo ;;
       set)
         case "$3" in default|unlimited|level_1|level_2|level_3|level_4|level_5) ;; *) echo "非法档位: $3"; exit 2 ;; esac
-        json_set default_mode "$3" str
+        json_set default_mode "$3" str || exit 1
         echo "$3" ;;
       gov)
         case "$3" in
-          on) json_set charge_gov true bool; echo on ;;
-          off) json_set charge_gov false bool; echo off ;;
+          on) json_set charge_gov true bool || exit 1; echo on ;;
+          off) json_set charge_gov false bool || exit 1; echo off ;;
           *) json_get charge_gov true ;;
         esac ;;
       status) cat "$CONFDIR/status.json" 2>/dev/null ;;
@@ -250,7 +275,7 @@ case "$1" in
   battery)
     case "$2" in
       boot) battery_boot ;;
-      restore) battery_restore ;;
+      restore) battery_restore || exit 1 ;;
       unlock)
         case "$3" in
           on) battery_unlock_on ;;
@@ -259,9 +284,9 @@ case "$1" in
         esac ;;
       pps)
         case "$3" in
-          on) pps_set 1 ;;
-          off) pps_set 0 ;;
-          restore) pps_restore ;;
+          on) pps_set 1 || exit 1 ;;
+          off) pps_set 0 || exit 1 ;;
+          restore) pps_restore || exit 1 ;;
           *) pps_status ;;
         esac ;;
       cloud)
@@ -281,8 +306,8 @@ case "$1" in
         esac ;;
       apl)
         case "$3" in
-          on) cfg_set apl_enable 1 ;;
-          off) cfg_set apl_enable 0; rm -f "$STATE/apl_target_ma" 2>/dev/null ;;
+          on) cfg_set apl_enable 1 || exit 1 ;;
+          off) cfg_set apl_enable 0 || exit 1; rm -f "$STATE/apl_target_ma" "$STATE/apl_urgent" 2>/dev/null ;;
           status) apl_status ;;
           *) cfg_get apl_enable 0 ;;
         esac ;;
@@ -300,8 +325,8 @@ case "$1" in
         esac ;;
       volt)
         case "$3" in
-          term) cfg_set term_v "$4" ;;
-          off) cfg_set term_v "" ;;
+          term) cfg_set term_v "$4" || exit 1 ;;
+          off) cfg_set term_v "" || exit 1 ;;
           *) echo "term_v=$(cfg_get term_v "")" ;;
         esac ;;
       status)
@@ -323,6 +348,11 @@ case "$1" in
       get) json_get "$3" ""; echo ;;
       set)
         _k="$3"; _v="$4"
+        case "$_k" in
+          time_start|time_end|power_plan_start|power_plan_end)
+            case "$_v" in [0-9]|[01][0-9]|2[0-3]) ;; *) echo "小时必须为0至23"; exit 2 ;; esac
+            _v=${_v#0}; [ -n "$_v" ] || _v=0 ;;
+        esac
         case "$_v" in
           true|false) json_set "$_k" "$_v" bool ;;
           ''|*[!0-9.-]*) json_set "$_k" "$_v" str ;;
@@ -341,16 +371,16 @@ case "$1" in
 
   bypass)
     case "$2" in
-      on) printf '1' > "$CONFDIR/bypass_manual"; config_changed ;;
-      off) rm -f "$CONFDIR/bypass_manual"; config_changed ;;
+      on) printf '1' > "$CONFDIR/bypass_manual" || exit 1; config_changed ;;
+      off) rm -f "$CONFDIR/bypass_manual" || exit 1; config_changed ;;
       status) [ -f "$CONFDIR/bypass_manual" ] && echo on || echo off ;;
       *) usage; exit 9 ;;
     esac ;;
 
   rear)
     case "$2" in
-      on) rear_enable ;;
-      off) [ "$(cfg_get rearscreen 0)" = "1" ] && cfg_set rearscreen 0; rear_stop; echo off ;;
+      on) cfg_set rearscreen 1 || exit 1; rear_enable || exit 1 ;;
+      off) [ "$(cfg_get rearscreen 0)" != "1" ] || cfg_set rearscreen 0 || exit 1; rear_stop || exit 1; echo off ;;
       status) rear_status ;;
       set)
         shift 2
